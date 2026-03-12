@@ -1,0 +1,5 @@
+/node_modules/
+/storage/outputs/
+/storage/jobs/
+/storage/uploads/
+/storage/*.log

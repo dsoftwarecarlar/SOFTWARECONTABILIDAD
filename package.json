@@ -1,0 +1,20 @@
+{
+  "name": "bot1andrea",
+  "version": "1.0.0",
+  "description": "",
+  "main": "run_bot.js",
+  "scripts": {
+    "bot": "node run_bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "exceljs": "^4.4.0",
+    "fast-xml-parser": "^5.4.2",
+    "pdf-parse": "^2.4.5",
+    "xlsx": "^0.18.5"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "fecha_proceso": "2026-03-06T17:19:36.165Z",
+  "input_pdf": "C:\\xampp\\htdocs\\BOT1ANDREA\\storage\\uploads\\CXPREP_docproveedor01001_20260306_121929.pdf",
+  "output_xlsx": "C:\\xampp\\htdocs\\BOT1ANDREA\\storage\\outputs\\CXPREP_docproveedor01001_20260306_121929_resultado.xlsx",
+  "hoja_salida": "LIBRO COMPRAS",
+  "filas_extraidas": 387,
+  "filas_ajustadas_plantilla": 0,
+  "cobertura_plantilla": 0,
+  "validacion_pre_ajuste_problemas": 0,
+  "validacion_pre_ajuste_muestra": [],
+  "auditoria_consistencia": {
+    "habilitada": false,
+    "forzada": false,
+    "ok": true,
+    "filas_generadas": 387,
+    "filas_plantilla": 0,
+    "extras_generadas": 0,
+    "faltantes_generadas": 0,
+    "extras_muestra": [],
+    "faltantes_muestra": []
+  },
+  "totales_criticos_verificados": true
+}
