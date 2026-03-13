@@ -232,6 +232,209 @@ function Set-DateCellValue {
     }
 }
 
+function Validate-Services-SourceWorksheet {
+    param([object]$Worksheet)
+
+    $checks = @(
+        @{ Row = 1; Column = 1; Needle = 'AGENCIA' },
+        @{ Row = 1; Column = 2; Needle = 'CENTRO' },
+        @{ Row = 1; Column = 3; Needle = 'No. ORDEN' },
+        @{ Row = 1; Column = 8; Needle = 'TIPO DOC' },
+        @{ Row = 1; Column = 9; Needle = 'CEDULA' },
+        @{ Row = 1; Column = 10; Needle = 'FACTURADO A' },
+        @{ Row = 1; Column = 12; Needle = 'DOCUMENTO' },
+        @{ Row = 1; Column = 15; Needle = 'F. FACT' },
+        @{ Row = 1; Column = 18; Needle = 'F. NOTA' },
+        @{ Row = 1; Column = 36; Needle = 'ANULADA' }
+    )
+
+    foreach ($check in $checks) {
+        $actual = (Normalize-Text $Worksheet.Cells.Item($check.Row, $check.Column).Text).ToUpperInvariant()
+        $expected = (Normalize-Text $check.Needle).ToUpperInvariant()
+        if ($actual -notlike "*$expected*") {
+            throw ("El archivo fuente no coincide con la estructura esperada en fila {0} columna {1}. Esperado contiene '{2}' y llego '{3}'." -f $check.Row, $check.Column, $check.Needle, $actual)
+        }
+    }
+}
+
+function Get-ComparableCellText {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column
+    )
+
+    $value = $Worksheet.Cells.Item($Row, $Column).Value2
+    if ($null -ne $value -and $value -ne '') {
+        return Normalize-ExcelLogicalText $value
+    }
+
+    return Normalize-ExcelLogicalText $Worksheet.Cells.Item($Row, $Column).Text
+}
+
+function Normalize-ExcelLogicalText {
+    param([object]$Value)
+
+    $text = Normalize-Text $Value
+    if ($text.Length -gt 1 -and $text.StartsWith("'")) {
+        return $text.Substring(1)
+    }
+
+    return $text
+}
+
+function Get-ComparableCellNumber {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column
+    )
+
+    $raw = $Worksheet.Cells.Item($Row, $Column).Value2
+    if ($null -eq $raw -or $raw -eq '') {
+        $text = Normalize-Text $Worksheet.Cells.Item($Row, $Column).Text
+        if ($text -eq '') {
+            return $null
+        }
+
+        $normalized = ($text -replace '\.', '') -replace ',', '.'
+        return [double]::Parse($normalized, [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+
+    return [double]$raw
+}
+
+function Test-NumericEquivalent {
+    param(
+        [Nullable[double]]$Expected,
+        [Nullable[double]]$Actual
+    )
+
+    if (-not $Expected.HasValue -and -not $Actual.HasValue) {
+        return $true
+    }
+
+    if (-not $Expected.HasValue -or -not $Actual.HasValue) {
+        return $false
+    }
+
+    return ([Math]::Abs([double]$Expected.Value - [double]$Actual.Value) -lt 0.01)
+}
+
+function Assert-NoExcelErrorsInRange {
+    param(
+        [object]$Worksheet,
+        [int]$StartRow,
+        [int]$EndRow,
+        [int]$LastColumn,
+        [string]$Label
+    )
+
+    $errorTexts = @('#DIV/0!', '#N/A', '#NAME?', '#NULL!', '#NUM!', '#REF!', '#VALUE!')
+    for ($row = $StartRow; $row -le $EndRow; $row++) {
+        Assert-NotCancelled 'validacion_errores'
+        for ($column = 1; $column -le $LastColumn; $column++) {
+            $text = (Normalize-Text $Worksheet.Cells.Item($row, $column).Text).ToUpperInvariant()
+            if ($text -in $errorTexts) {
+                throw ("La hoja {0} contiene error de Excel en fila {1} columna {2}: {3}" -f $Label, $row, $column, $text)
+            }
+        }
+    }
+}
+
+function Validate-Services-WrittenRows {
+    param(
+        [object]$OutputWorksheet,
+        [object]$TemplateWorksheet,
+        [object[]]$Rows,
+        [string]$Label,
+        [int[]]$TextColumns,
+        [int[]]$NumericColumns,
+        [int[]]$DateColumns,
+        [int[]]$FormatColumns,
+        [int[]]$DocumentColumns = @(),
+        [int]$TrailingBlankColumn,
+        [int]$LastColumn
+    )
+
+    if ($Rows.Count -eq 0) {
+        $firstCell = Normalize-Text $OutputWorksheet.Cells.Item(1, $TrailingBlankColumn).Text
+        if ($firstCell -in @('#DIV/0!', '#N/A', '#NAME?', '#NULL!', '#NUM!', '#REF!', '#VALUE!')) {
+            throw "La hoja $Label contiene errores aun sin filas escritas."
+        }
+        return
+    }
+
+    foreach ($entry in $Rows) {
+        Assert-NotCancelled 'validacion_filas'
+        $rowNumber = [int]$entry.RowNumber
+        $values = $entry.Values
+
+        foreach ($column in $TextColumns) {
+            $expected = if ($values.ContainsKey($column)) { Normalize-ExcelLogicalText $values[$column] } else { '' }
+            $actual = Get-ComparableCellText -Worksheet $OutputWorksheet -Row $rowNumber -Column $column
+            if ($column -in $DocumentColumns) {
+                $expected = Trim-Document $expected
+                $actual = Trim-Document $actual
+            }
+            if ($actual -ne $expected) {
+                throw ("La hoja {0} tiene texto incorrecto en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $Label, $rowNumber, $column, $expected, $actual)
+            }
+        }
+
+        foreach ($column in $NumericColumns) {
+            $expectedValue = $null
+            if ($values.ContainsKey($column) -and $null -ne $values[$column] -and $values[$column] -ne '') {
+                $expectedValue = [double]$values[$column]
+            }
+
+            $actualValue = Get-ComparableCellNumber -Worksheet $OutputWorksheet -Row $rowNumber -Column $column
+            $actualText = Normalize-Text $OutputWorksheet.Cells.Item($rowNumber, $column).Text
+            if ($null -eq $expectedValue -and $actualText -eq '') {
+                continue
+            }
+
+            if (-not (Test-NumericEquivalent -Expected $expectedValue -Actual $actualValue)) {
+                throw ("La hoja {0} tiene valor numerico incorrecto en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $Label, $rowNumber, $column, $expectedValue, $actualValue)
+            }
+        }
+
+        foreach ($column in $DateColumns) {
+            $expectedDate = $null
+            if ($values.ContainsKey($column) -and $null -ne $values[$column] -and $values[$column] -ne '') {
+                $expectedDate = [double](Get-Date-Write-Value $values[$column])
+            }
+
+            $actualDate = Get-Date-Value -Worksheet $OutputWorksheet -Row $rowNumber -Column $column
+            if ($null -ne $actualDate -and $actualDate -ne '') {
+                $actualDate = [double](Get-Date-Write-Value $actualDate)
+            }
+            if ($null -eq $expectedDate -and $null -eq $actualDate) {
+                continue
+            }
+
+            if ($null -eq $expectedDate -or $null -eq $actualDate -or [Math]::Abs([double]$expectedDate - [double]$actualDate) -ge 0.01) {
+                throw ("La hoja {0} tiene fecha incorrecta en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $Label, $rowNumber, $column, $expectedDate, $actualDate)
+            }
+        }
+
+        foreach ($column in $FormatColumns) {
+            $templateFormat = Normalize-Text $TemplateWorksheet.Cells.Item($rowNumber, $column).NumberFormat
+            $outputFormat = Normalize-Text $OutputWorksheet.Cells.Item($rowNumber, $column).NumberFormat
+            if ($templateFormat -ne $outputFormat) {
+                throw ("La hoja {0} perdio formato en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $Label, $rowNumber, $column, $templateFormat, $outputFormat)
+            }
+        }
+    }
+
+    $nextRow = [int]$Rows[-1].RowNumber + 1
+    if ((Normalize-Text $OutputWorksheet.Cells.Item($nextRow, $TrailingBlankColumn).Text) -ne '') {
+        throw ("La hoja {0} conserva datos residuales despues de la ultima fila esperada ({1})." -f $Label, $Rows[-1].RowNumber)
+    }
+
+    Assert-NoExcelErrorsInRange -Worksheet $OutputWorksheet -StartRow ([int]$Rows[0].RowNumber) -EndRow ([int]$Rows[-1].RowNumber) -LastColumn $LastColumn -Label $Label
+}
+
 function Get-Template-Key {
     param(
         [object]$Agency,
@@ -1130,6 +1333,7 @@ function Fill-RepVtas {
 
     Clear-OutputSheet -Worksheet $Worksheet -StartRow 15 -LastColumn 'AL'
     $targetRow = 15
+    $writtenRows = New-Object System.Collections.Generic.List[object]
     $sortedRows = @(
         $Rows |
             Sort-Object @{ Expression = {
@@ -1194,6 +1398,8 @@ function Fill-RepVtas {
             $costoPinturaValue = [double](Round-Amount $costoPinturaSource)
             $costoSubconNcValue = [double](Round-Amount $costoSubconNcSource)
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $repLookup) { $repLookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
+            $interestCellValue = if ((Round-Amount ([Math]::Abs($interesValue))) -eq 0) { $null } else { [double]$interesValue }
+            $rowNumber = $targetRow
 
             $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
             $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = "'" + $centerValue
@@ -1224,6 +1430,39 @@ function Fill-RepVtas {
             Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 25 -Value $costoPinturaValue
             Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 26 -Value $costoSubconNcValue
             $null = $Worksheet.Cells.Item($targetRow, 27).Value2 = (Get-Excel-TextLiteral $garExtValue)
+
+            $writtenRows.Add([pscustomobject]@{
+                RowNumber = $rowNumber
+                Values = @{
+                    1 = $agencyValue
+                    2 = $centerValue
+                    3 = $orderValue
+                    4 = $advisorValue
+                    5 = $lineValue
+                    6 = $cedulaValue
+                    7 = $customerValue
+                    8 = $documentRawValue
+                    9 = $factDate
+                    10 = $noteDate
+                    11 = [double]$noteCreditValue
+                    12 = [double]$totalManoObraValue
+                    13 = [double]$totalSubcontratosValue
+                    14 = [double]$totalInsumosValue
+                    15 = [double]$totalServicioValue
+                    16 = [double]$totalAccesoriosValue
+                    17 = [double]$totalRepuestosValue
+                    18 = $interestCellValue
+                    19 = [double]$ivaValue
+                    20 = [double]$totalValue
+                    21 = [double]$costoValue
+                    22 = [double]$costoLubricantesValue
+                    23 = [double]$costoAccesoriosValue
+                    24 = [double]$costoRepuestosValue
+                    25 = [double]$costoPinturaValue
+                    26 = [double]$costoSubconNcValue
+                    27 = $garExtValue
+                }
+            }) | Out-Null
             $targetRow++
         } catch {
             $failedLine = ''
@@ -1233,6 +1472,11 @@ function Fill-RepVtas {
 
             throw "REP VTAS doc=$($row.DocumentRaw) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message) :: $failedLine"
         }
+    }
+
+    return [pscustomobject]@{
+        RowCount = $writtenRows.Count
+        Rows = $writtenRows.ToArray()
     }
 }
 
@@ -1246,6 +1490,7 @@ function Fill-Invoices {
     Clear-OutputSheet -Worksheet $Worksheet -StartRow 17 -LastColumn 'S'
     $targetRow = 17
     $fallbackCount = 0
+    $writtenRows = New-Object System.Collections.Generic.List[object]
     $sortedRows = @(
         $Rows |
             Where-Object { $_.DocType -in @('FA', 'FC') } |
@@ -1292,6 +1537,13 @@ function Fill-Invoices {
                 }
             }
 
+            $ivaCellValue = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0 -or ($null -ne $lookup -and (Normalize-Text $lookup.IvaText) -eq '')) {
+                $null
+            } else {
+                [double]$ivaAmount
+            }
+            $rowNumber = $targetRow
+
             $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
             $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $seriesValue)
             $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = $row.DocumentTrim
@@ -1305,7 +1557,7 @@ function Fill-Invoices {
             $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = [double]$netoConIva
             $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$netoIva0Value
             $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$iva12Value
-            if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0 -or ($null -ne $lookup -and (Normalize-Text $lookup.IvaText) -eq '')) {
+            if ($null -eq $ivaCellValue) {
                 $null = $Worksheet.Cells.Item($targetRow, 13).ClearContents()
             } else {
                 $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$ivaAmount
@@ -1316,13 +1568,47 @@ function Fill-Invoices {
             $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = (Get-Excel-TextLiteral $garExtValue)
             $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = (Get-Excel-TextLiteral $tvValue)
             $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = (Get-Excel-TextLiteral $markerValue)
+
+            $writtenRows.Add([pscustomobject]@{
+                RowNumber = $rowNumber
+                Values = @{
+                    1 = $agencyValue
+                    2 = $seriesValue
+                    3 = $row.DocumentTrim
+                    4 = $invoiceDate
+                    5 = $orderValue
+                    6 = $cedulaValue
+                    7 = $customerValue
+                    8 = [double]$subtotal
+                    9 = [double]$discount
+                    10 = [double]$netoConIva
+                    11 = [double]$netoIva0Value
+                    12 = [double]$iva12Value
+                    13 = $ivaCellValue
+                    14 = [double]$interestAmount
+                    15 = [double]$totalAmount
+                    16 = $asientoValue
+                    17 = $garExtValue
+                    18 = $tvValue
+                    19 = $markerValue
+                }
+            }) | Out-Null
             $targetRow++
         } catch {
-            throw "FACTURA doc=$($row.DocumentTrim) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message)"
+            $failedLine = ''
+            if ($null -ne $_.InvocationInfo -and $null -ne $_.InvocationInfo.Line) {
+                $failedLine = $_.InvocationInfo.Line.Trim()
+            }
+
+            throw "FACTURA doc=$($row.DocumentTrim) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message) :: $failedLine"
         }
     }
 
-    return $fallbackCount
+    return [pscustomobject]@{
+        FallbackCount = $fallbackCount
+        RowCount = $writtenRows.Count
+        Rows = $writtenRows.ToArray()
+    }
 }
 
 function Fill-Notes {
@@ -1335,6 +1621,7 @@ function Fill-Notes {
     Clear-OutputSheet -Worksheet $Worksheet -StartRow 11 -LastColumn 'U'
     $targetRow = 11
     $fallbackCount = 0
+    $writtenRows = New-Object System.Collections.Generic.List[object]
     $sortedRows = @(
         $Rows |
             Where-Object { $_.DocType -in @('DC', 'DE') } |
@@ -1414,6 +1701,8 @@ function Fill-Notes {
                 }
             }
 
+            $rowNumber = $targetRow
+
             $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
             $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = $row.DocumentTrim
             $creditNoteDate = Get-Date-Write-Value $row.DateNoteValue
@@ -1436,13 +1725,134 @@ function Fill-Notes {
             $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = [double]$neto
             $null = $Worksheet.Cells.Item($targetRow, 20).Value2 = (Get-Excel-TextLiteral $asientoValue)
             $null = $Worksheet.Cells.Item($targetRow, 21).Value2 = (Get-Excel-TextLiteral $garExtValue)
+
+            $writtenRows.Add([pscustomobject]@{
+                RowNumber = $rowNumber
+                Values = @{
+                    1 = $agencyValue
+                    2 = $row.DocumentTrim
+                    3 = $creditNoteDate
+                    4 = $kindValue
+                    5 = $seriesValue
+                    6 = $invoiceValue
+                    7 = $orderValue
+                    8 = $cedulaValue
+                    9 = $customerValue
+                    10 = [double]$subtotal
+                    11 = [double]$discount
+                    12 = [double]$netoSinIva
+                    13 = [double]$netoConIva
+                    14 = [double]$ivaAmount
+                    15 = [double]$iva12Value
+                    16 = [double]$interestAmount
+                    17 = [double]$totalAmount
+                    18 = [double]$anticipo
+                    19 = [double]$neto
+                    20 = $asientoValue
+                    21 = $garExtValue
+                }
+            }) | Out-Null
             $targetRow++
         } catch {
-            throw "NOTA doc=$($row.DocumentTrim) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message)"
+            $failedLine = ''
+            if ($null -ne $_.InvocationInfo -and $null -ne $_.InvocationInfo.Line) {
+                $failedLine = $_.InvocationInfo.Line.Trim()
+            }
+
+            throw "NOTA doc=$($row.DocumentTrim) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message) :: $failedLine"
         }
     }
 
-    return $fallbackCount
+    return [pscustomobject]@{
+        FallbackCount = $fallbackCount
+        RowCount = $writtenRows.Count
+        Rows = $writtenRows.ToArray()
+    }
+}
+
+function Validate-Services-BrandOutput {
+    param(
+        [object]$OutputWorkbook,
+        [object]$TemplateWorkbook,
+        [object]$RepVtasResult,
+        [object]$InvoiceResult,
+        [object]$NoteResult
+    )
+
+    $outputRepSheet = $null
+    $outputNoteSheet = $null
+    $outputRepVtasSheet = $null
+    $templateRepSheet = $null
+    $templateNoteSheet = $null
+    $templateRepVtasSheet = $null
+    try {
+        $outputRepSheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @('REP FACTURACION', 'REP FACTURACIÃ“N')
+        $outputNoteSheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @('NOTA DE CREDITO')
+        $outputRepVtasSheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @('REP VTAS')
+
+        $templateRepSheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @('REP FACTURACION', 'REP FACTURACIÃ“N')
+        $templateNoteSheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @('NOTA DE CREDITO')
+        $templateRepVtasSheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @('REP VTAS')
+
+        Validate-Services-WrittenRows `
+            -OutputWorksheet $outputRepVtasSheet `
+            -TemplateWorksheet $templateRepVtasSheet `
+            -Rows $RepVtasResult.Rows `
+            -Label 'REP VTAS' `
+            -TextColumns @(1, 2, 3, 4, 5, 6, 7, 8, 27) `
+            -NumericColumns @(11, 15, 19, 20, 21, 24, 26) `
+            -DateColumns @(9, 10) `
+            -FormatColumns @(9, 10) `
+            -DocumentColumns @(8) `
+            -TrailingBlankColumn 8 `
+            -LastColumn 27
+
+        Validate-Services-WrittenRows `
+            -OutputWorksheet $outputRepSheet `
+            -TemplateWorksheet $templateRepSheet `
+            -Rows $InvoiceResult.Rows `
+            -Label 'REP FACTURACION' `
+            -TextColumns @(1, 2, 3, 5, 6, 7, 16, 17, 18, 19) `
+            -NumericColumns @(8, 9, 10, 13, 14, 15) `
+            -DateColumns @(4) `
+            -FormatColumns @(4) `
+            -DocumentColumns @(3) `
+            -TrailingBlankColumn 3 `
+            -LastColumn 19
+
+        Validate-Services-WrittenRows `
+            -OutputWorksheet $outputNoteSheet `
+            -TemplateWorksheet $templateNoteSheet `
+            -Rows $NoteResult.Rows `
+            -Label 'NOTA DE CREDITO' `
+            -TextColumns @(1, 2, 4, 5, 6, 7, 8, 9, 20, 21) `
+            -NumericColumns @(10, 11, 13, 14, 17, 18, 19) `
+            -DateColumns @(3) `
+            -FormatColumns @(3) `
+            -DocumentColumns @(2, 6) `
+            -TrailingBlankColumn 2 `
+            -LastColumn 21
+    }
+    finally {
+        if ($null -ne $templateRepVtasSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templateRepVtasSheet)
+        }
+        if ($null -ne $templateNoteSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templateNoteSheet)
+        }
+        if ($null -ne $templateRepSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templateRepSheet)
+        }
+        if ($null -ne $outputRepVtasSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputRepVtasSheet)
+        }
+        if ($null -ne $outputNoteSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputNoteSheet)
+        }
+        if ($null -ne $outputRepSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputRepSheet)
+        }
+    }
 }
 
 $resolvedInputPath = (Resolve-Path $InputPath).Path
@@ -1488,13 +1898,19 @@ try {
 $cancelMessage = $null
 try {
     $sourceWorkbook = $excel.Workbooks.Open($resolvedInputPath, 0, $false)
+    $sourceSheet = $null
     try {
         Assert-NotCancelled 'inicio'
-        $sourceRows = Read-SourceRows -Worksheet $sourceWorkbook.Worksheets.Item(1)
+        $sourceSheet = $sourceWorkbook.Worksheets.Item(1)
+        Validate-Services-SourceWorksheet -Worksheet $sourceSheet
+        $sourceRows = Read-SourceRows -Worksheet $sourceSheet
         $repVtasRows = Normalize-SourceRows -Rows $sourceRows
         $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
     }
     finally {
+        if ($null -ne $sourceSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($sourceSheet)
+        }
         $sourceWorkbook.Close($false)
         [void][Runtime.Interopservices.Marshal]::ReleaseComObject($sourceWorkbook)
     }
@@ -1536,14 +1952,28 @@ try {
             $noteSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('NOTA DE CREDITO')
             $repVtasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('REP VTAS')
 
-            $invoiceFallbacks = Fill-Invoices -Worksheet $repSheet -Rows $rowsPosting -Lookups $lookups
-            $noteFallbacks = Fill-Notes -Worksheet $noteSheet -Rows $rowsPosting -Lookups $lookups
-            Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
+            $invoiceResult = Fill-Invoices -Worksheet $repSheet -Rows $rowsPosting -Lookups $lookups
+            $noteResult = Fill-Notes -Worksheet $noteSheet -Rows $rowsPosting -Lookups $lookups
+            $repVtasResult = Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
+
+            $validationWorkbook = $excel.Workbooks.Open($templateConfigs[$templateKey].TemplatePath, 0, $true)
+            try {
+                Validate-Services-BrandOutput `
+                    -OutputWorkbook $outputWorkbook `
+                    -TemplateWorkbook $validationWorkbook `
+                    -RepVtasResult $repVtasResult `
+                    -InvoiceResult $invoiceResult `
+                    -NoteResult $noteResult
+            }
+            finally {
+                $validationWorkbook.Close($false)
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($validationWorkbook)
+            }
 
             Assert-NotCancelled 'guardado_plantilla'
             $outputWorkbook.Save()
             Write-Output ("OUTPUT|{0}|{1}" -f $outputName, $templateConfigs[$templateKey].Label)
-            Write-Output ("INFO|{0}|invoice_fallbacks={1}|note_fallbacks={2}" -f $templateKey, [int]$invoiceFallbacks, [int]$noteFallbacks)
+            Write-Output ("INFO|{0}|invoice_fallbacks={1}|note_fallbacks={2}" -f $templateKey, [int]$invoiceResult.FallbackCount, [int]$noteResult.FallbackCount)
         }
         finally {
             $outputWorkbook.Close($true)

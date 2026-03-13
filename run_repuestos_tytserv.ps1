@@ -147,7 +147,7 @@ function Build-Rep-Lookup {
 
     $lookup = @{}
     $lastRow = Get-Used-LastRow -Worksheet $Worksheet
-    $totalRow = Find-Row-Containing -Worksheet $Worksheet -Column 12 -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow ([Math]::Max(200, $lastRow + 10))
+    $totalRow = Find-Row-Containing-Anywhere -Worksheet $Worksheet -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow ([Math]::Max(200, $lastRow + 10)) -LastColumn 35
     if ($null -eq $totalRow) {
         $totalRow = $lastRow
     }
@@ -222,7 +222,7 @@ function Apply-Template-Lookup {
         $refCode = Normalize-Text $reference.ClientCode
         $refName = Normalize-Text $reference.ClientName
 
-        if ($refRuc -ne '' -and $currentRuc -eq '') {
+        if ($refRuc -ne '' -and ($currentRuc -eq '' -or (Test-Looks-MaskedRuc $currentRuc))) {
             $Worksheet.Cells.Item($row, 9).Value2 = "'" + $refRuc
         }
 
@@ -230,8 +230,274 @@ function Apply-Template-Lookup {
             $Worksheet.Cells.Item($row, 10).Value2 = "'" + $refCode
         }
 
-        if ($refName -ne '' -and $currentName -eq '') {
+        if ($refName -ne '' -and ($currentName -eq '' -or (Test-Looks-UnreadableName $currentName))) {
             $Worksheet.Cells.Item($row, 11).Value2 = $refName
+        }
+    }
+}
+
+function Normalize-FormulaText {
+    param([object]$Value)
+
+    $text = Normalize-Text $Value
+    if ($text -eq '') {
+        return ''
+    }
+
+    return (($text -replace '\s+', '').ToUpperInvariant())
+}
+
+function Assert-Rep-SourceWorksheet {
+    param(
+        [object]$Worksheet,
+        [string]$Label
+    )
+
+    $checks = @(
+        @{ Row = 9; Column = 5; Needle = '# DOC' },
+        @{ Row = 9; Column = 9; Needle = 'RUC' },
+        @{ Row = 9; Column = 10; Needle = 'CLIENTE' },
+        @{ Row = 9; Column = 11; Needle = 'CLIENTE' },
+        @{ Row = 9; Column = 16; Needle = 'ITEM' },
+        @{ Row = 9; Column = 18; Needle = 'SUBTOT' }
+    )
+
+    foreach ($check in $checks) {
+        $actual = (Normalize-Text $Worksheet.Cells.Item($check.Row, $check.Column).Text).ToUpperInvariant()
+        $expected = (Normalize-Text $check.Needle).ToUpperInvariant()
+        if ($actual -notlike "*$expected*") {
+            throw ("La hoja fuente {0} no coincide con la estructura esperada en fila {1} columna {2}. Esperado contiene '{3}' y llego '{4}'." -f $Label, $check.Row, $check.Column, $check.Needle, $actual)
+        }
+    }
+}
+
+function Get-Rep-MayorFormulaMap {
+    param(
+        [string]$Key,
+        [int]$TotalRow
+    )
+
+    switch ($Key) {
+        'tyt' {
+            return @{
+                16 = "=+'MY REP TYT'!I38"
+                18 = "=+'MY REP TYT'!H53"
+            }
+        }
+        'peug' {
+            return @{
+                16 = "=+'MY REP PEUG'!I19"
+                18 = "=+'MY REP PEUG'!H25"
+                25 = ("=+X{0}-'NC REP PEUG'!AD9:AE9" -f $TotalRow)
+                26 = ("=X{0}" -f $TotalRow)
+            }
+        }
+        'chgn' {
+            return @{
+                16 = "=+'MY REP CHGN'!J8"
+                19 = "=+'MY REP CHGN'!I15"
+            }
+        }
+        'szk' {
+            return @{
+                16 = "=+'MY REP SZK'!I31"
+                18 = "=+'MY REP SZK'!H50"
+            }
+        }
+        default {
+            throw "Clave no soportada: $Key"
+        }
+    }
+}
+
+function Assert-NoExcelErrorsInRange {
+    param(
+        [object]$Worksheet,
+        [int]$StartRow,
+        [int]$EndRow,
+        [int]$LastColumn,
+        [string]$Label
+    )
+
+    $errorTexts = @('#DIV/0!', '#N/A', '#NAME?', '#NULL!', '#NUM!', '#REF!', '#VALUE!')
+    for ($row = $StartRow; $row -le $EndRow; $row++) {
+        for ($column = 1; $column -le $LastColumn; $column++) {
+            $text = (Normalize-Text $Worksheet.Cells.Item($row, $column).Text).ToUpperInvariant()
+            if ($text -in $errorTexts) {
+                throw ("La hoja {0} contiene error de Excel en fila {1} columna {2}: {3}" -f $Label, $row, $column, $text)
+            }
+        }
+    }
+}
+
+function Validate-Template-Lookup-Application {
+    param(
+        [object]$Worksheet,
+        [hashtable]$Lookup,
+        [int]$StartRow,
+        [int]$EndRow,
+        [string]$Label
+    )
+
+    if ($Lookup.Count -eq 0 -or $StartRow -gt $EndRow) {
+        return
+    }
+
+    for ($row = $StartRow; $row -le $EndRow; $row++) {
+        $doc = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
+        if ($doc -eq '' -or -not $Lookup.ContainsKey($doc)) {
+            continue
+        }
+
+        $reference = $Lookup[$doc]
+        $currentRuc = Normalize-Text $Worksheet.Cells.Item($row, 9).Text
+        $currentCode = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
+        $currentName = Normalize-Text $Worksheet.Cells.Item($row, 11).Text
+
+        if ((Normalize-Text $reference.Ruc) -ne '' -and (Test-Looks-MaskedRuc $currentRuc)) {
+            throw ("La hoja {0} mantiene RUC enmascarado para documento {1} en fila {2}." -f $Label, $doc, $row)
+        }
+
+        if ((Normalize-Text $reference.ClientCode) -ne '' -and $currentCode -eq '') {
+            throw ("La hoja {0} quedo sin codigo cliente para documento {1} en fila {2}." -f $Label, $doc, $row)
+        }
+
+        if ((Normalize-Text $reference.ClientName) -ne '' -and (Test-Looks-UnreadableName $currentName)) {
+            throw ("La hoja {0} mantiene nombre ilegible para documento {1} en fila {2}." -f $Label, $doc, $row)
+        }
+    }
+}
+
+function Validate-Rep-Sheet-Output {
+    param(
+        [object]$Worksheet,
+        [object]$TemplateWorksheet,
+        [string]$Key,
+        [hashtable]$Lookup,
+        [int]$ExpectedRows
+    )
+
+    $sheetName = Normalize-Text $Worksheet.Name
+    $scanEnd = [Math]::Max(200, (Get-Used-LastRow -Worksheet $Worksheet) + 10)
+    $totalRow = Find-Row-Containing-Anywhere -Worksheet $Worksheet -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow $scanEnd -LastColumn 35
+    $mayorRow = Find-Row-Containing-Anywhere -Worksheet $Worksheet -Needle 'MAYOR' -StartRow 1 -EndRow $scanEnd -LastColumn 35
+    $templateMayorRow = Find-Row-Containing-Anywhere -Worksheet $TemplateWorksheet -Needle 'MAYOR' -StartRow 1 -EndRow $scanEnd -LastColumn 35
+
+    if ($null -eq $totalRow) {
+        throw "La hoja $sheetName no contiene la fila TOTAL GENERAL."
+    }
+
+    if ($null -eq $mayorRow) {
+        throw "La hoja $sheetName no contiene la fila MAYOR."
+    }
+
+    if ($mayorRow -ne ($totalRow + 1)) {
+        throw ("La hoja {0} tiene TOTAL GENERAL en fila {1} y MAYOR en fila {2}; se esperaba MAYOR en fila {3}." -f $sheetName, $totalRow, $mayorRow, ($totalRow + 1))
+    }
+
+    if ($null -eq $templateMayorRow) {
+        throw "La plantilla de $sheetName no contiene la fila MAYOR."
+    }
+
+    $actualRows = [Math]::Max(0, $totalRow - 10)
+    if ($actualRows -ne $ExpectedRows) {
+        throw ("La hoja {0} quedo con {1} filas REP y se esperaban {2}." -f $sheetName, $actualRows, $ExpectedRows)
+    }
+
+    if ((Normalize-Text $Worksheet.Cells.Item($mayorRow, 14).Text).ToUpperInvariant() -ne 'MAYOR') {
+        throw "La hoja $sheetName no conserva la etiqueta MAYOR en la fila final."
+    }
+
+    $formulaMap = Get-Rep-MayorFormulaMap -Key $Key -TotalRow $totalRow
+    $formatColumns = @(14) + @($formulaMap.Keys | ForEach-Object { [int]$_ })
+
+    foreach ($column in $formulaMap.Keys) {
+        $expectedFormula = Normalize-FormulaText $formulaMap[$column]
+        $actualFormula = Normalize-FormulaText $Worksheet.Cells.Item($mayorRow, [int]$column).Formula
+        if ($actualFormula -ne $expectedFormula) {
+            throw ("La hoja {0} tiene formula incorrecta en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $sheetName, $mayorRow, $column, $formulaMap[$column], $Worksheet.Cells.Item($mayorRow, [int]$column).Formula)
+        }
+    }
+
+    foreach ($column in $formatColumns) {
+        $outputFormat = Normalize-Text $Worksheet.Cells.Item($mayorRow, [int]$column).NumberFormat
+        $templateFormat = Normalize-Text $TemplateWorksheet.Cells.Item($templateMayorRow, [int]$column).NumberFormat
+        if ($outputFormat -ne $templateFormat) {
+            throw ("La hoja {0} perdio el formato de la fila MAYOR en columna {1}. Esperado '{2}' y llego '{3}'." -f $sheetName, $column, $templateFormat, $outputFormat)
+        }
+    }
+
+    Validate-Template-Lookup-Application -Worksheet $Worksheet -Lookup $Lookup -StartRow 11 -EndRow ($totalRow - 1) -Label $sheetName
+    Assert-NoExcelErrorsInRange -Worksheet $Worksheet -StartRow 1 -EndRow $mayorRow -LastColumn 35 -Label $sheetName
+}
+
+function Validate-My-Sheet-Output {
+    param(
+        [object]$OutputWorkbook,
+        [object]$TemplateWorkbook,
+        [string]$Key
+    )
+
+    $layout = Get-My-Layout -Key $Key
+    $outputWorksheet = $null
+    $templateWorksheet = $null
+    try {
+        $outputWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @($layout.MySheetName)
+        $templateWorksheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @($layout.MySheetName)
+
+        foreach ($section in $layout.Sections) {
+            Assert-NoExcelErrorsInRange -Worksheet $outputWorksheet -StartRow $section.StartRow -EndRow $section.EndRow -LastColumn $layout.SaldoColumn -Label $layout.MySheetName
+            foreach ($column in @($layout.DateColumn, $layout.DebitColumn, $layout.CreditColumn, $layout.SaldoColumn)) {
+                for ($row = $section.StartRow; $row -le $section.EndRow; $row++) {
+                    $outputFormat = Normalize-Text $outputWorksheet.Cells.Item($row, $column).NumberFormat
+                    $templateFormat = Normalize-Text $templateWorksheet.Cells.Item($row, $column).NumberFormat
+                    if ($outputFormat -ne $templateFormat) {
+                        throw ("La hoja {0} perdio formato en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $layout.MySheetName, $row, $column, $templateFormat, $outputFormat)
+                    }
+                }
+            }
+        }
+    }
+    finally {
+        if ($null -ne $templateWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorksheet)
+        }
+        if ($null -ne $outputWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorksheet)
+        }
+    }
+}
+
+function Validate-Mayor-Iva-Output {
+    param(
+        [object]$OutputWorkbook,
+        [object]$TemplateWorkbook
+    )
+
+    $outputWorksheet = $null
+    $templateWorksheet = $null
+    try {
+        $outputWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @('MAYOR IVA')
+        $templateWorksheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @('MAYOR IVA')
+
+        Assert-NoExcelErrorsInRange -Worksheet $outputWorksheet -StartRow 299 -EndRow 366 -LastColumn 10 -Label 'MAYOR IVA'
+
+        foreach ($column in @(4, 8, 9, 10)) {
+            for ($row = 299; $row -le 366; $row++) {
+                $outputFormat = Normalize-Text $outputWorksheet.Cells.Item($row, $column).NumberFormat
+                $templateFormat = Normalize-Text $templateWorksheet.Cells.Item($row, $column).NumberFormat
+                if ($outputFormat -ne $templateFormat) {
+                    throw ("La hoja MAYOR IVA perdio formato en fila {0} columna {1}. Esperado '{2}' y llego '{3}'." -f $row, $column, $templateFormat, $outputFormat)
+                }
+            }
+        }
+    }
+    finally {
+        if ($null -ne $templateWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorksheet)
+        }
+        if ($null -ne $outputWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorksheet)
         }
     }
 }
@@ -245,6 +511,12 @@ function Apply-Mayor-Row {
     )
 
     $mayorRow = $TotalRow + 1
+    $formulaMap = Get-Rep-MayorFormulaMap -Key $Key -TotalRow $TotalRow
+    $formatSourceRow = if ($FormatRow.HasValue -and $FormatRow.Value -gt 0) { $FormatRow.Value } else { $mayorRow }
+    $formatMap = @{}
+    foreach ($column in (@(14) + @($formulaMap.Keys | ForEach-Object { [int]$_ }))) {
+        $formatMap[[int]$column] = [string]$Worksheet.Cells.Item($formatSourceRow, [int]$column).NumberFormat
+    }
 
     if ($FormatRow.HasValue -and $FormatRow.Value -gt 0 -and $FormatRow.Value -ne $mayorRow) {
         $formatSource = $Worksheet.Range("A$($FormatRow.Value):AO$($FormatRow.Value)")
@@ -270,27 +542,13 @@ function Apply-Mayor-Row {
 
     $Worksheet.Cells.Item($mayorRow, 14).Value2 = 'MAYOR'
 
-    switch ($Key) {
-        'tyt' {
-            $Worksheet.Cells.Item($mayorRow, 16).Formula = "=+'MY REP TYT'!I38"
-            $Worksheet.Cells.Item($mayorRow, 18).Formula = "=+'MY REP TYT'!H53"
-        }
-        'peug' {
-            $Worksheet.Cells.Item($mayorRow, 16).Formula = "=+'MY REP PEUG'!I19"
-            $Worksheet.Cells.Item($mayorRow, 18).Formula = "=+'MY REP PEUG'!H25"
-            $Worksheet.Cells.Item($mayorRow, 25).Formula = "=+X$TotalRow-'NC REP PEUG'!AD9:AE9"
-            $Worksheet.Cells.Item($mayorRow, 26).Formula = "=X$TotalRow"
-        }
-        'chgn' {
-            $Worksheet.Cells.Item($mayorRow, 16).Formula = "=+'MY REP CHGN'!J8"
-            $Worksheet.Cells.Item($mayorRow, 19).Formula = "=+'MY REP CHGN'!I15"
-        }
-        'szk' {
-            $Worksheet.Cells.Item($mayorRow, 16).Formula = "=+'MY REP SZK'!I31"
-            $Worksheet.Cells.Item($mayorRow, 18).Formula = "=+'MY REP SZK'!H50"
-        }
-        default {
-            throw "Clave no soportada: $Key"
+    foreach ($column in $formulaMap.Keys) {
+        $Worksheet.Cells.Item($mayorRow, [int]$column).Formula = $formulaMap[$column]
+    }
+
+    foreach ($column in $formatMap.Keys) {
+        if (-not [string]::IsNullOrWhiteSpace($formatMap[$column])) {
+            $Worksheet.Cells.Item($mayorRow, [int]$column).NumberFormat = $formatMap[$column]
         }
     }
 
@@ -1241,6 +1499,8 @@ function Process-Rep-Sheet {
             $sourceSheet = $sourceWorkbook.Worksheets.Item(1)
         }
 
+        Assert-Rep-SourceWorksheet -Worksheet $sourceSheet -Label $Label
+
         $targetSheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @($TargetSheetName)
         $oldUsedLastRow = Get-Used-LastRow -Worksheet $targetSheet
         $oldMayorRow = Find-Row-Containing -Worksheet $targetSheet -Column 14 -Needle 'MAYOR' -StartRow 1 -EndRow ([Math]::Max(200, $oldUsedLastRow + 20))
@@ -1249,7 +1509,7 @@ function Process-Rep-Sheet {
         Copy-Rep-Range -SourceSheet $sourceSheet -TargetSheet $targetSheet -LastRow $sourceLastRow
 
         $scanEnd = [Math]::Max($sourceLastRow + 10, $oldUsedLastRow + 10)
-        $newTotalRow = Find-Row-Containing -Worksheet $targetSheet -Column 12 -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow $scanEnd
+        $newTotalRow = Find-Row-Containing-Anywhere -Worksheet $targetSheet -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow $scanEnd -LastColumn 35
         if ($null -eq $newTotalRow) {
             $newTotalRow = $sourceLastRow
         }
@@ -1267,6 +1527,13 @@ function Process-Rep-Sheet {
         Write-Output ("INFO|{0}|rows={1}" -f $Key, $rowCount)
         Write-Output ("INFO|{0}|sheet={1}" -f $Key, $TargetSheetName)
         Write-Output ("INFO|{0}|label={1}" -f $Key, $Label)
+
+        return [pscustomobject]@{
+            Key = $Key
+            Label = $Label
+            TargetSheetName = $TargetSheetName
+            RowCount = $rowCount
+        }
     }
     finally {
         if ($null -ne $sourceWorkbook) {
@@ -1343,7 +1610,7 @@ try {
     $repGroupsByKey = @{}
 
     foreach ($config in $configs) {
-        Process-Rep-Sheet `
+        $sheetResult = Process-Rep-Sheet `
             -Excel $excel `
             -OutputWorkbook $outputWorkbook `
             -SourcePath $config.SourcePath `
@@ -1352,17 +1619,47 @@ try {
             -Label $config.Label `
             -Lookup $repLookups[$config.Key]
 
+        $templateRepSheet = $null
+        $outputRepSheet = $null
+        try {
+            $templateRepSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @($config.TargetSheet)
+            $outputRepSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @($config.TargetSheet)
+            Validate-Rep-Sheet-Output `
+                -Worksheet $outputRepSheet `
+                -TemplateWorksheet $templateRepSheet `
+                -Key $config.Key `
+                -Lookup $repLookups[$config.Key] `
+                -ExpectedRows $sheetResult.RowCount
+        }
+        finally {
+            if ($null -ne $outputRepSheet) {
+                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputRepSheet)
+            }
+            if ($null -ne $templateRepSheet) {
+                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateRepSheet)
+            }
+        }
+
         $repGroupsByKey[$config.Key] = Update-My-Sheet-From-Rep `
             -OutputWorkbook $outputWorkbook `
             -TemplateWorkbook $templateWorkbook `
             -Key $config.Key `
             -RepSheetName $config.TargetSheet
+
+        Validate-My-Sheet-Output `
+            -OutputWorkbook $outputWorkbook `
+            -TemplateWorkbook $templateWorkbook `
+            -Key $config.Key
     }
 
     Update-Mayor-Iva-From-Rep `
         -OutputWorkbook $outputWorkbook `
         -TemplateWorkbook $templateWorkbook `
         -RepGroupsByKey $repGroupsByKey
+
+    Validate-Mayor-Iva-Output `
+        -OutputWorkbook $outputWorkbook `
+        -TemplateWorkbook $templateWorkbook
 
     foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP SZK')) {
         Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName
