@@ -1,5 +1,9 @@
+const path = require("path");
+
 const AdmZip = require("adm-zip");
 const { XMLBuilder, XMLParser } = require("fast-xml-parser");
+
+const { sanitizeText, deepClone } = require("./core-utils");
 
 const XML_PARSER = new XMLParser({
   ignoreAttributes: false,
@@ -52,7 +56,7 @@ function toArray(value) {
 }
 
 function normalizeZipPath(inputPath) {
-  return String(inputPath || "").replace(/\\/g, "/");
+  return String(inputPath || "").replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
 function parseXml(xmlText) {
@@ -70,7 +74,7 @@ function buildXml(xmlObject) {
 function readZipText(zip, entryPath) {
   const entry = zip.getEntry(normalizeZipPath(entryPath));
   if (!entry) {
-    throw new Error(`No se encontro la entrada ZIP: ${entryPath}`);
+    return null;
   }
   return entry.getData().toString("utf8");
 }
@@ -80,49 +84,75 @@ function updateZipText(zip, entryPath, xmlObject) {
 }
 
 function getWorksheetEntryPath(zip, sheetName) {
-  const workbookXml = parseXml(readZipText(zip, "xl/workbook.xml"));
-  const workbookRelsXml = parseXml(readZipText(zip, "xl/_rels/workbook.xml.rels"));
+  const workbookText = readZipText(zip, "xl/workbook.xml");
+  const workbookRelsText = readZipText(zip, "xl/_rels/workbook.xml.rels");
+  if (!workbookText || !workbookRelsText) {
+    throw new Error("No se pudo leer la estructura interna del Excel.");
+  }
 
-  const sheets = toArray(workbookXml.workbook.sheets.sheet);
-  const rels = toArray(workbookRelsXml.Relationships.Relationship);
-  const targetSheet = sheets.find((sheet) => String(sheet["@_name"] || "") === sheetName);
+  const workbookXml = parseXml(workbookText);
+  const workbookRelsXml = parseXml(workbookRelsText);
+
+  const sheets = toArray(workbookXml.workbook?.sheets?.sheet);
+  const rels = toArray(workbookRelsXml.Relationships?.Relationship);
+  const normalizedSheetName = sanitizeText(sheetName).toUpperCase();
+  const targetSheet = sheets.find(
+    (sheet) => sanitizeText(sheet?.["@_name"]).toUpperCase() === normalizedSheetName,
+  );
   if (!targetSheet) {
-    throw new Error(`No se encontro la hoja ${sheetName} en workbook.xml.`);
+    throw new Error(`No se encontro la hoja ${sheetName} en el Excel.`);
   }
 
   const relationId = targetSheet["@_r:id"];
   const relation = rels.find((item) => item["@_Id"] === relationId);
   if (!relation) {
-    throw new Error(`No se encontro la relacion ${relationId} para ${sheetName}.`);
+    throw new Error(`No se pudo resolver la ruta XML de la hoja ${sheetName}.`);
   }
 
-  return `xl/${String(relation["@_Target"] || "").replace(/^\/+/, "")}`;
+  const target = normalizeZipPath(relation["@_Target"]);
+  return target.startsWith("xl/") ? target : normalizeZipPath(path.posix.join("xl", target));
 }
 
 function getRowsArray(sheetXmlObject) {
-  return toArray(sheetXmlObject.worksheet.sheetData.row);
+  return toArray(sheetXmlObject.worksheet?.sheetData?.row);
 }
 
 function setRowsArray(sheetXmlObject, rows) {
+  if (!sheetXmlObject.worksheet) {
+    sheetXmlObject.worksheet = {};
+  }
+  if (!sheetXmlObject.worksheet.sheetData) {
+    sheetXmlObject.worksheet.sheetData = {};
+  }
   sheetXmlObject.worksheet.sheetData.row = rows;
 }
 
 function getCellsArray(rowObject) {
-  return toArray(rowObject.c);
+  return toArray(rowObject?.c);
 }
 
 function setCellsArray(rowObject, cells) {
+  if (!cells.length) {
+    delete rowObject.c;
+    return;
+  }
   rowObject.c = cells;
 }
 
 function parseCellRef(ref) {
-  const match = /^([A-Z]+)(\d+)$/.exec(String(ref || ""));
+  const match = /^([A-Z]+)(\d+)$/i.exec(String(ref || ""));
   if (!match) {
     return null;
   }
+  const colName = match[1].toUpperCase();
+  const colNumber = columnNameToNumber(colName);
+  const rowNumber = Number(match[2]);
   return {
-    colName: match[1],
-    rowNumber: Number(match[2]),
+    col: colNumber,
+    row: rowNumber,
+    colName,
+    colNumber,
+    rowNumber,
   };
 }
 
@@ -151,9 +181,9 @@ function cellRef(colNumber, rowNumber) {
 }
 
 function copyCellPayload(targetCell, sourceCell) {
-  for (const key of ["v", "f", "is", "vm", "@_t", "@_s", "@_cm", "extLst"]) {
+  for (const key of ["v", "f", "is", "vm", "@_t", "@_cm", "@_vm", "extLst"]) {
     if (sourceCell[key] != null) {
-      targetCell[key] = JSON.parse(JSON.stringify(sourceCell[key]));
+      targetCell[key] = deepClone(sourceCell[key]);
     } else {
       delete targetCell[key];
     }
@@ -161,13 +191,13 @@ function copyCellPayload(targetCell, sourceCell) {
 }
 
 function cloneTemplateRow(rowTemplate, targetRowNumber) {
-  const clone = JSON.parse(JSON.stringify(rowTemplate));
+  const clone = deepClone(rowTemplate);
   clone["@_r"] = String(targetRowNumber);
   const cells = getCellsArray(clone).map((cell) => {
-    const nextCell = JSON.parse(JSON.stringify(cell));
+    const nextCell = deepClone(cell);
     const parsedRef = parseCellRef(nextCell["@_r"]);
     if (parsedRef) {
-      nextCell["@_r"] = `${parsedRef.colName}${targetRowNumber}`;
+      nextCell["@_r"] = cellRef(parsedRef.colNumber, targetRowNumber);
     }
     return nextCell;
   });
@@ -176,12 +206,14 @@ function cloneTemplateRow(rowTemplate, targetRowNumber) {
 }
 
 function clearCellPayload(targetCell) {
+  delete targetCell["@_cm"];
+  delete targetCell["@_vm"];
   delete targetCell.v;
   delete targetCell.f;
   delete targetCell.is;
   delete targetCell.vm;
   delete targetCell.extLst;
-  targetCell["@_t"] = "n";
+  delete targetCell["@_t"];
 }
 
 function hasCellPayload(cell) {
@@ -193,10 +225,31 @@ function stripCalcChain(zip) {
   if (zip.getEntry(calcChainPath)) {
     zip.deleteFile(calcChainPath);
   }
+
+  const relsXml = readZipText(zip, "xl/_rels/workbook.xml.rels");
+  if (relsXml) {
+    const relsObj = parseXml(relsXml);
+    const rels = toArray(relsObj.Relationships?.Relationship);
+    const kept = rels.filter((item) => !String(item?.["@_Type"] || "").endsWith("/calcChain"));
+    relsObj.Relationships.Relationship = kept;
+    updateZipText(zip, "xl/_rels/workbook.xml.rels", relsObj);
+  }
+
+  const contentTypesXml = readZipText(zip, "[Content_Types].xml");
+  if (contentTypesXml) {
+    const typesObj = parseXml(contentTypesXml);
+    const overrides = toArray(typesObj.Types?.Override);
+    const kept = overrides.filter((item) => item?.["@_PartName"] !== "/xl/calcChain.xml");
+    typesObj.Types.Override = kept;
+    updateZipText(zip, "[Content_Types].xml", typesObj);
+  }
 }
 
 function stableStringify(value) {
-  if (value === null || typeof value !== "object") {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  if (typeof value !== "object") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
