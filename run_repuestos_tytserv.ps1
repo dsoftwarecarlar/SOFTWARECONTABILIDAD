@@ -222,7 +222,7 @@ function Apply-Template-Lookup {
         $refCode = Normalize-Text $reference.ClientCode
         $refName = Normalize-Text $reference.ClientName
 
-        if ($refRuc -ne '' -and ($currentRuc -eq '' -or (Test-Looks-MaskedRuc $currentRuc))) {
+        if ($refRuc -ne '' -and $currentRuc -eq '') {
             $Worksheet.Cells.Item($row, 9).Value2 = "'" + $refRuc
         }
 
@@ -230,7 +230,7 @@ function Apply-Template-Lookup {
             $Worksheet.Cells.Item($row, 10).Value2 = "'" + $refCode
         }
 
-        if ($refName -ne '' -and ($currentName -eq '' -or (Test-Looks-UnreadableName $currentName))) {
+        if ($refName -ne '' -and $currentName -eq '') {
             $Worksheet.Cells.Item($row, 11).Value2 = $refName
         }
     }
@@ -354,16 +354,16 @@ function Validate-Template-Lookup-Application {
         $currentCode = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
         $currentName = Normalize-Text $Worksheet.Cells.Item($row, 11).Text
 
-        if ((Normalize-Text $reference.Ruc) -ne '' -and (Test-Looks-MaskedRuc $currentRuc)) {
-            throw ("La hoja {0} mantiene RUC enmascarado para documento {1} en fila {2}." -f $Label, $doc, $row)
+        if ((Normalize-Text $reference.Ruc) -ne '' -and $currentRuc -eq '') {
+            throw ("La hoja {0} quedo sin RUC para documento {1} en fila {2}." -f $Label, $doc, $row)
         }
 
         if ((Normalize-Text $reference.ClientCode) -ne '' -and $currentCode -eq '') {
             throw ("La hoja {0} quedo sin codigo cliente para documento {1} en fila {2}." -f $Label, $doc, $row)
         }
 
-        if ((Normalize-Text $reference.ClientName) -ne '' -and (Test-Looks-UnreadableName $currentName)) {
-            throw ("La hoja {0} mantiene nombre ilegible para documento {1} en fila {2}." -f $Label, $doc, $row)
+        if ((Normalize-Text $reference.ClientName) -ne '' -and $currentName -eq '') {
+            throw ("La hoja {0} quedo sin nombre cliente para documento {1} en fila {2}." -f $Label, $doc, $row)
         }
     }
 }
