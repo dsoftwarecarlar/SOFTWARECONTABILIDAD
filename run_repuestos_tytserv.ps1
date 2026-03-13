@@ -435,7 +435,8 @@ function Validate-My-Sheet-Output {
     param(
         [object]$OutputWorkbook,
         [object]$TemplateWorkbook,
-        [string]$Key
+        [string]$Key,
+        [object]$RepGroups
     )
 
     $layout = Get-My-Layout -Key $Key
@@ -456,6 +457,22 @@ function Validate-My-Sheet-Output {
                     }
                 }
             }
+
+            $expectedGroups = switch ((Normalize-Text $section.Name).ToLowerInvariant()) {
+                'sales' { $RepGroups.Sales }
+                'discount' { $RepGroups.Discount }
+                default { @{} }
+            }
+            $actualGroups = Get-Output-Section-Groups `
+                -Worksheet $outputWorksheet `
+                -Layout $layout `
+                -Section $section
+
+            Assert-Grouped-AmountsMatch `
+                -ExpectedGroups $expectedGroups `
+                -ActualGroups $actualGroups `
+                -Label $layout.MySheetName `
+                -SectionName (Normalize-Text $section.Name)
         }
     }
     finally {
@@ -471,7 +488,8 @@ function Validate-My-Sheet-Output {
 function Validate-Mayor-Iva-Output {
     param(
         [object]$OutputWorkbook,
-        [object]$TemplateWorkbook
+        [object]$TemplateWorkbook,
+        [hashtable]$RepGroupsByKey
     )
 
     $outputWorksheet = $null
@@ -491,6 +509,20 @@ function Validate-Mayor-Iva-Output {
                 }
             }
         }
+
+        $expectedGroups = @{}
+        foreach ($key in $RepGroupsByKey.Keys) {
+            foreach ($groupKey in $RepGroupsByKey[$key].Vat.Keys) {
+                $expectedGroups[$groupKey] = $RepGroupsByKey[$key].Vat[$groupKey]
+            }
+        }
+
+        $actualGroups = Get-Output-Mayor-Iva-Groups -Worksheet $outputWorksheet
+        Assert-Grouped-AmountsMatch `
+            -ExpectedGroups $expectedGroups `
+            -ActualGroups $actualGroups `
+            -Label 'MAYOR IVA' `
+            -SectionName 'vat'
     }
     finally {
         if ($null -ne $templateWorksheet) {
@@ -963,6 +995,107 @@ function Get-My-Layout {
         }
         default {
             throw "Clave no soportada para layout MY: $Key"
+        }
+    }
+}
+
+function Get-Output-Section-Groups {
+    param(
+        [object]$Worksheet,
+        [hashtable]$Layout,
+        [hashtable]$Section
+    )
+
+    $groups = @{}
+
+    for ($row = $Section.StartRow; $row -le $Section.EndRow; $row++) {
+        $amount = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Section.AmountColumn
+        $opposite = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Section.OppositeColumn
+        if ([Math]::Abs($amount) -lt 0.0000001 -or [Math]::Abs($opposite) -gt 0.0000001) {
+            continue
+        }
+
+        $account = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 1
+        $seat = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column $Layout.SeatColumn
+        $detail = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column $Layout.DetailColumn
+        if ($account -eq '' -or $seat -eq '' -or $detail -eq '') {
+            continue
+        }
+
+        Add-Grouped-Amount `
+            -Groups $groups `
+            -GroupKey ($account + '|' + $seat + '|' + $detail) `
+            -Amount $amount `
+            -DateValue $null `
+            -DateText '' `
+            -Seat $seat `
+            -Detail $detail
+    }
+
+    return $groups
+}
+
+function Get-Output-Mayor-Iva-Groups {
+    param([object]$Worksheet)
+
+    $groups = @{}
+
+    for ($row = 299; $row -le 366; $row++) {
+        $type = (Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 5).ToUpperInvariant()
+        $seat = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 6
+        $detail = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 7
+        $debit = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 8
+        $credit = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 9
+
+        if ($type -ne 'REPTO' -or $seat -eq '' -or $detail -eq '') {
+            continue
+        }
+
+        if ([Math]::Abs($credit) -lt 0.0000001 -or [Math]::Abs($debit) -gt 0.0000001) {
+            continue
+        }
+
+        Add-Grouped-Amount `
+            -Groups $groups `
+            -GroupKey ($seat + '|' + $detail) `
+            -Amount $credit `
+            -DateValue $null `
+            -DateText '' `
+            -Seat $seat `
+            -Detail $detail
+    }
+
+    return $groups
+}
+
+function Assert-Grouped-AmountsMatch {
+    param(
+        [hashtable]$ExpectedGroups,
+        [hashtable]$ActualGroups,
+        [string]$Label,
+        [string]$SectionName
+    )
+
+    $allKeys = @(
+        @($ExpectedGroups.Keys) + @($ActualGroups.Keys) |
+            Sort-Object -Unique
+    )
+
+    foreach ($groupKey in $allKeys) {
+        $expectedAmount = if ($ExpectedGroups.ContainsKey($groupKey)) {
+            [double]$ExpectedGroups[$groupKey].Amount
+        } else {
+            0.0
+        }
+
+        $actualAmount = if ($ActualGroups.ContainsKey($groupKey)) {
+            [double]$ActualGroups[$groupKey].Amount
+        } else {
+            0.0
+        }
+
+        if ([Math]::Abs($expectedAmount - $actualAmount) -ge 0.01) {
+            throw ("La hoja {0} no cuadra en {1} para el grupo {2}. Esperado {3:N2} y llego {4:N2}." -f $Label, $SectionName, $groupKey, $expectedAmount, $actualAmount)
         }
     }
 }
@@ -1649,7 +1782,8 @@ try {
         Validate-My-Sheet-Output `
             -OutputWorkbook $outputWorkbook `
             -TemplateWorkbook $templateWorkbook `
-            -Key $config.Key
+            -Key $config.Key `
+            -RepGroups $repGroupsByKey[$config.Key]
     }
 
     Update-Mayor-Iva-From-Rep `
@@ -1659,7 +1793,8 @@ try {
 
     Validate-Mayor-Iva-Output `
         -OutputWorkbook $outputWorkbook `
-        -TemplateWorkbook $templateWorkbook
+        -TemplateWorkbook $templateWorkbook `
+        -RepGroupsByKey $repGroupsByKey
 
     foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP SZK')) {
         Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName

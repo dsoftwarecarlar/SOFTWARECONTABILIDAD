@@ -266,6 +266,10 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
         }
 
         if (!is_dir($outputDir)) {
+            app_ensure_dir($outputDir);
+        }
+
+        if (!is_dir($outputDir)) {
             throw new RuntimeException('No se encontro la carpeta de salidas.');
         }
 

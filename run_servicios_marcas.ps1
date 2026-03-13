@@ -1146,22 +1146,10 @@ function Get-PreferredLookupText {
         [object]$SourceNormalized = ''
     )
 
-    $lookupText = Normalize-Text $LookupValue
-    if ($lookupText -ne '' -and -not (Test-ObfuscatedText $LookupValue)) {
-        return $LookupValue
-    }
-
-    $sourceRawText = Normalize-Text $SourceRaw
-    if ($sourceRawText -ne '') {
-        return $SourceRaw
-    }
-
-    $sourceNormalizedText = Normalize-Text $SourceNormalized
-    if ($sourceNormalizedText -ne '') {
-        return $SourceNormalized
-    }
-
-    return $LookupValue
+    return Get-PreferredSourceText `
+        -SourceRaw $SourceRaw `
+        -SourceNormalized $SourceNormalized `
+        -LookupValue $LookupValue
 }
 
 function Get-PreferredSourceDate {
@@ -1209,20 +1197,28 @@ function Resolve-TemplateGarExt {
         [object]$TemplateDefault = ''
     )
 
-    $lookupText = Normalize-Text $LookupValue
-    if ($lookupText -ne '') {
-        return $LookupValue
-    }
-
     $sourceValue = Get-PreferredSourceText -SourceRaw $SourceRaw -SourceNormalized $SourceNormalized
     $sourceText = (Normalize-Text $sourceValue).ToUpperInvariant()
     $defaultText = Normalize-Text $TemplateDefault
 
-    if ($sourceText -eq '' -or $sourceText -in @('N', 'NO', '0', 'FALSE')) {
+    if ($sourceText -ne '') {
+        if ($sourceText -in @('N', 'NO', '0', 'FALSE')) {
+            return $defaultText
+        }
+
+        return $sourceValue
+    }
+
+    $lookupText = Normalize-Text $LookupValue
+    if ($lookupText -eq '') {
         return $defaultText
     }
 
-    return $sourceValue
+    if ($lookupText.ToUpperInvariant() -in @('N', 'NO', '0', 'FALSE')) {
+        return $defaultText
+    }
+
+    return $LookupValue
 }
 
 function Get-Excel-TextLiteral {
@@ -1527,16 +1523,6 @@ function Fill-Invoices {
             $tvValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Tv } else { '' }) -SourceRaw $row.LineRaw -SourceNormalized $row.Line
             $markerValue = 'N'
 
-            if ($null -ne $lookup) {
-                $netoConIva = Round-Amount $lookup.NetoConIva
-                $ivaAmount = Round-Amount $lookup.Iva
-                $interestAmount = Round-Amount $lookup.Interest
-                $totalAmount = Round-Amount $lookup.Total
-                if ((Normalize-Text $lookup.Order) -eq '' -and (Normalize-Text $row.Order) -eq '') {
-                    $orderValue = ''
-                }
-            }
-
             $ivaCellValue = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0 -or ($null -ne $lookup -and (Normalize-Text $lookup.IvaText) -eq '')) {
                 $null
             } else {
@@ -1680,26 +1666,6 @@ function Fill-Notes {
             $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
             $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { '' }
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
-
-            if ($null -ne $lookup) {
-                $netoSinIva = Round-Amount $lookup.NetoSinIva
-                $netoConIva = Round-Amount $lookup.NetoConIva
-                $ivaAmount = Round-Amount $lookup.Iva
-                $interestAmount = Round-Amount $lookup.Interest
-                $totalAmount = Round-Amount $lookup.Total
-
-                if ((Normalize-Text $lookup.Series) -eq '' -and (Normalize-Text $row.Series) -eq '') {
-                    $seriesValue = ''
-                }
-
-                if ((Normalize-Text $lookup.Invoice) -eq '' -and (Normalize-Text $row.AffectedDocumentTrim) -eq '') {
-                    $invoiceValue = ''
-                }
-
-                if ((Normalize-Text $lookup.Order) -eq '' -and $orderKey -eq '' -and (Normalize-Text $row.Order) -eq '') {
-                    $orderValue = ''
-                }
-            }
 
             $rowNumber = $targetRow
 
@@ -1855,9 +1821,12 @@ function Validate-Services-BrandOutput {
     }
 }
 
-$resolvedInputPath = (Resolve-Path $InputPath).Path
-$resolvedOutputDir = (Resolve-Path $OutputDir).Path
-$resolvedTemplateDir = (Resolve-Path $TemplateDir).Path
+$resolvedInputPath = (Resolve-Path -LiteralPath $InputPath).Path
+if (-not (Test-Path -LiteralPath $OutputDir)) {
+    $null = New-Item -ItemType Directory -Path $OutputDir -Force
+}
+$resolvedOutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
+$resolvedTemplateDir = (Resolve-Path -LiteralPath $TemplateDir).Path
 
 $templateConfigs = @{
     changan = @{
