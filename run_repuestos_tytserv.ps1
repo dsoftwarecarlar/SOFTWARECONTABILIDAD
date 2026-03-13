@@ -222,7 +222,7 @@ function Apply-Template-Lookup {
         $refCode = Normalize-Text $reference.ClientCode
         $refName = Normalize-Text $reference.ClientName
 
-        if ($refRuc -ne '' -and $currentRuc -eq '') {
+        if ($refRuc -ne '' -and $currentRuc -eq '' -and -not (Test-Looks-MaskedRuc $refRuc)) {
             $Worksheet.Cells.Item($row, 9).Value2 = "'" + $refRuc
         }
 
@@ -230,7 +230,7 @@ function Apply-Template-Lookup {
             $Worksheet.Cells.Item($row, 10).Value2 = "'" + $refCode
         }
 
-        if ($refName -ne '' -and $currentName -eq '') {
+        if ($refName -ne '' -and $currentName -eq '' -and -not (Test-Looks-UnreadableName $refName)) {
             $Worksheet.Cells.Item($row, 11).Value2 = $refName
         }
     }
@@ -354,7 +354,7 @@ function Validate-Template-Lookup-Application {
         $currentCode = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
         $currentName = Normalize-Text $Worksheet.Cells.Item($row, 11).Text
 
-        if ((Normalize-Text $reference.Ruc) -ne '' -and $currentRuc -eq '') {
+        if ((Normalize-Text $reference.Ruc) -ne '' -and -not (Test-Looks-MaskedRuc $reference.Ruc) -and $currentRuc -eq '') {
             throw ("La hoja {0} quedo sin RUC para documento {1} en fila {2}." -f $Label, $doc, $row)
         }
 
@@ -362,7 +362,7 @@ function Validate-Template-Lookup-Application {
             throw ("La hoja {0} quedo sin codigo cliente para documento {1} en fila {2}." -f $Label, $doc, $row)
         }
 
-        if ((Normalize-Text $reference.ClientName) -ne '' -and $currentName -eq '') {
+        if ((Normalize-Text $reference.ClientName) -ne '' -and -not (Test-Looks-UnreadableName $reference.ClientName) -and $currentName -eq '') {
             throw ("La hoja {0} quedo sin nombre cliente para documento {1} en fila {2}." -f $Label, $doc, $row)
         }
     }

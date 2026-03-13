@@ -1128,7 +1128,7 @@ function Get-PreferredSourceText {
     }
 
     $lookupText = Normalize-Text $LookupValue
-    if ($lookupText -ne '') {
+    if ($lookupText -ne '' -and -not (Test-ObfuscatedText $LookupValue)) {
         return $LookupValue
     }
 
@@ -1320,6 +1320,58 @@ function Set-NumericCellSafe {
     }
 }
 
+function Get-Invoice-SourceAmounts {
+    param([pscustomobject]$Row)
+
+    $totalAmount = Round-Amount ([Math]::Abs($Row.Total))
+    $ivaAmount = Round-Amount ([Math]::Abs($Row.Iva))
+    $interestAmount = Round-Amount ([Math]::Abs($Row.Interes))
+    $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
+    $discount = 0.0
+    $subtotal = Round-Amount ($netoConIva + $discount)
+    $netoIva0Value = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0.0 }
+    $iva12Value = 0.0
+
+    return [pscustomobject]@{
+        Total = [double]$totalAmount
+        Iva = [double]$ivaAmount
+        Interest = [double]$interestAmount
+        NetoConIva = [double]$netoConIva
+        Discount = [double]$discount
+        Subtotal = [double]$subtotal
+        NetoIva0 = [double]$netoIva0Value
+        Iva12 = [double]$iva12Value
+    }
+}
+
+function Get-Note-SourceAmounts {
+    param([pscustomobject]$Row)
+
+    $totalAmount = Round-Amount ([Math]::Abs($Row.Total))
+    $ivaAmount = Round-Amount ([Math]::Abs($Row.Iva))
+    $interestAmount = Round-Amount ([Math]::Abs($Row.Interes))
+    $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
+    $discount = 0.0
+    $subtotal = Round-Amount ($netoConIva + $discount)
+    $netoSinIva = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0.0 }
+    $iva12Value = 0.0
+    $anticipo = 0.0
+    $neto = Round-Amount ($totalAmount - $anticipo)
+
+    return [pscustomobject]@{
+        Total = [double]$totalAmount
+        Iva = [double]$ivaAmount
+        Interest = [double]$interestAmount
+        NetoConIva = [double]$netoConIva
+        Discount = [double]$discount
+        Subtotal = [double]$subtotal
+        NetoSinIva = [double]$netoSinIva
+        Iva12 = [double]$iva12Value
+        Anticipo = [double]$anticipo
+        Neto = [double]$neto
+    }
+}
+
 function Fill-RepVtas {
     param(
         [object]$Worksheet,
@@ -1505,25 +1557,26 @@ function Fill-Invoices {
                 $fallbackCount++
             }
 
-            $totalAmount = Round-Amount ([Math]::Abs($row.Total))
-            $ivaAmount = Round-Amount ([Math]::Abs($row.Iva))
-            $interestAmount = Round-Amount ([Math]::Abs($row.Interes))
-            $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
-            $discount = if ($null -ne $lookup) { Round-Amount $lookup.Discount } else { 0 }
-            $subtotal = if ($null -ne $lookup) { Round-Amount $lookup.Subtotal } else { Round-Amount ($netoConIva + $discount) }
+            $sourceAmounts = Get-Invoice-SourceAmounts -Row $row
+            $totalAmount = [double]$sourceAmounts.Total
+            $ivaAmount = [double]$sourceAmounts.Iva
+            $interestAmount = [double]$sourceAmounts.Interest
+            $netoConIva = [double]$sourceAmounts.NetoConIva
+            $discount = [double]$sourceAmounts.Discount
+            $subtotal = [double]$sourceAmounts.Subtotal
             $agencyValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Agency } else { '' }) -SourceRaw $row.AgencyRaw -SourceNormalized $row.Agency
             $seriesValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Series } else { '' }) -SourceRaw $row.SeriesRaw -SourceNormalized $row.Series
             $orderValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Order } else { '' }) -SourceRaw $row.OrderRaw -SourceNormalized $row.Order
             $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
-            $netoIva0Value = if ($null -ne $lookup) { Round-Amount $lookup.NetoIva0 } else { if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0 } }
-            $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
+            $netoIva0Value = [double]$sourceAmounts.NetoIva0
+            $iva12Value = [double]$sourceAmounts.Iva12
             $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { Get-Invoice-Asiento -Row $row }
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
             $tvValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Tv } else { '' }) -SourceRaw $row.LineRaw -SourceNormalized $row.Line
             $markerValue = 'N'
 
-            $ivaCellValue = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0 -or ($null -ne $lookup -and (Normalize-Text $lookup.IvaText) -eq '')) {
+            $ivaCellValue = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) {
                 $null
             } else {
                 [double]$ivaAmount
@@ -1627,15 +1680,16 @@ function Fill-Notes {
                 $fallbackCount++
             }
 
-            $totalAmount = Round-Amount ([Math]::Abs($row.Total))
-            $ivaAmount = Round-Amount ([Math]::Abs($row.Iva))
-            $interestAmount = Round-Amount ([Math]::Abs($row.Interes))
-            $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
-            $netoSinIva = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0 }
-            $discount = if ($null -ne $lookup) { Round-Amount $lookup.Discount } else { 0 }
-            $subtotal = if ($null -ne $lookup) { Round-Amount $lookup.Subtotal } else { Round-Amount ($netoConIva + $discount) }
-            $anticipo = if ($null -ne $lookup) { Round-Amount $lookup.Anticipo } else { 0 }
-            $neto = if ($null -ne $lookup) { Round-Amount $lookup.Neto } else { Round-Amount ($totalAmount - $anticipo) }
+            $sourceAmounts = Get-Note-SourceAmounts -Row $row
+            $totalAmount = [double]$sourceAmounts.Total
+            $ivaAmount = [double]$sourceAmounts.Iva
+            $interestAmount = [double]$sourceAmounts.Interest
+            $netoConIva = [double]$sourceAmounts.NetoConIva
+            $netoSinIva = [double]$sourceAmounts.NetoSinIva
+            $discount = [double]$sourceAmounts.Discount
+            $subtotal = [double]$sourceAmounts.Subtotal
+            $anticipo = [double]$sourceAmounts.Anticipo
+            $neto = [double]$sourceAmounts.Neto
             $agencyValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Agency } else { '' }) -SourceRaw $row.AgencyRaw -SourceNormalized $row.Agency
             $kindValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Kind) -ne '') {
                 $lookup.Kind
@@ -1663,7 +1717,7 @@ function Fill-Notes {
             }
             $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
-            $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
+            $iva12Value = [double]$sourceAmounts.Iva12
             $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { '' }
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
 
