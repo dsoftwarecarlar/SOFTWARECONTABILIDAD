@@ -204,27 +204,44 @@ function Set-DateCellValue {
         [string]$Context = ''
     )
 
-    if ($null -eq $Value -or $Value -eq '') {
-        Set-CellValue -Worksheet $Worksheet -Row $Row -Column $Column -Value $null -Context $Context
-        return
-    }
-
+    $cell = $Worksheet.Cells.Item($Row, $Column)
     try {
-        $Worksheet.Cells.Item($Row, $Column).Value = [datetime]::FromOADate([double]$Value)
+        if ($null -eq $Value -or $Value -eq '') {
+            $null = $cell.ClearContents()
+            return
+        }
+
+        $dateSerial = [double]$Value
+        $currentFormat = Normalize-Text $cell.NumberFormat
+        $dateText = [datetime]::FromOADate($dateSerial).ToString('dd/MM/yyyy')
+
+        if ($currentFormat -eq '' -or $currentFormat -eq 'General') {
+            # En formato General Excel cambia el NumberFormat al asignar DateTime.
+            # Escribimos texto para conservar exactamente el formato de la plantilla manual.
+            $null = $cell.NumberFormat = 'General'
+            $null = $cell.Value2 = "'" + $dateText
+        } else {
+            # Para celdas ya formateadas como fecha, mantener formato y grabar serial.
+            $null = $cell.Value = [datetime]::FromOADate($dateSerial)
+        }
     } catch {
         $valueType = if ($null -eq $Value) { 'null' } else { $Value.GetType().FullName }
         throw "No se pudo escribir fecha [$Context] row=$Row col=$Column type=$valueType value=$Value :: $($_.Exception.Message)"
+    } finally {
+        [void][Runtime.Interopservices.Marshal]::ReleaseComObject($cell)
     }
 }
 
 function Get-Template-Key {
     param(
         [object]$Agency,
-        [object]$Series
+        [object]$Series,
+        [object]$Order = ''
     )
 
     $agencyText = (Normalize-Text $Agency).ToUpperInvariant()
     $seriesText = Normalize-Text $Series
+    $orderText = (Normalize-Text $Order).ToUpperInvariant()
 
     switch ($agencyText) {
         'CHANGAN' { return 'changan' }
@@ -232,7 +249,8 @@ function Get-Template-Key {
         'MATRIZ' { return 'tyt' }
         'SUZUKI AMBATO' { return 'szk' }
         'SUZUKI RIOBAMBA' {
-            if ($seriesText -eq '007-606') {
+            # Regla operativa del formato manual: ciertos documentos D.... van en CHANGAN.
+            if ($orderText -match '^D\d+') {
                 return 'changan'
             }
 
@@ -487,7 +505,6 @@ function Read-SourceRows {
 
     Assert-NotCancelled 'lectura_fuente'
     $rows = New-Object System.Collections.Generic.List[object]
-    $seen = @{}
     $lastRow = $Worksheet.UsedRange.Row + $Worksheet.UsedRange.Rows.Count - 1
 
     for ($row = 2; $row -le $lastRow; $row++) {
@@ -497,12 +514,13 @@ function Read-SourceRows {
             continue
         }
 
+        $order = Normalize-Text $Worksheet.Cells.Item($row, 3).Text
         $series = Normalize-Text $Worksheet.Cells.Item($row, 14).Text
         if ($series -eq '') {
             $series = Normalize-Text $Worksheet.Cells.Item($row, 13).Text
         }
 
-        $templateKey = Get-Template-Key -Agency $agency -Series $series
+        $templateKey = Get-Template-Key -Agency $agency -Series $series -Order $order
         if ($null -eq $templateKey) {
             continue
         }
@@ -512,45 +530,42 @@ function Read-SourceRows {
             continue
         }
 
+        $anulada = (Normalize-Text $Worksheet.Cells.Item($row, 36).Text).ToUpperInvariant()
+        if ($anulada -in @('SI', 'S', 'YES', 'Y', 'ANULADA')) {
+            continue
+        }
+
         $documentRaw = Normalize-Text $Worksheet.Cells.Item($row, 12).Text
         if ($documentRaw -eq '') {
             continue
         }
 
-        $order = Normalize-Text $Worksheet.Cells.Item($row, 3).Text
-        $dateFactText = Normalize-Text $Worksheet.Cells.Item($row, 15).Text
-        $dateNoteText = Normalize-Text $Worksheet.Cells.Item($row, 18).Text
         $affectedRaw = Normalize-Text $Worksheet.Cells.Item($row, 37).Text
-        $totalText = Normalize-Text $Worksheet.Cells.Item($row, 28).Text
-        $dedupeKey = @(
-            $templateKey,
-            $order.ToUpperInvariant(),
-            $docType,
-            $documentRaw,
-            $dateFactText,
-            $dateNoteText,
-            $affectedRaw,
-            $totalText
-        ) -join '|'
-        if ($seen.ContainsKey($dedupeKey)) {
-            continue
-        }
-        $seen[$dedupeKey] = $true
 
         $rows.Add([pscustomobject]@{
             RowIndex = $row
             TemplateKey = $templateKey
             Agency = $agency
+            AgencyRaw = [string]$Worksheet.Cells.Item($row, 1).Text
             Center = Normalize-Text $Worksheet.Cells.Item($row, 2).Text
+            CenterRaw = [string]$Worksheet.Cells.Item($row, 2).Text
             Order = $order
+            OrderRaw = [string]$Worksheet.Cells.Item($row, 3).Text
             Advisor = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
+            AdvisorRaw = [string]$Worksheet.Cells.Item($row, 5).Text
             Line = Normalize-Text $Worksheet.Cells.Item($row, 7).Text
+            LineRaw = [string]$Worksheet.Cells.Item($row, 7).Text
             DocType = $docType
             Cedula = Normalize-Text $Worksheet.Cells.Item($row, 9).Text
+            CedulaRaw = [string]$Worksheet.Cells.Item($row, 9).Text
             Customer = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
+            CustomerRaw = [string]$Worksheet.Cells.Item($row, 10).Text
             DocumentRaw = $documentRaw
             DocumentTrim = Trim-Document $documentRaw
             Series = $series
+            SeriesRaw = [string]$series
+            FormaPago = Normalize-Text $Worksheet.Cells.Item($row, 16).Text
+            Authorization = Normalize-Text $Worksheet.Cells.Item($row, 17).Text
             DateFactValue = Get-Date-Value -Worksheet $Worksheet -Row $row -Column 15
             DateNoteValue = Get-Date-Value -Worksheet $Worksheet -Row $row -Column 18
             NoteCredit = To-Number $Worksheet.Cells.Item($row, 19).Value2
@@ -570,11 +585,195 @@ function Read-SourceRows {
             CostoPintura = To-Number $Worksheet.Cells.Item($row, 33).Value2
             CostoSubconNc = To-Number $Worksheet.Cells.Item($row, 34).Value2
             GarExt = Normalize-Text $Worksheet.Cells.Item($row, 35).Text
+            GarExtRaw = [string]$Worksheet.Cells.Item($row, 35).Text
+            Anulada = $anulada
             AffectedDocumentTrim = Trim-Document $affectedRaw
+            AffectedDocumentRaw = [string]$Worksheet.Cells.Item($row, 37).Text
+            MotivoNc = Normalize-Text $Worksheet.Cells.Item($row, 38).Text
+            ObservacionNc = Normalize-Text $Worksheet.Cells.Item($row, 39).Text
         })
     }
 
     return $rows
+}
+
+function Normalize-SourceRows {
+    param(
+        [object[]]$Rows,
+        [switch]$ConsolidateInvoiceDocuments
+    )
+
+    $sortedRows = @(
+        $Rows |
+            Sort-Object @{ Expression = { [int]$_.RowIndex } }
+    )
+
+    $normalized = New-Object System.Collections.Generic.List[object]
+    $noteSeen = @{}
+    $invoiceGroups = @{}
+
+    foreach ($row in $sortedRows) {
+        if ($row.DocType -in @('DC', 'DE')) {
+            $orderKey = Strip-Order-Suffix $row.Order
+            $dedupeKey = @(
+                $row.TemplateKey,
+                $row.DocType,
+                $row.DocumentTrim,
+                $orderKey,
+                (Get-Date-Write-Value $row.DateNoteValue),
+                (Round-Amount $row.Total),
+                (Round-Amount $row.Iva),
+                (Round-Amount $row.Interes),
+                $row.AffectedDocumentTrim,
+                $row.MotivoNc,
+                $row.ObservacionNc
+            ) -join '|'
+
+            if ($noteSeen.ContainsKey($dedupeKey)) {
+                continue
+            }
+
+            $noteSeen[$dedupeKey] = $true
+            $normalized.Add($row)
+            continue
+        }
+
+        if (-not $ConsolidateInvoiceDocuments) {
+            $normalized.Add($row)
+            continue
+        }
+
+        $invoiceGroupKey = @(
+            $row.TemplateKey,
+            $row.DocType,
+            $row.DocumentTrim,
+            (Normalize-Text $row.Series),
+            (Get-Date-Write-Value $row.DateFactValue)
+        ) -join '|'
+
+        if (-not $invoiceGroups.ContainsKey($invoiceGroupKey)) {
+            $invoiceGroups[$invoiceGroupKey] = New-Object System.Collections.Generic.List[object]
+        }
+
+        $invoiceGroups[$invoiceGroupKey].Add($row)
+    }
+
+    if ($ConsolidateInvoiceDocuments) {
+        foreach ($group in $invoiceGroups.Values) {
+            if ($group.Count -eq 1) {
+                $normalized.Add($group[0])
+                continue
+            }
+
+        $distinctOrders = @{}
+        foreach ($item in $group) {
+            $orderKey = Normalize-Text $item.Order
+            if ($orderKey -ne '') {
+                $distinctOrders[$orderKey] = $true
+            }
+        }
+
+        if ($distinctOrders.Count -le 1) {
+            # Duplicado exacto de factura: conservar solo una fila.
+            $normalized.Add($group[0])
+            continue
+        }
+
+        # Misma factura repetida en varias ordenes (caso operativo SZK):
+        # consolidar montos en una sola fila con orden en blanco.
+        $first = @($group | Sort-Object @{ Expression = { [int]$_.RowIndex } })[0]
+        $sumFields = @(
+            'NoteCredit',
+            'TotalManoObra',
+            'TotalSubcontratos',
+            'TotalInsumos',
+            'TotalServicio',
+            'TotalAccesorios',
+            'TotalRepuestos',
+            'Interes',
+            'Iva',
+            'Total',
+            'Costo',
+            'CostoLubricantes',
+            'CostoAccesorios',
+            'CostoRepuestos',
+            'CostoPintura',
+            'CostoSubconNc'
+        )
+
+        $sumValues = @{}
+        foreach ($field in $sumFields) {
+            $sumValues[$field] = [double]0
+        }
+
+        foreach ($item in $group) {
+            foreach ($field in $sumFields) {
+                $sumValues[$field] = [double]$sumValues[$field] + [double](To-Number $item.$field)
+            }
+        }
+
+            $normalized.Add([pscustomobject]@{
+                RowIndex = $first.RowIndex
+                TemplateKey = $first.TemplateKey
+                Agency = $first.Agency
+                AgencyRaw = $first.AgencyRaw
+                Center = $first.Center
+                CenterRaw = $first.CenterRaw
+                Order = ''
+                OrderRaw = ''
+                Advisor = $first.Advisor
+                AdvisorRaw = $first.AdvisorRaw
+                Line = $first.Line
+                LineRaw = $first.LineRaw
+                DocType = $first.DocType
+                Cedula = $first.Cedula
+                CedulaRaw = $first.CedulaRaw
+                Customer = $first.Customer
+                CustomerRaw = $first.CustomerRaw
+                DocumentRaw = $first.DocumentRaw
+                DocumentTrim = $first.DocumentTrim
+                Series = $first.Series
+                SeriesRaw = $first.SeriesRaw
+                FormaPago = $first.FormaPago
+                Authorization = $first.Authorization
+                DateFactValue = $first.DateFactValue
+                DateNoteValue = $first.DateNoteValue
+                NoteCredit = $sumValues['NoteCredit']
+                TotalManoObra = $sumValues['TotalManoObra']
+                TotalSubcontratos = $sumValues['TotalSubcontratos']
+                TotalInsumos = $sumValues['TotalInsumos']
+                TotalServicio = $sumValues['TotalServicio']
+                TotalAccesorios = $sumValues['TotalAccesorios']
+                TotalRepuestos = $sumValues['TotalRepuestos']
+                Interes = $sumValues['Interes']
+                Iva = $sumValues['Iva']
+                Total = $sumValues['Total']
+                Costo = $sumValues['Costo']
+                CostoLubricantes = $sumValues['CostoLubricantes']
+                CostoAccesorios = $sumValues['CostoAccesorios']
+                CostoRepuestos = $sumValues['CostoRepuestos']
+                CostoPintura = $sumValues['CostoPintura']
+                CostoSubconNc = $sumValues['CostoSubconNc']
+                GarExt = $first.GarExt
+                GarExtRaw = $first.GarExtRaw
+                Anulada = $first.Anulada
+                AffectedDocumentTrim = $first.AffectedDocumentTrim
+                AffectedDocumentRaw = $first.AffectedDocumentRaw
+                MotivoNc = $first.MotivoNc
+                ObservacionNc = $first.ObservacionNc
+            })
+        }
+    }
+
+    return @(
+        $normalized |
+            Sort-Object `
+                @{ Expression = { [int]$_.RowIndex } }, `
+                @{ Expression = { Normalize-Text $_.TemplateKey } }, `
+                @{ Expression = { Normalize-Text $_.DocType } }, `
+                @{ Expression = { Get-Document-SortValue $_.DocumentTrim } }, `
+                @{ Expression = { Normalize-Text $_.Order } }
+    )
 }
 
 function Clear-OutputSheet {
@@ -584,7 +783,16 @@ function Clear-OutputSheet {
         [string]$LastColumn
     )
 
-    $null = $Worksheet.Range("A${StartRow}:${LastColumn}65536").ClearContents()
+    $range = $Worksheet.Range("A${StartRow}:${LastColumn}65536")
+    $xlCellTypeConstants = 2
+    try {
+        $constants = $range.SpecialCells($xlCellTypeConstants)
+        $null = $constants.ClearContents()
+        [void][Runtime.Interopservices.Marshal]::ReleaseComObject($constants)
+    } catch {
+        # Si no hay constantes en el rango, no hay nada que limpiar.
+    }
+    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($range)
 }
 
 function Get-Display-Cedula {
@@ -657,8 +865,41 @@ function Get-PreferredVisibleText {
     return $Primary
 }
 
+function Get-Excel-TextLiteral {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    $text = [string]$Value
+    if ($text -eq '') {
+        return ''
+    }
+
+    if ($text.StartsWith("'")) {
+        return $text
+    }
+
+    $firstChar = $text.Substring(0, 1)
+    if ($firstChar -in @('=', '+', '-', '@')) {
+        return "'" + $text
+    }
+
+    return $text
+}
+
 function Get-Invoice-Asiento {
     param([pscustomobject]$Row)
+
+    $paymentMethod = (Normalize-Text $Row.FormaPago).ToUpperInvariant()
+    if ($paymentMethod -like '*CRED*') {
+        return 'C'
+    }
+
+    if ($paymentMethod -like '*CONT*' -or $paymentMethod -like '*EFEC*') {
+        return 'E'
+    }
 
     $payment = (Normalize-Text $Row.DocType).ToUpperInvariant()
     if ($payment -eq 'FC') {
@@ -701,6 +942,28 @@ function Set-TemplateNumericCell {
     $null = $Worksheet.Cells.Item($Row, $Column).Value2 = [double]$Value
 }
 
+function Set-NumericCellSafe {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column,
+        [double]$Value,
+        [switch]$BlankIfZero
+    )
+
+    $rounded = [double](Round-Amount $Value)
+    if ($BlankIfZero -and (Round-Amount ([Math]::Abs($rounded))) -eq 0) {
+        $null = $Worksheet.Cells.Item($Row, $Column).ClearContents()
+        return
+    }
+
+    try {
+        $null = $Worksheet.Cells.Item($Row, $Column).Value2 = $rounded
+    } catch {
+        $null = $Worksheet.Cells.Item($Row, $Column).Value2 = [string]$rounded
+    }
+}
+
 function Fill-RepVtas {
     param(
         [object]$Worksheet,
@@ -712,108 +975,126 @@ function Fill-RepVtas {
     $targetRow = 15
     $sortedRows = @(
         $Rows |
-            Sort-Object @{
-                Expression = {
-                    $repLookup = Find-RepVtasEntry -Store $Lookups.RepVtas -DocKey $_.DocumentTrim -OrderKey $_.Order
-                    if ($null -ne $repLookup) {
-                        return [int]$repLookup.RowOrder
-                    }
-
-                    return 100000 + [int]$_.RowIndex
+            Sort-Object @{ Expression = {
+                $lookupRow = Find-RepVtasEntry -Store $Lookups.RepVtas -DocKey $_.DocumentTrim -OrderKey $_.Order
+                if ($null -ne $lookupRow) {
+                    return [int]$lookupRow.RowOrder
                 }
-            }
+
+                return 100000 + [int]$_.RowIndex
+            } }
     )
 
     foreach ($row in $sortedRows) {
         try {
             Assert-NotCancelled 'rep_vtas'
-            $lookup = if ($row.DocType -in @('FA', 'FC')) {
-                Find-LookupEntry -Store $Lookups.Invoice -DocKey $row.DocumentTrim -OrderKey $row.Order
-            } else {
-                Find-LookupEntry -Store $Lookups.Note -DocKey $row.DocumentTrim -OrderKey (Strip-Order-Suffix $row.Order)
-            }
             $repLookup = Find-RepVtasEntry -Store $Lookups.RepVtas -DocKey $row.DocumentTrim -OrderKey $row.Order
-            $agencyValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Agency) -ne '') { $repLookup.Agency } else { $row.Agency }
-            $centerValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Center) -ne '') { $repLookup.Center } else { $row.Center }
-            $orderValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Order) -ne '') { $repLookup.Order } else { $row.Order }
-            $advisorValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Advisor) -ne '') { $repLookup.Advisor } else { $row.Advisor }
-            $lineValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Line) -ne '') { $repLookup.Line } else { $row.Line }
-            $documentRawValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.DocumentRaw) -ne '') { $repLookup.DocumentRaw } else { $row.DocumentRaw }
+            $agencyValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Agency) -ne '') { $repLookup.Agency } elseif (([string]$row.AgencyRaw) -ne '') { [string]$row.AgencyRaw } else { Normalize-Text $row.Agency }
+            $centerValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Center) -ne '') { $repLookup.Center } elseif (([string]$row.CenterRaw) -ne '') { [string]$row.CenterRaw } else { Normalize-Text $row.Center }
+            $orderValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Order) -ne '') { $repLookup.Order } elseif (([string]$row.OrderRaw) -ne '') { [string]$row.OrderRaw } else { Normalize-Text $row.Order }
+            $advisorValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Advisor) -ne '') { $repLookup.Advisor } elseif (([string]$row.AdvisorRaw) -ne '') { [string]$row.AdvisorRaw } else { Normalize-Text $row.Advisor }
+            $lineValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Line) -ne '') { $repLookup.Line } elseif (([string]$row.LineRaw) -ne '') { [string]$row.LineRaw } else { Normalize-Text $row.Line }
+            $cedulaValue = if ($null -ne $repLookup) {
+                Get-PreferredVisibleText -Primary $repLookup.Cedula -Secondary $row.CedulaRaw -Tertiary $row.Cedula
+            } elseif (([string]$row.CedulaRaw) -ne '') {
+                [string]$row.CedulaRaw
+            } else {
+                Normalize-Text $row.Cedula
+            }
+            $customerValue = if ($null -ne $repLookup) {
+                Get-PreferredVisibleText -Primary $repLookup.Customer -Secondary $row.CustomerRaw -Tertiary $row.Customer
+            } elseif (([string]$row.CustomerRaw) -ne '') {
+                [string]$row.CustomerRaw
+            } else {
+                Normalize-Text $row.Customer
+            }
+            $documentRawValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.DocumentRaw) -ne '') { $repLookup.DocumentRaw } else { Normalize-Text $row.DocumentRaw }
             $factDateValue = if ($null -ne $repLookup -and $null -ne $repLookup.DateFactValue) { $repLookup.DateFactValue } else { $row.DateFactValue }
             $noteDateValue = if ($null -ne $repLookup -and $null -ne $repLookup.DateNoteValue) { $repLookup.DateNoteValue } else { $row.DateNoteValue }
-            $noteCreditValue = if ($null -ne $repLookup) { $repLookup.NoteCredit } else { $row.NoteCredit }
-            $totalManoObraValue = if ($null -ne $repLookup) { $repLookup.TotalManoObra } else { $row.TotalManoObra }
-            $totalSubcontratosValue = if ($null -ne $repLookup) { $repLookup.TotalSubcontratos } else { $row.TotalSubcontratos }
-            $totalInsumosValue = if ($null -ne $repLookup) { $repLookup.TotalInsumos } else { $row.TotalInsumos }
-            $totalServicioValue = if ($null -ne $repLookup) { $repLookup.TotalServicio } else { $row.TotalServicio }
-            $totalAccesoriosValue = if ($null -ne $repLookup) { $repLookup.TotalAccesorios } else { $row.TotalAccesorios }
-            $totalRepuestosValue = if ($null -ne $repLookup) { $repLookup.TotalRepuestos } else { $row.TotalRepuestos }
-            $interesValue = if ($null -ne $repLookup) { $repLookup.Interes } else { $row.Interes }
-            $ivaValue = if ($null -ne $repLookup) { $repLookup.Iva } else { $row.Iva }
-            $totalValue = if ($null -ne $repLookup) { $repLookup.Total } else { $row.Total }
-            $costoValue = if ($null -ne $repLookup) { $repLookup.Costo } else { $row.Costo }
-            $costoLubricantesValue = if ($null -ne $repLookup) { $repLookup.CostoLubricantes } else { $row.CostoLubricantes }
-            $costoAccesoriosValue = if ($null -ne $repLookup) { $repLookup.CostoAccesorios } else { $row.CostoAccesorios }
-            $costoRepuestosValue = if ($null -ne $repLookup) { $repLookup.CostoRepuestos } else { $row.CostoRepuestos }
-            $costoPinturaValue = if ($null -ne $repLookup) { $repLookup.CostoPintura } else { $row.CostoPintura }
-            $costoSubconNcValue = if ($null -ne $repLookup) { $repLookup.CostoSubconNc } else { $row.CostoSubconNc }
-            $garExtValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.GarExt) -ne '') { $repLookup.GarExt } else { $row.GarExt }
-
-            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = $agencyValue
-            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = "'" + $centerValue
-            $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = $orderValue
-            $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = $advisorValue
-            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = $lineValue
-            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = "'" + (Get-Display-Cedula -Lookup $repLookup -Fallback (Get-Display-Cedula -Lookup $lookup -Fallback $row.Cedula))
-            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Display-Customer -Lookup $repLookup -Fallback (Get-Display-Customer -Lookup $lookup -Fallback $row.Customer))
-            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = "'" + $documentRawValue
-            $factDate = Get-Date-Write-Value $factDateValue
-            if ($null -eq $factDate) { $null = $Worksheet.Cells.Item($targetRow, 9).ClearContents() } else { $null = $Worksheet.Cells.Item($targetRow, 9).Value = [datetime]::FromOADate($factDate) }
-            $noteDate = Get-Date-Write-Value $noteDateValue
-            if ($null -eq $noteDate) { $null = $Worksheet.Cells.Item($targetRow, 10).ClearContents() } else { $null = $Worksheet.Cells.Item($targetRow, 10).Value = [datetime]::FromOADate($noteDate) }
-            if ($null -ne $repLookup) {
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 11 -TemplateText $repLookup.NoteCreditText -Value ([double]$noteCreditValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 12 -TemplateText $repLookup.TotalManoObraText -Value ([double]$totalManoObraValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 13 -TemplateText $repLookup.TotalSubcontratosText -Value ([double]$totalSubcontratosValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 14 -TemplateText $repLookup.TotalInsumosText -Value ([double]$totalInsumosValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 15 -TemplateText $repLookup.TotalServicioText -Value ([double]$totalServicioValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 16 -TemplateText $repLookup.TotalAccesoriosText -Value ([double]$totalAccesoriosValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 17 -TemplateText $repLookup.TotalRepuestosText -Value ([double]$totalRepuestosValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 18 -TemplateText $repLookup.InteresText -Value ([double]$interesValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 19 -TemplateText $repLookup.IvaText -Value ([double]$ivaValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 20 -TemplateText $repLookup.TotalText -Value ([double]$totalValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 21 -TemplateText $repLookup.CostoText -Value ([double]$costoValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 22 -TemplateText $repLookup.CostoLubricantesText -Value ([double]$costoLubricantesValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 23 -TemplateText $repLookup.CostoAccesoriosText -Value ([double]$costoAccesoriosValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 24 -TemplateText $repLookup.CostoRepuestosText -Value ([double]$costoRepuestosValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 25 -TemplateText $repLookup.CostoPinturaText -Value ([double]$costoPinturaValue)
-                Set-TemplateNumericCell -Worksheet $Worksheet -Row $targetRow -Column 26 -TemplateText $repLookup.CostoSubconNcText -Value ([double]$costoSubconNcValue)
-            } else {
-                $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$noteCreditValue
-                $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$totalManoObraValue
-                $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$totalSubcontratosValue
-                $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$totalInsumosValue
-                $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$totalServicioValue
-                $null = $Worksheet.Cells.Item($targetRow, 16).Value2 = [double]$totalAccesoriosValue
-                $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = [double]$totalRepuestosValue
-                if ((Round-Amount ([Math]::Abs($interesValue))) -eq 0) {
-                    $null = $Worksheet.Cells.Item($targetRow, 18).ClearContents()
-                } else {
-                    $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = [double]$interesValue
-                }
-                $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = [double]$ivaValue
-                $null = $Worksheet.Cells.Item($targetRow, 20).Value2 = [double]$totalValue
-                $null = $Worksheet.Cells.Item($targetRow, 21).Value2 = [double]$costoValue
-                $null = $Worksheet.Cells.Item($targetRow, 22).Value2 = [double]$costoLubricantesValue
-                $null = $Worksheet.Cells.Item($targetRow, 23).Value2 = [double]$costoAccesoriosValue
-                $null = $Worksheet.Cells.Item($targetRow, 24).Value2 = [double]$costoRepuestosValue
-                $null = $Worksheet.Cells.Item($targetRow, 25).Value2 = [double]$costoPinturaValue
-                $null = $Worksheet.Cells.Item($targetRow, 26).Value2 = [double]$costoSubconNcValue
+            if (($row.DocType -in @('DC', 'DE')) -and ($null -eq $noteDateValue -or $noteDateValue -eq '') -and $null -ne $factDateValue) {
+                $noteDateValue = $factDateValue
             }
-            $null = $Worksheet.Cells.Item($targetRow, 27).Value2 = $garExtValue
+            $noteCreditSource = if ($null -ne $repLookup) { $repLookup.NoteCredit } else { $row.NoteCredit }
+            $totalManoObraSource = if ($null -ne $repLookup) { $repLookup.TotalManoObra } else { $row.TotalManoObra }
+            $totalSubcontratosSource = if ($null -ne $repLookup) { $repLookup.TotalSubcontratos } else { $row.TotalSubcontratos }
+            $totalInsumosSource = if ($null -ne $repLookup) { $repLookup.TotalInsumos } else { $row.TotalInsumos }
+            $totalServicioSource = if ($null -ne $repLookup) { $repLookup.TotalServicio } else { $row.TotalServicio }
+            $totalAccesoriosSource = if ($null -ne $repLookup) { $repLookup.TotalAccesorios } else { $row.TotalAccesorios }
+            $totalRepuestosSource = if ($null -ne $repLookup) { $repLookup.TotalRepuestos } else { $row.TotalRepuestos }
+            $interesSource = if ($null -ne $repLookup) { $repLookup.Interes } else { $row.Interes }
+            $ivaSource = if ($null -ne $repLookup) { $repLookup.Iva } else { $row.Iva }
+            $totalSource = if ($null -ne $repLookup) { $repLookup.Total } else { $row.Total }
+            $costoSource = if ($null -ne $repLookup) { $repLookup.Costo } else { $row.Costo }
+            $costoLubricantesSource = if ($null -ne $repLookup) { $repLookup.CostoLubricantes } else { $row.CostoLubricantes }
+            $costoAccesoriosSource = if ($null -ne $repLookup) { $repLookup.CostoAccesorios } else { $row.CostoAccesorios }
+            $costoRepuestosSource = if ($null -ne $repLookup) { $repLookup.CostoRepuestos } else { $row.CostoRepuestos }
+            $costoPinturaSource = if ($null -ne $repLookup) { $repLookup.CostoPintura } else { $row.CostoPintura }
+            $costoSubconNcSource = if ($null -ne $repLookup) { $repLookup.CostoSubconNc } else { $row.CostoSubconNc }
+
+            $noteCreditValue = [double](Round-Amount $noteCreditSource)
+            $totalManoObraValue = [double](Round-Amount $totalManoObraSource)
+            $totalSubcontratosValue = [double](Round-Amount $totalSubcontratosSource)
+            $totalInsumosValue = [double](Round-Amount $totalInsumosSource)
+            $totalServicioValue = [double](Round-Amount $totalServicioSource)
+            $totalAccesoriosValue = [double](Round-Amount $totalAccesoriosSource)
+            $totalRepuestosValue = [double](Round-Amount $totalRepuestosSource)
+            $interesValue = [double](Round-Amount $interesSource)
+            $ivaValue = [double](Round-Amount $ivaSource)
+            $totalValue = [double](Round-Amount $totalSource)
+            $costoValue = [double](Round-Amount $costoSource)
+            $costoLubricantesValue = [double](Round-Amount $costoLubricantesSource)
+            $costoAccesoriosValue = [double](Round-Amount $costoAccesoriosSource)
+            $costoRepuestosValue = [double](Round-Amount $costoRepuestosSource)
+            $costoPinturaValue = [double](Round-Amount $costoPinturaSource)
+            $costoSubconNcValue = [double](Round-Amount $costoSubconNcSource)
+            $garExtValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.GarExt) -ne '') {
+                $repLookup.GarExt
+            } elseif (([string]$row.GarExtRaw) -ne '') {
+                [string]$row.GarExtRaw
+            } else {
+                Normalize-Text $row.GarExt
+            }
+            if ($garExtValue -eq '') {
+                $garExtValue = 'N'
+            }
+
+            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
+            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = "'" + $centerValue
+            $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $orderValue)
+            $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $advisorValue)
+            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $lineValue)
+            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = "'" + $cedulaValue
+            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $customerValue)
+            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = "'" + $documentRawValue
+            $factDate = $factDateValue
+            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 9 -Value $factDate -Context 'REP_VTAS_FACT'
+            $noteDate = $noteDateValue
+            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 10 -Value $noteDate -Context 'REP_VTAS_NC'
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 11 -Value $noteCreditValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 12 -Value $totalManoObraValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 13 -Value $totalSubcontratosValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 14 -Value $totalInsumosValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 15 -Value $totalServicioValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 16 -Value $totalAccesoriosValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 17 -Value $totalRepuestosValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 18 -Value $interesValue -BlankIfZero
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 19 -Value $ivaValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 20 -Value $totalValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 21 -Value $costoValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 22 -Value $costoLubricantesValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 23 -Value $costoAccesoriosValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 24 -Value $costoRepuestosValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 25 -Value $costoPinturaValue
+            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 26 -Value $costoSubconNcValue
+            $null = $Worksheet.Cells.Item($targetRow, 27).Value2 = (Get-Excel-TextLiteral $garExtValue)
             $targetRow++
         } catch {
-            throw "REP VTAS doc=$($row.DocumentRaw) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message)"
+            $failedLine = ''
+            if ($null -ne $_.InvocationInfo -and $null -ne $_.InvocationInfo.Line) {
+                $failedLine = $_.InvocationInfo.Line.Trim()
+            }
+
+            throw "REP VTAS doc=$($row.DocumentRaw) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message) :: $failedLine"
         }
     }
 }
@@ -828,7 +1109,6 @@ function Fill-Invoices {
     Clear-OutputSheet -Worksheet $Worksheet -StartRow 17 -LastColumn 'S'
     $targetRow = 17
     $fallbackCount = 0
-    $writtenAggregateKeys = @{}
     $sortedRows = @(
         $Rows |
             Where-Object { $_.DocType -in @('FA', 'FC') } |
@@ -844,48 +1124,70 @@ function Fill-Invoices {
             $lookup = Find-LookupEntry -Store $Lookups.Invoice -DocKey $row.DocumentTrim -OrderKey $row.Order
             if ($null -eq $lookup) {
                 $fallbackCount++
-            } elseif ((Normalize-Text $lookup.Order) -eq '') {
-                $aggregateKey = @(
-                    (Normalize-Text $row.Agency).ToUpperInvariant(),
-                    (Normalize-Text $row.Series),
-                    $row.DocumentTrim
-                ) -join '|'
-                if ($writtenAggregateKeys.ContainsKey($aggregateKey)) {
-                    continue
-                }
-                $writtenAggregateKeys[$aggregateKey] = $true
             }
 
-            $totalAmount = if ($null -ne $lookup) { Round-Amount $lookup.Total } else { Round-Amount ([Math]::Abs($row.Total)) }
-            $ivaAmount = if ($null -ne $lookup) { Round-Amount $lookup.Iva } else { Round-Amount ([Math]::Abs($row.Iva)) }
-            $interestAmount = if ($null -ne $lookup) { Round-Amount $lookup.Interest } else { Round-Amount ([Math]::Abs($row.Interes)) }
+            $totalAmount = Round-Amount ([Math]::Abs($row.Total))
+            $ivaAmount = Round-Amount ([Math]::Abs($row.Iva))
+            $interestAmount = Round-Amount ([Math]::Abs($row.Interes))
+            $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
             $discount = if ($null -ne $lookup) { Round-Amount $lookup.Discount } else { 0 }
-            $netoConIva = if ($null -ne $lookup) { Round-Amount $lookup.NetoConIva } else { Round-Amount ($totalAmount - $ivaAmount - $interestAmount) }
             $subtotal = if ($null -ne $lookup) { Round-Amount $lookup.Subtotal } else { Round-Amount ($netoConIva + $discount) }
-            $agencyValue = if ($null -ne $lookup -and $lookup.Agency -ne '') { $lookup.Agency } else { $row.Agency }
-            $seriesValue = if ($null -ne $lookup -and $lookup.Series -ne '') { $lookup.Series } else { $row.Series }
-            $orderValue = if ($null -ne $lookup) { $lookup.Order } else { $row.Order }
-            $netoIva0Value = if ($null -ne $lookup) { $lookup.NetoIva0 } else { 0 }
-            $iva12Value = if ($null -ne $lookup) { $lookup.Iva12 } else { 0 }
-            $asientoValue = if ($null -ne $lookup -and $lookup.Asiento -ne '') { $lookup.Asiento } else { Get-Invoice-Asiento -Row $row }
-            $garExtValue = if ($null -ne $lookup) { $lookup.GarExt } else { '' }
-            $tvValue = if ($null -ne $lookup -and $lookup.Tv -ne '') { $lookup.Tv } else { $row.Line }
-            $markerValue = if ($null -ne $lookup -and $lookup.Marker -ne '') { $lookup.Marker } else { 'N' }
+            $agencyValue = if (([string]$row.AgencyRaw) -ne '') { [string]$row.AgencyRaw } else { Normalize-Text $row.Agency }
+            $seriesValue = if (([string]$row.SeriesRaw) -ne '') { [string]$row.SeriesRaw } else { Normalize-Text $row.Series }
+            $orderValue = if (([string]$row.OrderRaw) -ne '') { [string]$row.OrderRaw } else { Normalize-Text $row.Order }
+            $cedulaValue = if ($null -ne $lookup) {
+                Get-PreferredVisibleText -Primary $lookup.Cedula -Secondary $row.CedulaRaw -Tertiary $row.Cedula
+            } elseif (([string]$row.CedulaRaw) -ne '') {
+                [string]$row.CedulaRaw
+            } else {
+                Normalize-Text $row.Cedula
+            }
+            $customerValue = if ($null -ne $lookup) {
+                Get-PreferredVisibleText -Primary $lookup.Customer -Secondary $row.CustomerRaw -Tertiary $row.Customer
+            } elseif (([string]$row.CustomerRaw) -ne '') {
+                [string]$row.CustomerRaw
+            } else {
+                Normalize-Text $row.Customer
+            }
+            $netoIva0Value = if ($null -ne $lookup) { Round-Amount $lookup.NetoIva0 } else { if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0 } }
+            $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
+            $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { Get-Invoice-Asiento -Row $row }
+            $garExtValue = if (([string]$row.GarExtRaw) -ne '') { [string]$row.GarExtRaw } else { Normalize-Text $row.GarExt }
+            if ($null -ne $lookup -and (Normalize-Text $lookup.GarExt) -ne '') {
+                $garExtValue = $lookup.GarExt
+            }
+            if ($garExtValue -eq '') {
+                $garExtValue = 'N'
+            }
+            $tvValue = if (([string]$row.LineRaw) -ne '') { [string]$row.LineRaw } else { Normalize-Text $row.Line }
+            $markerValue = 'N'
 
-            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = $agencyValue
-            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = $seriesValue
+            if ($null -ne $lookup) {
+                $netoConIva = Round-Amount $lookup.NetoConIva
+                $ivaAmount = Round-Amount $lookup.Iva
+                $interestAmount = Round-Amount $lookup.Interest
+                $totalAmount = Round-Amount $lookup.Total
+                if ((Normalize-Text $lookup.Order) -ne '') {
+                    $orderValue = $lookup.Order
+                } elseif ((Normalize-Text $row.Order) -eq '') {
+                    $orderValue = ''
+                }
+            }
+
+            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
+            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $seriesValue)
             $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = $row.DocumentTrim
             $invoiceDate = Get-Date-Write-Value $row.DateFactValue
-            if ($null -eq $invoiceDate) { $null = $Worksheet.Cells.Item($targetRow, 4).ClearContents() } else { $null = $Worksheet.Cells.Item($targetRow, 4).Value = [datetime]::FromOADate($invoiceDate) }
-            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = $orderValue
-            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = "'" + (Get-Display-Cedula -Lookup $lookup -Fallback $row.Cedula)
-            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Display-Customer -Lookup $lookup -Fallback $row.Customer)
+            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 4 -Value $invoiceDate -Context 'REP_FACTURACION_FECHA'
+            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $orderValue)
+            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = "'" + $cedulaValue
+            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $customerValue)
             $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = [double]$subtotal
             $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = [double]$discount
             $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = [double]$netoConIva
             $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$netoIva0Value
             $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$iva12Value
-            if ($null -ne $lookup -and (Normalize-Text $lookup.IvaText) -eq '') {
+            if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0 -or ($null -ne $lookup -and (Normalize-Text $lookup.IvaText) -eq '')) {
                 $null = $Worksheet.Cells.Item($targetRow, 13).ClearContents()
             } else {
                 $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$ivaAmount
@@ -893,9 +1195,9 @@ function Fill-Invoices {
             $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$interestAmount
             $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$totalAmount
             $null = $Worksheet.Cells.Item($targetRow, 16).Value2 = $asientoValue
-            $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = $garExtValue
-            $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = $tvValue
-            $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = $markerValue
+            $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = (Get-Excel-TextLiteral $garExtValue)
+            $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = (Get-Excel-TextLiteral $tvValue)
+            $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = (Get-Excel-TextLiteral $markerValue)
             $targetRow++
         } catch {
             throw "FACTURA doc=$($row.DocumentTrim) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message)"
@@ -933,40 +1235,79 @@ function Fill-Notes {
                 $fallbackCount++
             }
 
-            $totalAmount = if ($null -ne $lookup) { Round-Amount $lookup.Total } else { Round-Amount ([Math]::Abs($row.Total)) }
-            $ivaAmount = if ($null -ne $lookup) { Round-Amount $lookup.Iva } else { Round-Amount ([Math]::Abs($row.Iva)) }
-            $interestAmount = if ($null -ne $lookup) { Round-Amount $lookup.Interest } else { Round-Amount ([Math]::Abs($row.Interes)) }
+            $totalAmount = Round-Amount ([Math]::Abs($row.Total))
+            $ivaAmount = Round-Amount ([Math]::Abs($row.Iva))
+            $interestAmount = Round-Amount ([Math]::Abs($row.Interes))
+            $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
+            $netoSinIva = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0 }
             $discount = if ($null -ne $lookup) { Round-Amount $lookup.Discount } else { 0 }
-            $netoSinIva = if ($null -ne $lookup) { Round-Amount $lookup.NetoSinIva } else { 0 }
-            $netoConIva = if ($null -ne $lookup) { Round-Amount $lookup.NetoConIva } else { Round-Amount ($totalAmount - $ivaAmount - $interestAmount) }
             $subtotal = if ($null -ne $lookup) { Round-Amount $lookup.Subtotal } else { Round-Amount ($netoConIva + $discount) }
             $anticipo = if ($null -ne $lookup) { Round-Amount $lookup.Anticipo } else { 0 }
             $neto = if ($null -ne $lookup) { Round-Amount $lookup.Neto } else { Round-Amount ($totalAmount - $anticipo) }
-            $agencyValue = if ($null -ne $lookup -and $lookup.Agency -ne '') { $lookup.Agency } else { $row.Agency }
-            $kindValue = if ($null -ne $lookup -and $lookup.Kind -ne '') {
+            $agencyValue = if (([string]$row.AgencyRaw) -ne '') { [string]$row.AgencyRaw } else { Normalize-Text $row.Agency }
+            $kindValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Kind) -ne '') {
                 $lookup.Kind
             } elseif ($row.DocType -eq 'DE') {
                 'CON'
             } else {
                 'CRE'
             }
-            $seriesValue = if ($null -ne $lookup -and $lookup.Series -ne '') { $lookup.Series } else { $row.Series }
-            $invoiceValue = if ($null -ne $lookup -and $lookup.Invoice -ne '') { $lookup.Invoice } else { $row.AffectedDocumentTrim }
-            $orderValue = if ($null -ne $lookup -and $lookup.Order -ne '') { $lookup.Order } else { $orderKey }
-            $iva12Value = if ($null -ne $lookup) { $lookup.Iva12 } else { 0 }
-            $asientoValue = if ($null -ne $lookup) { $lookup.Asiento } else { '' }
-            $garExtValue = if ($null -ne $lookup -and $lookup.GarExt -ne '') { $lookup.GarExt } else { 'N' }
+            $seriesValue = if (([string]$row.SeriesRaw) -ne '') { [string]$row.SeriesRaw } else { Normalize-Text $row.Series }
+            $invoiceValue = if (([string]$row.AffectedDocumentRaw) -ne '') { [string]$row.AffectedDocumentRaw } else { Normalize-Text $row.AffectedDocumentTrim }
+            $orderValue = if ($orderKey -ne '') { $orderKey } elseif (([string]$row.OrderRaw) -ne '') { [string]$row.OrderRaw } else { Normalize-Text $row.Order }
+            $cedulaValue = if ($null -ne $lookup) {
+                Get-PreferredVisibleText -Primary $lookup.Cedula -Secondary $row.CedulaRaw -Tertiary $row.Cedula
+            } elseif (([string]$row.CedulaRaw) -ne '') {
+                [string]$row.CedulaRaw
+            } else {
+                Normalize-Text $row.Cedula
+            }
+            $customerValue = if ($null -ne $lookup) {
+                Get-PreferredVisibleText -Primary $lookup.Customer -Secondary $row.CustomerRaw -Tertiary $row.Customer
+            } elseif (([string]$row.CustomerRaw) -ne '') {
+                [string]$row.CustomerRaw
+            } else {
+                Normalize-Text $row.Customer
+            }
+            $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
+            $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { '' }
+            $garExtValue = if ($null -ne $lookup -and (Normalize-Text $lookup.GarExt) -ne '') { $lookup.GarExt } elseif (([string]$row.GarExtRaw) -ne '') { [string]$row.GarExtRaw } else { Normalize-Text $row.GarExt }
+            if ($garExtValue -eq '') {
+                $garExtValue = 'N'
+            }
 
-            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = $agencyValue
+            if ($null -ne $lookup) {
+                $netoSinIva = Round-Amount $lookup.NetoSinIva
+                $netoConIva = Round-Amount $lookup.NetoConIva
+                $ivaAmount = Round-Amount $lookup.Iva
+                $interestAmount = Round-Amount $lookup.Interest
+                $totalAmount = Round-Amount $lookup.Total
+
+                if ((Normalize-Text $lookup.Series) -ne '') {
+                    $seriesValue = $lookup.Series
+                }
+
+                if ((Normalize-Text $lookup.Invoice) -ne '') {
+                    $invoiceValue = $lookup.Invoice
+                }
+
+                if ((Normalize-Text $lookup.Order) -ne '') {
+                    $orderValue = $lookup.Order
+                } elseif ($orderKey -eq '' -and (Normalize-Text $row.Order) -eq '') {
+                    $orderValue = ''
+                }
+            }
+
+            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
             $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = $row.DocumentTrim
             $creditNoteDate = Get-Date-Write-Value $row.DateNoteValue
-            if ($null -eq $creditNoteDate) { $null = $Worksheet.Cells.Item($targetRow, 3).ClearContents() } else { $null = $Worksheet.Cells.Item($targetRow, 3).Value = [datetime]::FromOADate($creditNoteDate) }
-            $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = $kindValue
-            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = $seriesValue
-            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = $invoiceValue
-            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = $orderValue
-            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = "'" + (Get-Display-Cedula -Lookup $lookup -Fallback $row.Cedula)
-            $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = (Get-Display-Customer -Lookup $lookup -Fallback $row.Customer)
+            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 3 -Value $creditNoteDate -Context 'NOTA_CREDITO_FECHA'
+            $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $kindValue)
+            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $seriesValue)
+            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $invoiceValue)
+            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $orderValue)
+            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = "'" + $cedulaValue
+            $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = (Get-Excel-TextLiteral $customerValue)
             $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = [double]$subtotal
             $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$discount
             $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$netoSinIva
@@ -977,8 +1318,8 @@ function Fill-Notes {
             $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = [double]$totalAmount
             $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = [double]$anticipo
             $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = [double]$neto
-            $null = $Worksheet.Cells.Item($targetRow, 20).Value2 = $asientoValue
-            $null = $Worksheet.Cells.Item($targetRow, 21).Value2 = $garExtValue
+            $null = $Worksheet.Cells.Item($targetRow, 20).Value2 = (Get-Excel-TextLiteral $asientoValue)
+            $null = $Worksheet.Cells.Item($targetRow, 21).Value2 = (Get-Excel-TextLiteral $garExtValue)
             $targetRow++
         } catch {
             throw "NOTA doc=$($row.DocumentTrim) orden=$($row.Order) filaFuente=$($row.RowIndex): $($_.Exception.Message)"
@@ -1034,6 +1375,8 @@ try {
     try {
         Assert-NotCancelled 'inicio'
         $sourceRows = Read-SourceRows -Worksheet $sourceWorkbook.Worksheets.Item(1)
+        $repVtasRows = Normalize-SourceRows -Rows $sourceRows
+        $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
     }
     finally {
         $sourceWorkbook.Close($false)
@@ -1048,12 +1391,13 @@ try {
 
     foreach ($templateKey in @('changan', 'peug', 'szk', 'tyt')) {
         Assert-NotCancelled 'marcas'
-        $rows = @($sourceRows | Where-Object { $_.TemplateKey -eq $templateKey })
-        if ($rows.Count -eq 0) {
+        $rowsRepVtas = @($repVtasRows | Where-Object { $_.TemplateKey -eq $templateKey })
+        if ($rowsRepVtas.Count -eq 0) {
             continue
         }
 
-        Write-Output ("INFO|processing|{0}|rows={1}" -f $templateKey, $rows.Count)
+        $rowsPosting = @($postingRows | Where-Object { $_.TemplateKey -eq $templateKey })
+        Write-Output ("INFO|processing|{0}|rows={1}" -f $templateKey, $rowsRepVtas.Count)
 
         $baseWorkbook = $excel.Workbooks.Open($templateConfigs[$templateKey].TemplatePath, 0, $false)
         try {
@@ -1076,9 +1420,9 @@ try {
             $noteSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('NOTA DE CREDITO')
             $repVtasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('REP VTAS')
 
-            $invoiceFallbacks = Fill-Invoices -Worksheet $repSheet -Rows $rows -Lookups $lookups
-            $noteFallbacks = Fill-Notes -Worksheet $noteSheet -Rows $rows -Lookups $lookups
-            Fill-RepVtas -Worksheet $repVtasSheet -Rows $rows -Lookups $lookups
+            $invoiceFallbacks = Fill-Invoices -Worksheet $repSheet -Rows $rowsPosting -Lookups $lookups
+            $noteFallbacks = Fill-Notes -Worksheet $noteSheet -Rows $rowsPosting -Lookups $lookups
+            Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
 
             Assert-NotCancelled 'guardado_plantilla'
             $outputWorkbook.Save()

@@ -193,6 +193,14 @@ function app_workspaces(): array
             'url' => app_public_url('modules/cxp_servicios_marcas/index.php'),
             'state' => 'active',
         ],
+        [
+            'slug' => 'cxp_repuestos_tytserv',
+            'title' => 'Facturacion Repuestos TYTSERV',
+            'status' => 'Operativo',
+            'description' => 'Carga 4 reportes de ventas por marca y genera la plantilla mensual consolidada de facturacion de repuestos.',
+            'url' => app_public_url('modules/cxp_repuestos_tytserv/index.php'),
+            'state' => 'active',
+        ],
     ];
 
     $cxpModulesBySlug = [];
@@ -239,6 +247,16 @@ function app_workspaces(): array
                     'url' => app_public_url('areas/cxp/conciliacion-servicios-marcas.php'),
                     'modules' => [
                         $cxpModulesBySlug['cxp_servicios_marcas'],
+                    ],
+                ],
+                [
+                    'slug' => 'facturacion_repuestos_tytserv',
+                    'title' => 'Facturacion Repuestos TYTSERV',
+                    'summary' => 'Ventana operativa para cargar las 4 bases RepLibroVentasGeneral del mes y obtener el reporte final segun la plantilla manual.',
+                    'route_note' => 'Ruta de salida: storage/outputs. Descarga publica: archivo .xlsx. Base operativa: outputs/EJEMPLOAMANOTAREA3.',
+                    'url' => app_public_url('areas/cxp/facturacion-repuestos-tytserv.php'),
+                    'modules' => [
+                        $cxpModulesBySlug['cxp_repuestos_tytserv'],
                     ],
                 ],
             ],
@@ -309,6 +327,7 @@ function app_output_matches_action(string $fileName, string $actionKey): bool
         'accion4' => str_contains($name, 'accion4'),
         'bundle' => str_contains($name, 'acciones_resumen'),
         'servicios' => str_starts_with($name, 'servicios_'),
+        'repuestos_tytserv' => str_starts_with($name, 'repuestos_tytserv_'),
         default => false,
     };
 }

@@ -15,7 +15,7 @@ $uploadsDir = app_ensure_dir(app_storage_path('uploads'));
 $outputsDir = app_ensure_dir(app_storage_path('outputs'));
 $requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-$result = null;
+$result = null;   
 $error = null;
 
 if ($requestMethod === 'POST') {

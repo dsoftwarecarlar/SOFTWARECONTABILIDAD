@@ -299,6 +299,10 @@ foreach (app_list_output_files_for_action('servicios', 20) as $item) {
         .panel { background: var(--panel); padding: 22px; }
         .panel h2 { margin: 0 0 8px; font-family: "Franklin Gothic Medium", "Arial Narrow", sans-serif; font-size: 25px; letter-spacing: -.03em; }
         .stack, .brands, .history, .downloads, .summary-grid { display: grid; gap: 12px; }
+        .brands { margin-top: 14px; }
+        .brand-row { display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid rgba(24,36,44,.08); }
+        .brand-row:first-child { border-top: 0; padding-top: 0; }
+        .base-path { margin-top: 8px; font-size: 12px; color: var(--muted); word-break: break-all; }
         .box { padding: 16px 18px; border-radius: 20px; border: 1px solid rgba(24,36,44,.1); background: rgba(255,255,255,.78); }
         .box p { margin-top: 8px; font-size: 14px; }
         .form-grid { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 16px; margin-top: 14px; align-items: start; }
@@ -357,13 +361,20 @@ foreach (app_list_output_files_for_action('servicios', 20) as $item) {
     <div class="layout">
         <aside class="panel">
             <h2>Plantillas</h2>
-            <p>Las 4 salidas se generan usando la base mensual del area y se conservan solo los 3 ultimos archivos por marca.</p>
-            <div class="brands" style="margin-top: 14px;">
-                <article class="box"><span class="tag">CHANGAN</span><strong>Plantilla CHANGAN</strong><p>Datos filtrados por marca y escritos en su libro operativo.</p></article>
-                <article class="box"><span class="tag">PEUGEOT</span><strong>Plantilla PEUGEOT</strong><p>Facturas y notas quedan separadas en la base visible del mes.</p></article>
-                <article class="box"><span class="tag">SUZUKI</span><strong>Plantilla SUZUKI</strong><p>Consolida SUZUKI AMBATO y SUZUKI RIOBAMBA en la plantilla correspondiente.</p></article>
-                <article class="box"><span class="tag">MATRIZ</span><strong>Plantilla MATRIZ</strong><p>Se respeta el formato mensual existente para la marca MATRIZ.</p></article>
-                <article class="box"><span class="tag">Base mensual</span><strong><?= htmlspecialchars($templateDir) ?></strong><p>La carpeta contiene las plantillas del mes y el ejemplo operativo de referencia.</p></article>
+            <p>Este modulo solo procesa servicios por marca y no modifica otras vistas. La salida conserva 3 archivos por marca.</p>
+            <div class="brands">
+                <article class="box">
+                    <span class="tag">Base mensual</span>
+                    <strong>Plantillas del mes</strong>
+                    <p>La carpeta mensual es la base operativa para el proceso.</p>
+                    <div class="base-path"><?= htmlspecialchars($templateDir) ?></div>
+                </article>
+                <article class="box">
+                    <div class="brand-row"><span class="tag">CHANGAN</span><span>Datos filtrados por marca en su libro operativo.</span></div>
+                    <div class="brand-row"><span class="tag">PEUGEOT</span><span>Facturas y notas separadas en la base visible del mes.</span></div>
+                    <div class="brand-row"><span class="tag">SUZUKI</span><span>Consolida SUZUKI AMBATO y SUZUKI RIOBAMBA.</span></div>
+                    <div class="brand-row"><span class="tag">MATRIZ</span><span>Respeta el formato mensual definido para MATRIZ.</span></div>
+                </article>
             </div>
         </aside>
 
@@ -406,9 +417,9 @@ foreach (app_list_output_files_for_action('servicios', 20) as $item) {
                         <div class="meta" data-job-meta>
                             Estado: <?= htmlspecialchars((string)($pendingJob['status'] ?? 'running')) ?>
                             <?php if (!empty($pendingJob['started_at'])): ?>
-                                · Inicio: <?= htmlspecialchars((string)$pendingJob['started_at']) ?>
+                                - Inicio: <?= htmlspecialchars((string)$pendingJob['started_at']) ?>
                             <?php elseif (!empty($pendingJob['created_at'])): ?>
-                                · Creado: <?= htmlspecialchars((string)$pendingJob['created_at']) ?>
+                                - Creado: <?= htmlspecialchars((string)$pendingJob['created_at']) ?>
                             <?php endif; ?>
                         </div>
                         <div class="meta">Puedes dejar esta pagina abierta. Se actualizara sola cuando termine.</div>
@@ -425,7 +436,7 @@ foreach (app_list_output_files_for_action('servicios', 20) as $item) {
                                     <strong><?= (int)($item['rows'] ?? 0) ?> filas procesadas</strong>
                                     <div class="meta">
                                         Facturas fallback: <?= (int)($item['invoice_fallbacks'] ?? 0) ?>
-                                        · Notas fallback: <?= (int)($item['note_fallbacks'] ?? 0) ?>
+                                        - Notas fallback: <?= (int)($item['note_fallbacks'] ?? 0) ?>
                                     </div>
                                 </article>
                             <?php endforeach; ?>
@@ -471,7 +482,7 @@ foreach (app_list_output_files_for_action('servicios', 20) as $item) {
                                 <div>
                                     <span class="tag"><?= htmlspecialchars($historyLabel((string)$item['name'])) ?></span>
                                     <strong><?= htmlspecialchars((string)$item['name']) ?></strong>
-                                    <div class="meta"><?= htmlspecialchars((string)$item['time']) ?> · <?= number_format(((int)$item['size']) / 1024, 1) ?> KB</div>
+                                    <div class="meta"><?= htmlspecialchars((string)$item['time']) ?> - <?= number_format(((int)$item['size']) / 1024, 1) ?> KB</div>
                                 </div>
                                 <a class="button-link" href="<?= htmlspecialchars(app_output_download_url((string)$item['name'])) ?>">Descargar</a>
                             </article>
@@ -523,7 +534,7 @@ foreach (app_list_output_files_for_action('servicios', 20) as $item) {
     const renderMeta = (job) => {
         const status = job.status || 'running';
         const stamp = job.started_at || job.created_at || job.updated_at || '';
-        metaNode.textContent = stamp ? `Estado: ${status} · ${stamp}` : `Estado: ${status}`;
+        metaNode.textContent = stamp ? `Estado: ${status} - ${stamp}` : `Estado: ${status}`;
     };
 
     const poll = async () => {
