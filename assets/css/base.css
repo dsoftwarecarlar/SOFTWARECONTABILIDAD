@@ -1,0 +1,33 @@
+:root {
+    --font-sans: "Trebuchet MS", "Lucida Sans Unicode", sans-serif;
+    --font-display: "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+    --font-serif: "Bodoni MT", "Book Antiqua", serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    font-family: var(--font-sans);
+}
+
+body {
+    margin: 0;
+}
+
+img {
+    display: block;
+    max-width: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
+
+a {
+    color: inherit;
+}

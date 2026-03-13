@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/includes/app.php';
+require __DIR__ . '/includes/bootstrap.php';
 require __DIR__ . '/includes/servicios_marcas_job_runner.php';
 
 if (PHP_SAPI !== 'cli') {

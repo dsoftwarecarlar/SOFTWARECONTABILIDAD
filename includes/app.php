@@ -103,6 +103,16 @@ function app_public_url(string $relative = ''): string
     return app_request_scheme() . '://' . $host . app_url($relative);
 }
 
+function app_asset_url(string $relative = ''): string
+{
+    $relative = trim(str_replace('\\', '/', $relative), '/');
+    if ($relative === '') {
+        return app_url('assets');
+    }
+
+    return app_url('assets/' . $relative);
+}
+
 function app_output_download_url(string $fileName): string
 {
     return app_url('download.php?file=' . rawurlencode($fileName));

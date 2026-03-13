@@ -222,7 +222,7 @@ function Apply-Template-Lookup {
         $refCode = Normalize-Text $reference.ClientCode
         $refName = Normalize-Text $reference.ClientName
 
-        if ($refRuc -ne '' -and (Test-Looks-MaskedRuc -Text $currentRuc)) {
+        if ($refRuc -ne '' -and $currentRuc -eq '') {
             $Worksheet.Cells.Item($row, 9).Value2 = "'" + $refRuc
         }
 
@@ -230,7 +230,7 @@ function Apply-Template-Lookup {
             $Worksheet.Cells.Item($row, 10).Value2 = "'" + $refCode
         }
 
-        if ($refName -ne '' -and (Test-Looks-UnreadableName -Text $currentName)) {
+        if ($refName -ne '' -and $currentName -eq '') {
             $Worksheet.Cells.Item($row, 11).Value2 = $refName
         }
     }
@@ -297,6 +297,924 @@ function Apply-Mayor-Row {
     return $mayorRow
 }
 
+function Get-Cell-Text {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column
+    )
+
+    return Normalize-Text $Worksheet.Cells.Item($Row, $Column).Text
+}
+
+function Get-Cell-Number {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column
+    )
+
+    $value = $Worksheet.Cells.Item($Row, $Column).Value2
+    if ($null -eq $value -or $value -eq '') {
+        return 0.0
+    }
+
+    try {
+        return [double]$value
+    }
+    catch {
+        $text = (Normalize-Text $Worksheet.Cells.Item($Row, $Column).Text) -replace ',', ''
+        if ($text -eq '') {
+            return 0.0
+        }
+
+        return [double]::Parse($text, [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+}
+
+function Get-Rep-DetailName {
+    param(
+        [string]$Key,
+        [string]$Agency
+    )
+
+    switch ($Key) {
+        'tyt' {
+            return 'MOD. REPUESTOS REP01'
+        }
+        'peug' {
+            return 'MOD. REPUESTOS REP06'
+        }
+        'chgn' {
+            return 'MOD. REPUESTOS REP05'
+        }
+        'szk' {
+            if ((Normalize-Text $Agency) -eq '08') {
+                return 'MOD. REPUESTOS REP08'
+            }
+
+            return 'MOD. REPUESTOS REP07'
+        }
+        default {
+            throw "Clave no soportada para detalle REP: $Key"
+        }
+    }
+}
+
+function Get-Posting-Account {
+    param(
+        [string]$Key,
+        [string]$Category,
+        [string]$Form
+    )
+
+    $normalizedForm = (Normalize-Text $Form).ToUpperInvariant()
+
+    switch ($Key) {
+        'tyt' {
+            switch ($Category) {
+                'sales' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.01.0001' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.01.0003' }
+                }
+                'discount' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.01.0005' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.01.0007' }
+                }
+            }
+        }
+        'peug' {
+            switch ($Category) {
+                'sales' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.03.0001' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.03.0003' }
+                }
+                'discount' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.03.0005' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.03.0007' }
+                }
+            }
+        }
+        'chgn' {
+            switch ($Category) {
+                'sales' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.02.0001' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.02.0003' }
+                }
+                'discount' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.02.0005' }
+                }
+            }
+        }
+        'szk' {
+            switch ($Category) {
+                'sales' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.04.0001' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.04.0003' }
+                }
+                'discount' {
+                    if ($normalizedForm -eq 'CONTADO') { return '04.01.01.04.0005' }
+                    if ($normalizedForm -eq 'CREDITO') { return '04.01.01.04.0007' }
+                }
+            }
+        }
+        default {
+            throw "Clave no soportada para cuentas contables: $Key"
+        }
+    }
+
+    return ''
+}
+
+function Add-Grouped-Amount {
+    param(
+        [hashtable]$Groups,
+        [string]$GroupKey,
+        [double]$Amount,
+        [object]$DateValue,
+        [string]$DateText,
+        [string]$Seat,
+        [string]$Detail
+    )
+
+    if ([Math]::Abs($Amount) -lt 0.0000001) {
+        return
+    }
+
+    if (-not $Groups.ContainsKey($GroupKey)) {
+        $Groups[$GroupKey] = @{
+            Amount = 0.0
+            DateValue = $DateValue
+            DateText = $DateText
+            Seat = $Seat
+            Detail = $Detail
+        }
+    }
+
+    $entry = $Groups[$GroupKey]
+    $entry.Amount = [Math]::Round(([double]$entry.Amount + [double]$Amount), 6)
+
+    if (($null -eq $entry.DateValue -or $entry.DateValue -eq '') -and $null -ne $DateValue -and $DateValue -ne '') {
+        $entry.DateValue = $DateValue
+    }
+
+    if ((Normalize-Text $entry.DateText) -eq '' -and $DateText -ne '') {
+        $entry.DateText = $DateText
+    }
+}
+
+function Convert-ToExcel-Date {
+    param(
+        [object]$Value,
+        [string]$FallbackText = ''
+    )
+
+    if ($null -ne $Value -and $Value -isnot [string]) {
+        return $Value
+    }
+
+    $text = Normalize-Text $Value
+    if ($text -eq '') {
+        $text = Normalize-Text $FallbackText
+    }
+    if ($text -eq '') {
+        return $null
+    }
+
+    $cultures = @(
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.CultureInfo]::GetCultureInfo('es-EC'),
+        [System.Globalization.CultureInfo]::GetCultureInfo('en-US')
+    )
+    $formats = @(
+        'dd/MM/yyyy',
+        'd/M/yyyy',
+        'dd-MMM-yy',
+        'd-MMM-yy',
+        'dd-MMM-yyyy',
+        'd-MMM-yyyy'
+    )
+
+    foreach ($culture in $cultures) {
+        foreach ($format in $formats) {
+            $parsed = [datetime]::MinValue
+            if ([datetime]::TryParseExact($text, $format, $culture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+                return $parsed.ToOADate()
+            }
+        }
+
+        $parsed = [datetime]::MinValue
+        if ([datetime]::TryParse($text, $culture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+            return $parsed.ToOADate()
+        }
+    }
+
+    return $text
+}
+
+function Set-Date-CellValue {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column,
+        [object]$Value,
+        [string]$FallbackText = ''
+    )
+
+    $resolved = Convert-ToExcel-Date -Value $Value -FallbackText $FallbackText
+    if ($null -eq $resolved -or $resolved -eq '') {
+        $Worksheet.Cells.Item($Row, $Column).ClearContents()
+        return
+    }
+
+    if ($resolved -is [double] -or $resolved -is [int] -or $resolved -is [decimal]) {
+        $Worksheet.Cells.Item($Row, $Column).Value2 = [double]$resolved
+        return
+    }
+
+    $Worksheet.Cells.Item($Row, $Column).Value2 = [string]$resolved
+}
+
+function Find-Row-Containing-Anywhere {
+    param(
+        [object]$Worksheet,
+        [string]$Needle,
+        [int]$StartRow = 1,
+        [int]$EndRow = 200,
+        [int]$LastColumn = 40
+    )
+
+    $needleText = (Normalize-Text $Needle).ToUpperInvariant()
+    if ($needleText -eq '') {
+        return $null
+    }
+
+    for ($row = $StartRow; $row -le $EndRow; $row++) {
+        for ($column = 1; $column -le $LastColumn; $column++) {
+            $cellText = (Normalize-Text $Worksheet.Cells.Item($row, $column).Text).ToUpperInvariant()
+            if ($cellText -like "*$needleText*") {
+                return $row
+            }
+        }
+    }
+
+    return $null
+}
+
+function Build-Rep-Posting-Groups {
+    param(
+        [object]$Worksheet,
+        [string]$Key
+    )
+
+    $salesGroups = @{}
+    $discountGroups = @{}
+    $vatGroups = @{}
+
+    $lastRow = Get-Used-LastRow -Worksheet $Worksheet
+    $totalRow = Find-Row-Containing -Worksheet $Worksheet -Column 12 -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow ([Math]::Max(200, $lastRow + 10))
+    if ($null -eq $totalRow) {
+        $totalRow = $lastRow
+    }
+
+    for ($row = 11; $row -lt $totalRow; $row++) {
+        $seat = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 38
+        if ($seat -eq '' -or $seat -eq 'ASIENTO') {
+            continue
+        }
+
+        $form = (Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 40).ToUpperInvariant()
+        if ($form -ne 'CONTADO' -and $form -ne 'CREDITO') {
+            continue
+        }
+
+        $agency = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 39
+        $detail = Get-Rep-DetailName -Key $Key -Agency $agency
+        $dateValue = $Worksheet.Cells.Item($row, 3).Value2
+        $dateText = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 3
+
+        $salesAccount = Get-Posting-Account -Key $Key -Category 'sales' -Form $form
+        $discountAccount = Get-Posting-Account -Key $Key -Category 'discount' -Form $form
+
+        $salesAmount = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 18
+        $discountAmount = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 20
+        $vatAmount = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 26
+
+        if ($salesAccount -ne '') {
+            Add-Grouped-Amount `
+                -Groups $salesGroups `
+                -GroupKey ($salesAccount + '|' + $seat + '|' + $detail) `
+                -Amount $salesAmount `
+                -DateValue $dateValue `
+                -DateText $dateText `
+                -Seat $seat `
+                -Detail $detail
+        }
+
+        if ($discountAccount -ne '') {
+            Add-Grouped-Amount `
+                -Groups $discountGroups `
+                -GroupKey ($discountAccount + '|' + $seat + '|' + $detail) `
+                -Amount $discountAmount `
+                -DateValue $dateValue `
+                -DateText $dateText `
+                -Seat $seat `
+                -Detail $detail
+        }
+
+        Add-Grouped-Amount `
+            -Groups $vatGroups `
+            -GroupKey ($seat + '|' + $detail) `
+            -Amount $vatAmount `
+            -DateValue $dateValue `
+            -DateText $dateText `
+            -Seat $seat `
+            -Detail $detail
+    }
+
+    return @{
+        Sales = $salesGroups
+        Discount = $discountGroups
+        Vat = $vatGroups
+    }
+}
+
+function Get-My-Layout {
+    param([string]$Key)
+
+    switch ($Key) {
+        'tyt' {
+            return @{
+                MySheetName = 'MY REP TYT'
+                DetailColumn = 7
+                SeatColumn = 6
+                DateColumn = 4
+                DebitColumn = 8
+                CreditColumn = 9
+                SaldoColumn = 10
+                Sections = @(
+                    @{ Name = 'sales'; StartRow = 2; EndRow = 37; AmountColumn = 9; OppositeColumn = 8 },
+                    @{ Name = 'discount'; StartRow = 42; EndRow = 52; AmountColumn = 8; OppositeColumn = 9 }
+                )
+            }
+        }
+        'peug' {
+            return @{
+                MySheetName = 'MY REP PEUG'
+                DetailColumn = 7
+                SeatColumn = 6
+                DateColumn = 4
+                DebitColumn = 8
+                CreditColumn = 9
+                SaldoColumn = 10
+                Sections = @(
+                    @{ Name = 'sales'; StartRow = 2; EndRow = 18; AmountColumn = 9; OppositeColumn = 8 },
+                    @{ Name = 'discount'; StartRow = 21; EndRow = 24; AmountColumn = 8; OppositeColumn = 9 }
+                )
+            }
+        }
+        'chgn' {
+            return @{
+                MySheetName = 'MY REP CHGN'
+                DetailColumn = 8
+                SeatColumn = 6
+                DateColumn = 4
+                DebitColumn = 9
+                CreditColumn = 10
+                SaldoColumn = 11
+                Sections = @(
+                    @{ Name = 'sales'; StartRow = 2; EndRow = 7; AmountColumn = 10; OppositeColumn = 9 },
+                    @{ Name = 'discount'; StartRow = 12; EndRow = 14; AmountColumn = 9; OppositeColumn = 10 }
+                )
+            }
+        }
+        'szk' {
+            return @{
+                MySheetName = 'MY REP SZK'
+                DetailColumn = 7
+                SeatColumn = 6
+                DateColumn = 4
+                DebitColumn = 8
+                CreditColumn = 9
+                SaldoColumn = 10
+                Sections = @(
+                    @{ Name = 'sales'; StartRow = 2; EndRow = 30; AmountColumn = 9; OppositeColumn = 8 },
+                    @{ Name = 'discount'; StartRow = 34; EndRow = 49; AmountColumn = 8; OppositeColumn = 9 }
+                )
+            }
+        }
+        default {
+            throw "Clave no soportada para layout MY: $Key"
+        }
+    }
+}
+
+function Get-Template-Section-Groups {
+    param(
+        [object]$Worksheet,
+        [hashtable]$Layout,
+        [hashtable]$Section
+    )
+
+    $groups = @{}
+
+    for ($row = $Section.StartRow; $row -le $Section.EndRow; $row++) {
+        $amount = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Section.AmountColumn
+        $opposite = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Section.OppositeColumn
+        if ([Math]::Abs($amount) -lt 0.0000001 -or [Math]::Abs($opposite) -gt 0.0000001) {
+            continue
+        }
+
+        $account = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 1
+        $seat = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column $Layout.SeatColumn
+        $detail = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column $Layout.DetailColumn
+        if ($account -eq '' -or $seat -eq '' -or $detail -eq '') {
+            continue
+        }
+
+        $groupKey = $account + '|' + $seat + '|' + $detail
+        if (-not $groups.ContainsKey($groupKey)) {
+            $groups[$groupKey] = @{
+                BaseTotal = 0.0
+                Rows = @()
+            }
+        }
+
+        $groups[$groupKey].BaseTotal = [Math]::Round(([double]$groups[$groupKey].BaseTotal + [double]$amount), 6)
+        $groups[$groupKey].Rows += @{
+            RowNumber = $row
+            BaseAmount = [double]$amount
+        }
+    }
+
+    return $groups
+}
+
+function Get-Section-Opening-Balance {
+    param(
+        [object]$Worksheet,
+        [hashtable]$Layout,
+        [hashtable]$Section
+    )
+
+    for ($row = $Section.StartRow; $row -le $Section.EndRow; $row++) {
+        $account = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 1
+        $detail = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column $Layout.DetailColumn
+        $debit = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Layout.DebitColumn
+        $credit = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Layout.CreditColumn
+        $saldo = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column $Layout.SaldoColumn
+
+        if ($account -eq '' -and $detail -eq '' -and [Math]::Abs($debit) -lt 0.0000001 -and [Math]::Abs($credit) -lt 0.0000001 -and [Math]::Abs($saldo) -lt 0.0000001) {
+            continue
+        }
+
+        return [Math]::Round(($saldo - $debit + $credit), 2)
+    }
+
+    return 0.0
+}
+
+function Apply-Section-Scaling {
+    param(
+        [object]$OutputWorksheet,
+        [object]$TemplateWorksheet,
+        [hashtable]$Layout,
+        [hashtable]$Section,
+        [hashtable]$SourceGroups,
+        [string]$Key
+)
+
+    $templateGroups = Get-Template-Section-Groups -Worksheet $TemplateWorksheet -Layout $Layout -Section $Section
+    $matchedGroups = @{}
+    $amountColumn = [int]$Section.AmountColumn
+    $oppositeColumn = [int]$Section.OppositeColumn
+    $dateColumn = [int]$Layout.DateColumn
+    $seatColumn = [int]$Layout.SeatColumn
+    $detailColumn = [int]$Layout.DetailColumn
+
+    for ($row = $Section.StartRow; $row -le $Section.EndRow; $row++) {
+        $templateAmount = Get-Cell-Number -Worksheet $TemplateWorksheet -Row $row -Column $amountColumn
+        $templateOpposite = Get-Cell-Number -Worksheet $TemplateWorksheet -Row $row -Column $oppositeColumn
+        if ([Math]::Abs($templateAmount) -lt 0.0000001 -and [Math]::Abs($templateOpposite) -gt 0.0000001) {
+            $OutputWorksheet.Cells.Item($row, $amountColumn).Value2 = 0.0
+            $OutputWorksheet.Cells.Item($row, $oppositeColumn).Value2 = 0.0
+            $OutputWorksheet.Cells.Item($row, $dateColumn).ClearContents()
+            $OutputWorksheet.Cells.Item($row, $seatColumn).ClearContents()
+            $OutputWorksheet.Cells.Item($row, $detailColumn).ClearContents()
+        }
+    }
+
+    foreach ($groupKey in $templateGroups.Keys) {
+        $templateGroup = $templateGroups[$groupKey]
+        $sourceGroup = $null
+        $targetTotal = 0.0
+        if ($SourceGroups.ContainsKey($groupKey)) {
+            $sourceGroup = $SourceGroups[$groupKey]
+            $targetTotal = [double]$sourceGroup.Amount
+            $matchedGroups[$groupKey] = $true
+        }
+
+        $rows = @($templateGroup.Rows)
+        $rowCount = $rows.Count
+        if ($rowCount -eq 0) {
+            continue
+        }
+
+        $remaining = [Math]::Round($targetTotal, 6)
+        for ($index = 0; $index -lt $rowCount; $index++) {
+            $currentRow = $rows[$index]
+            $rowNumber = [int]$currentRow.RowNumber
+
+            if ($index -eq ($rowCount - 1)) {
+                $scaledAmount = [Math]::Round($remaining, 2)
+            }
+            elseif ([double]$templateGroup.BaseTotal -ne 0.0) {
+                $scaledAmount = [Math]::Round(($targetTotal * ([double]$currentRow.BaseAmount / [double]$templateGroup.BaseTotal)), 2)
+                $remaining = [Math]::Round(($remaining - $scaledAmount), 6)
+            }
+            else {
+                $scaledAmount = 0.0
+            }
+
+            try {
+                $OutputWorksheet.Cells.Item($rowNumber, $amountColumn).Value2 = [double]$scaledAmount
+                $OutputWorksheet.Cells.Item($rowNumber, $oppositeColumn).Value2 = 0.0
+            }
+            catch {
+                throw ("No se pudo escribir MY {0} fila {1} columna {2} valor {3}: {4}" -f $Section.Name, $rowNumber, $amountColumn, $scaledAmount, $_.Exception.Message)
+            }
+
+            if ($null -ne $sourceGroup) {
+                Set-Date-CellValue `
+                    -Worksheet $OutputWorksheet `
+                    -Row $rowNumber `
+                    -Column $dateColumn `
+                    -Value $sourceGroup.DateValue `
+                    -FallbackText $sourceGroup.DateText
+
+                $OutputWorksheet.Cells.Item($rowNumber, $seatColumn).Value2 = [string]$sourceGroup.Seat
+                $OutputWorksheet.Cells.Item($rowNumber, $detailColumn).Value2 = [string]$sourceGroup.Detail
+            }
+        }
+    }
+
+    foreach ($sourceGroupKey in $SourceGroups.Keys) {
+        if (-not $matchedGroups.ContainsKey($sourceGroupKey)) {
+            Write-Output ("WARN|{0}|my_{1}_missing={2}" -f $Key, $Section.Name, $sourceGroupKey)
+        }
+    }
+}
+
+function Recalculate-Section-Saldo {
+    param(
+        [object]$OutputWorksheet,
+        [object]$TemplateWorksheet,
+        [hashtable]$Layout,
+        [hashtable]$Section
+)
+
+    $saldoColumn = [int]$Layout.SaldoColumn
+    $runningBalance = 0.0
+    $currentAccount = ''
+    $hasBalance = $false
+
+    for ($row = $Section.StartRow; $row -le $Section.EndRow; $row++) {
+        $templateAccount = Get-Cell-Text -Worksheet $TemplateWorksheet -Row $row -Column 1
+        $templateDetail = Get-Cell-Text -Worksheet $TemplateWorksheet -Row $row -Column $Layout.DetailColumn
+        $templateDebit = Get-Cell-Number -Worksheet $TemplateWorksheet -Row $row -Column $Layout.DebitColumn
+        $templateCredit = Get-Cell-Number -Worksheet $TemplateWorksheet -Row $row -Column $Layout.CreditColumn
+        $templateSaldo = Get-Cell-Number -Worksheet $TemplateWorksheet -Row $row -Column $Layout.SaldoColumn
+
+        if ($templateAccount -eq '' -and $templateDetail -eq '' -and [Math]::Abs($templateDebit) -lt 0.0000001 -and [Math]::Abs($templateCredit) -lt 0.0000001 -and [Math]::Abs($templateSaldo) -lt 0.0000001) {
+            $OutputWorksheet.Cells.Item($row, $saldoColumn).ClearContents()
+            continue
+        }
+
+        if (-not $hasBalance -or $templateAccount -ne $currentAccount) {
+            $currentAccount = $templateAccount
+            $runningBalance = [Math]::Round(($templateSaldo - $templateDebit + $templateCredit), 2)
+            $hasBalance = $true
+        }
+
+        $debit = Get-Cell-Number -Worksheet $OutputWorksheet -Row $row -Column $Layout.DebitColumn
+        $credit = Get-Cell-Number -Worksheet $OutputWorksheet -Row $row -Column $Layout.CreditColumn
+        $runningBalance = [Math]::Round(($runningBalance + $debit - $credit), 2)
+        $OutputWorksheet.Cells.Item($row, $saldoColumn).Value2 = [double]$runningBalance
+    }
+}
+
+function Update-My-Sheet-From-Rep {
+    param(
+        [object]$OutputWorkbook,
+        [object]$TemplateWorkbook,
+        [string]$Key,
+        [string]$RepSheetName
+    )
+
+    $layout = Get-My-Layout -Key $Key
+    $repWorksheet = $null
+    $outputWorksheet = $null
+    $templateWorksheet = $null
+    try {
+        $repWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @($RepSheetName)
+        $outputWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @($layout.MySheetName)
+        $templateWorksheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @($layout.MySheetName)
+
+        $repGroups = Build-Rep-Posting-Groups -Worksheet $repWorksheet -Key $Key
+
+        foreach ($section in $layout.Sections) {
+            if ($section.Name -eq 'sales') {
+                Apply-Section-Scaling `
+                    -OutputWorksheet $outputWorksheet `
+                    -TemplateWorksheet $templateWorksheet `
+                    -Layout $layout `
+                    -Section $section `
+                    -SourceGroups $repGroups.Sales `
+                    -Key $Key
+            }
+            elseif ($section.Name -eq 'discount') {
+                Apply-Section-Scaling `
+                    -OutputWorksheet $outputWorksheet `
+                    -TemplateWorksheet $templateWorksheet `
+                    -Layout $layout `
+                    -Section $section `
+                    -SourceGroups $repGroups.Discount `
+                    -Key $Key
+            }
+
+            Recalculate-Section-Saldo `
+                -OutputWorksheet $outputWorksheet `
+                -TemplateWorksheet $templateWorksheet `
+                -Layout $layout `
+                -Section $section
+        }
+
+        Clear-My-Devol-Rows `
+            -OutputWorkbook $OutputWorkbook `
+            -TemplateWorkbook $TemplateWorkbook `
+            -Key $Key
+
+        Write-Output ("INFO|{0}|my_sheet={1}" -f $Key, $layout.MySheetName)
+        return $repGroups
+    }
+    finally {
+        if ($null -ne $templateWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorksheet)
+        }
+        if ($null -ne $outputWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorksheet)
+        }
+        if ($null -ne $repWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($repWorksheet)
+        }
+    }
+}
+
+function Clear-My-Devol-Rows {
+    param(
+        [object]$OutputWorkbook,
+        [object]$TemplateWorkbook,
+        [string]$Key
+    )
+
+    $layout = Get-My-Layout -Key $Key
+    $outputWorksheet = $null
+    $templateWorksheet = $null
+    try {
+        $outputWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @($layout.MySheetName)
+        $templateWorksheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @($layout.MySheetName)
+
+        $lastSectionEnd = 0
+        foreach ($section in $layout.Sections) {
+            if ([int]$section.EndRow -gt $lastSectionEnd) {
+                $lastSectionEnd = [int]$section.EndRow
+            }
+        }
+
+        $lastRow = Get-Used-LastRow -Worksheet $templateWorksheet
+        for ($row = $lastSectionEnd + 1; $row -le $lastRow; $row++) {
+            $account = Get-Cell-Text -Worksheet $templateWorksheet -Row $row -Column 1
+            $name = (Get-Cell-Text -Worksheet $templateWorksheet -Row $row -Column 2).ToUpperInvariant()
+            if ($account -eq '' -or $name -notlike '*DEVOL*') {
+                continue
+            }
+
+            $outputWorksheet.Cells.Item($row, $layout.DateColumn).ClearContents()
+            $outputWorksheet.Cells.Item($row, $layout.SeatColumn).ClearContents()
+            $outputWorksheet.Cells.Item($row, $layout.DetailColumn).ClearContents()
+            $outputWorksheet.Cells.Item($row, $layout.DebitColumn).Value2 = 0.0
+            $outputWorksheet.Cells.Item($row, $layout.CreditColumn).Value2 = 0.0
+            $outputWorksheet.Cells.Item($row, $layout.SaldoColumn).ClearContents()
+        }
+    }
+    finally {
+        if ($null -ne $templateWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorksheet)
+        }
+        if ($null -ne $outputWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorksheet)
+        }
+    }
+}
+
+function Clear-Nc-Sheet-NoSource {
+    param(
+        [object]$Workbook,
+        [string]$SheetName
+    )
+
+    $worksheet = $null
+    try {
+        $worksheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @($SheetName)
+        $totalRow = Find-Row-Containing-Anywhere -Worksheet $worksheet -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow 40 -LastColumn 35
+        $mayorRow = Find-Row-Containing-Anywhere -Worksheet $worksheet -Needle 'MAYOR' -StartRow 1 -EndRow 40 -LastColumn 35
+
+        if ($null -eq $totalRow) {
+            return
+        }
+
+        if ($totalRow -gt 8) {
+            $detailRange = $worksheet.Range("A8:AE$($totalRow - 1)")
+            try {
+                $null = $detailRange.ClearContents()
+            }
+            finally {
+                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($detailRange)
+            }
+        }
+
+        foreach ($column in 22..24) {
+            $worksheet.Cells.Item($totalRow, $column).Value2 = 0.0
+        }
+
+        if ($null -ne $mayorRow) {
+            $worksheet.Cells.Item($mayorRow, 22).Value2 = 'MAYOR'
+        }
+    }
+    finally {
+        if ($null -ne $worksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($worksheet)
+        }
+    }
+}
+
+function Get-Mayor-Iva-Template-Groups {
+    param(
+        [object]$Worksheet,
+        [int]$StartRow,
+        [int]$EndRow
+    )
+
+    $groups = @{}
+
+    for ($row = $StartRow; $row -le $EndRow; $row++) {
+        $type = (Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 5).ToUpperInvariant()
+        $seat = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 6
+        $detail = Get-Cell-Text -Worksheet $Worksheet -Row $row -Column 7
+        $debit = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 8
+        $credit = Get-Cell-Number -Worksheet $Worksheet -Row $row -Column 9
+
+        if ($type -ne 'REPTO' -or $seat -eq '' -or $detail -eq '') {
+            continue
+        }
+
+        if ([Math]::Abs($credit) -lt 0.0000001 -or [Math]::Abs($debit) -gt 0.0000001) {
+            continue
+        }
+
+        $groupKey = $seat + '|' + $detail
+        if (-not $groups.ContainsKey($groupKey)) {
+            $groups[$groupKey] = @{
+                BaseTotal = 0.0
+                Rows = @()
+            }
+        }
+
+        $groups[$groupKey].BaseTotal = [Math]::Round(([double]$groups[$groupKey].BaseTotal + [double]$credit), 6)
+        $groups[$groupKey].Rows += @{
+            RowNumber = $row
+            BaseAmount = [double]$credit
+        }
+    }
+
+    return $groups
+}
+
+function Get-Mayor-Iva-Opening-Balance {
+    param(
+        [object]$Worksheet,
+        [int]$StartRow
+    )
+
+    $saldo = Get-Cell-Number -Worksheet $Worksheet -Row $StartRow -Column 10
+    $debit = Get-Cell-Number -Worksheet $Worksheet -Row $StartRow -Column 8
+    $credit = Get-Cell-Number -Worksheet $Worksheet -Row $StartRow -Column 9
+    return [Math]::Round(($saldo - $debit + $credit), 2)
+}
+
+function Update-Mayor-Iva-From-Rep {
+    param(
+        [object]$OutputWorkbook,
+        [object]$TemplateWorkbook,
+        [hashtable]$RepGroupsByKey
+    )
+
+    $outputWorksheet = $null
+    $templateWorksheet = $null
+    try {
+        $outputWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @('MAYOR IVA')
+        $templateWorksheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @('MAYOR IVA')
+
+        $templateGroups = Get-Mayor-Iva-Template-Groups -Worksheet $templateWorksheet -StartRow 299 -EndRow 366
+        $sourceGroups = @{}
+
+        foreach ($key in $RepGroupsByKey.Keys) {
+            foreach ($groupKey in $RepGroupsByKey[$key].Vat.Keys) {
+                $sourceGroups[$groupKey] = $RepGroupsByKey[$key].Vat[$groupKey]
+            }
+        }
+
+        $matchedGroups = @{}
+        foreach ($groupKey in $templateGroups.Keys) {
+            $templateGroup = $templateGroups[$groupKey]
+            $sourceGroup = $null
+            $targetTotal = 0.0
+            if ($sourceGroups.ContainsKey($groupKey)) {
+                $sourceGroup = $sourceGroups[$groupKey]
+                $targetTotal = [double]$sourceGroup.Amount
+                $matchedGroups[$groupKey] = $true
+            }
+
+            $rows = @($templateGroup.Rows)
+            $remaining = [Math]::Round($targetTotal, 6)
+            for ($index = 0; $index -lt $rows.Count; $index++) {
+                $rowNumber = [int]$rows[$index].RowNumber
+                if ($index -eq ($rows.Count - 1)) {
+                    $scaledAmount = [Math]::Round($remaining, 2)
+                }
+                elseif ([double]$templateGroup.BaseTotal -ne 0.0) {
+                    $scaledAmount = [Math]::Round(($targetTotal * ([double]$rows[$index].BaseAmount / [double]$templateGroup.BaseTotal)), 2)
+                    $remaining = [Math]::Round(($remaining - $scaledAmount), 6)
+                }
+                else {
+                    $scaledAmount = 0.0
+                }
+
+                $outputWorksheet.Cells.Item($rowNumber, 8).Value2 = 0.0
+                $outputWorksheet.Cells.Item($rowNumber, 9).Value2 = [double]$scaledAmount
+
+                if ($null -ne $sourceGroup) {
+                    Set-Date-CellValue `
+                        -Worksheet $outputWorksheet `
+                        -Row $rowNumber `
+                        -Column 4 `
+                        -Value $sourceGroup.DateValue `
+                        -FallbackText $sourceGroup.DateText
+
+                    $outputWorksheet.Cells.Item($rowNumber, 6).Value2 = [string]$sourceGroup.Seat
+                    $outputWorksheet.Cells.Item($rowNumber, 7).Value2 = [string]$sourceGroup.Detail
+                }
+            }
+        }
+
+        foreach ($sourceGroupKey in $sourceGroups.Keys) {
+            if (-not $matchedGroups.ContainsKey($sourceGroupKey)) {
+                Write-Output ("WARN|mayor_iva|missing={0}" -f $sourceGroupKey)
+            }
+        }
+
+        $runningBalance = Get-Mayor-Iva-Opening-Balance -Worksheet $templateWorksheet -StartRow 299
+        for ($row = 299; $row -le 366; $row++) {
+            $templateType = Get-Cell-Text -Worksheet $templateWorksheet -Row $row -Column 5
+            $templateSeat = Get-Cell-Text -Worksheet $templateWorksheet -Row $row -Column 6
+            $templateDetail = Get-Cell-Text -Worksheet $templateWorksheet -Row $row -Column 7
+            $templateDebit = Get-Cell-Number -Worksheet $templateWorksheet -Row $row -Column 8
+            $templateCredit = Get-Cell-Number -Worksheet $templateWorksheet -Row $row -Column 9
+            $templateSaldo = Get-Cell-Number -Worksheet $templateWorksheet -Row $row -Column 10
+
+            if ($templateType -eq '' -and $templateSeat -eq '' -and $templateDetail -eq '' -and [Math]::Abs($templateDebit) -lt 0.0000001 -and [Math]::Abs($templateCredit) -lt 0.0000001 -and [Math]::Abs($templateSaldo) -lt 0.0000001) {
+                $outputWorksheet.Cells.Item($row, 10).ClearContents()
+                continue
+            }
+
+            $debit = Get-Cell-Number -Worksheet $outputWorksheet -Row $row -Column 8
+            $credit = Get-Cell-Number -Worksheet $outputWorksheet -Row $row -Column 9
+            $runningBalance = [Math]::Round(($runningBalance + $debit - $credit), 2)
+            $outputWorksheet.Cells.Item($row, 10).Value2 = [double]$runningBalance
+        }
+
+        Write-Output 'INFO|mayor_iva|updated=1'
+    }
+    finally {
+        if ($null -ne $templateWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorksheet)
+        }
+        if ($null -ne $outputWorksheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorksheet)
+        }
+    }
+}
+
 function Process-Rep-Sheet {
     param(
         [object]$Excel,
@@ -314,7 +1232,10 @@ function Process-Rep-Sheet {
     try {
         $sourceWorkbook = $Excel.Workbooks.Open($SourcePath, 0, $true)
         try {
-            $sourceSheet = Get-Worksheet-Safe -Workbook $sourceWorkbook -CandidateNames @('RepLibroVentasGeneral')
+            $sourceSheet = Get-Worksheet-Safe -Workbook $sourceWorkbook -CandidateNames @(
+                'RepLibroVentasGeneral',
+                $TargetSheetName
+            )
         }
         catch {
             $sourceSheet = $sourceWorkbook.Worksheets.Item(1)
@@ -419,6 +1340,8 @@ try {
         @{ Key = 'szk'; Label = 'SUZUKI'; TargetSheet = 'REP SZK'; SourcePath = $resolvedInputSzk }
     )
 
+    $repGroupsByKey = @{}
+
     foreach ($config in $configs) {
         Process-Rep-Sheet `
             -Excel $excel `
@@ -428,6 +1351,28 @@ try {
             -Key $config.Key `
             -Label $config.Label `
             -Lookup $repLookups[$config.Key]
+
+        $repGroupsByKey[$config.Key] = Update-My-Sheet-From-Rep `
+            -OutputWorkbook $outputWorkbook `
+            -TemplateWorkbook $templateWorkbook `
+            -Key $config.Key `
+            -RepSheetName $config.TargetSheet
+    }
+
+    Update-Mayor-Iva-From-Rep `
+        -OutputWorkbook $outputWorkbook `
+        -TemplateWorkbook $templateWorkbook `
+        -RepGroupsByKey $repGroupsByKey
+
+    foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP SZK')) {
+        Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName
+    }
+
+    try {
+        $outputWorkbook.Application.CalculateFullRebuild()
+    }
+    catch {
+        $outputWorkbook.Application.CalculateFull()
     }
 
     $outputWorkbook.Save()

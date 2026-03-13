@@ -353,6 +353,30 @@ function Find-RepVtasEntry {
     return $null
 }
 
+function Get-Worksheet-Column-DefaultText {
+    param(
+        [object]$Worksheet,
+        [int]$StartRow,
+        [int]$KeyColumn,
+        [int]$ValueColumn
+    )
+
+    $lastRow = $Worksheet.Cells.Item($Worksheet.Rows.Count, $KeyColumn).End(-4162).Row
+    for ($row = $StartRow; $row -le $lastRow; $row++) {
+        $keyText = Normalize-Text $Worksheet.Cells.Item($row, $KeyColumn).Text
+        if ($keyText -eq '') {
+            continue
+        }
+
+        $valueText = Normalize-Text $Worksheet.Cells.Item($row, $ValueColumn).Text
+        if ($valueText -ne '') {
+            return $valueText
+        }
+    }
+
+    return ''
+}
+
 function Read-TemplateLookups {
     param([object]$Workbook)
 
@@ -365,6 +389,17 @@ function Read-TemplateLookups {
     $noteSheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @('NOTA DE CREDITO')
 
     $repVtasSheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @('REP VTAS')
+    $defaults = @{
+        Invoice = @{
+            GarExt = Get-Worksheet-Column-DefaultText -Worksheet $invoiceSheet -StartRow 17 -KeyColumn 3 -ValueColumn 17
+        }
+        Note = @{
+            GarExt = Get-Worksheet-Column-DefaultText -Worksheet $noteSheet -StartRow 11 -KeyColumn 2 -ValueColumn 21
+        }
+        RepVtas = @{
+            GarExt = Get-Worksheet-Column-DefaultText -Worksheet $repVtasSheet -StartRow 15 -KeyColumn 8 -ValueColumn 27
+        }
+    }
     $lastInvoiceRow = $invoiceSheet.Cells.Item($invoiceSheet.Rows.Count, 3).End(-4162).Row
     for ($row = 17; $row -le $lastInvoiceRow; $row++) {
         Assert-NotCancelled 'lookup_facturas'
@@ -497,6 +532,7 @@ function Read-TemplateLookups {
         Invoice = $invoiceStore
         Note = $noteStore
         RepVtas = $repVtasStore
+        Defaults = $defaults
     }
 }
 
@@ -614,13 +650,19 @@ function Normalize-SourceRows {
 
     foreach ($row in $sortedRows) {
         if ($row.DocType -in @('DC', 'DE')) {
-            $orderKey = Strip-Order-Suffix $row.Order
             $dedupeKey = @(
                 $row.TemplateKey,
                 $row.DocType,
                 $row.DocumentTrim,
-                $orderKey,
+                (Normalize-Text $row.Order),
                 (Get-Date-Write-Value $row.DateNoteValue),
+                (Round-Amount $row.NoteCredit),
+                (Round-Amount $row.TotalManoObra),
+                (Round-Amount $row.TotalSubcontratos),
+                (Round-Amount $row.TotalInsumos),
+                (Round-Amount $row.TotalServicio),
+                (Round-Amount $row.TotalAccesorios),
+                (Round-Amount $row.TotalRepuestos),
                 (Round-Amount $row.Total),
                 (Round-Amount $row.Iva),
                 (Round-Amount $row.Interes),
@@ -865,6 +907,121 @@ function Get-PreferredVisibleText {
     return $Primary
 }
 
+function Get-PreferredSourceText {
+    param(
+        [object]$SourceRaw,
+        [object]$SourceNormalized = '',
+        [object]$LookupValue = ''
+    )
+
+    $sourceRawText = Normalize-Text $SourceRaw
+    if ($sourceRawText -ne '' -and -not (Test-ObfuscatedText $SourceRaw)) {
+        return $SourceRaw
+    }
+
+    $sourceNormalizedText = Normalize-Text $SourceNormalized
+    if ($sourceNormalizedText -ne '' -and -not (Test-ObfuscatedText $SourceNormalized)) {
+        return $SourceNormalized
+    }
+
+    $lookupText = Normalize-Text $LookupValue
+    if ($lookupText -ne '') {
+        return $LookupValue
+    }
+
+    if ($sourceRawText -ne '') {
+        return $SourceRaw
+    }
+
+    return $SourceNormalized
+}
+
+function Get-PreferredLookupText {
+    param(
+        [object]$LookupValue,
+        [object]$SourceRaw = '',
+        [object]$SourceNormalized = ''
+    )
+
+    $lookupText = Normalize-Text $LookupValue
+    if ($lookupText -ne '' -and -not (Test-ObfuscatedText $LookupValue)) {
+        return $LookupValue
+    }
+
+    $sourceRawText = Normalize-Text $SourceRaw
+    if ($sourceRawText -ne '') {
+        return $SourceRaw
+    }
+
+    $sourceNormalizedText = Normalize-Text $SourceNormalized
+    if ($sourceNormalizedText -ne '') {
+        return $SourceNormalized
+    }
+
+    return $LookupValue
+}
+
+function Get-PreferredSourceDate {
+    param(
+        [object]$SourceValue,
+        [object]$LookupValue = $null
+    )
+
+    if ($null -ne $SourceValue -and $SourceValue -ne '') {
+        return $SourceValue
+    }
+
+    return $LookupValue
+}
+
+function Get-LookupDefaultText {
+    param(
+        [hashtable]$Lookups,
+        [string]$Section,
+        [string]$Field
+    )
+
+    if ($null -eq $Lookups -or -not $Lookups.ContainsKey('Defaults')) {
+        return ''
+    }
+
+    $defaults = $Lookups.Defaults
+    if ($null -eq $defaults -or -not $defaults.ContainsKey($Section)) {
+        return ''
+    }
+
+    $sectionDefaults = $defaults[$Section]
+    if ($null -eq $sectionDefaults -or -not $sectionDefaults.ContainsKey($Field)) {
+        return ''
+    }
+
+    return Normalize-Text $sectionDefaults[$Field]
+}
+
+function Resolve-TemplateGarExt {
+    param(
+        [object]$LookupValue,
+        [object]$SourceRaw = '',
+        [object]$SourceNormalized = '',
+        [object]$TemplateDefault = ''
+    )
+
+    $lookupText = Normalize-Text $LookupValue
+    if ($lookupText -ne '') {
+        return $LookupValue
+    }
+
+    $sourceValue = Get-PreferredSourceText -SourceRaw $SourceRaw -SourceNormalized $SourceNormalized
+    $sourceText = (Normalize-Text $sourceValue).ToUpperInvariant()
+    $defaultText = Normalize-Text $TemplateDefault
+
+    if ($sourceText -eq '' -or $sourceText -in @('N', 'NO', '0', 'FALSE')) {
+        return $defaultText
+    }
+
+    return $sourceValue
+}
+
 function Get-Excel-TextLiteral {
     param([object]$Value)
 
@@ -989,47 +1146,36 @@ function Fill-RepVtas {
         try {
             Assert-NotCancelled 'rep_vtas'
             $repLookup = Find-RepVtasEntry -Store $Lookups.RepVtas -DocKey $row.DocumentTrim -OrderKey $row.Order
-            $agencyValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Agency) -ne '') { $repLookup.Agency } elseif (([string]$row.AgencyRaw) -ne '') { [string]$row.AgencyRaw } else { Normalize-Text $row.Agency }
-            $centerValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Center) -ne '') { $repLookup.Center } elseif (([string]$row.CenterRaw) -ne '') { [string]$row.CenterRaw } else { Normalize-Text $row.Center }
-            $orderValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Order) -ne '') { $repLookup.Order } elseif (([string]$row.OrderRaw) -ne '') { [string]$row.OrderRaw } else { Normalize-Text $row.Order }
-            $advisorValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Advisor) -ne '') { $repLookup.Advisor } elseif (([string]$row.AdvisorRaw) -ne '') { [string]$row.AdvisorRaw } else { Normalize-Text $row.Advisor }
-            $lineValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.Line) -ne '') { $repLookup.Line } elseif (([string]$row.LineRaw) -ne '') { [string]$row.LineRaw } else { Normalize-Text $row.Line }
-            $cedulaValue = if ($null -ne $repLookup) {
-                Get-PreferredVisibleText -Primary $repLookup.Cedula -Secondary $row.CedulaRaw -Tertiary $row.Cedula
-            } elseif (([string]$row.CedulaRaw) -ne '') {
-                [string]$row.CedulaRaw
-            } else {
-                Normalize-Text $row.Cedula
-            }
-            $customerValue = if ($null -ne $repLookup) {
-                Get-PreferredVisibleText -Primary $repLookup.Customer -Secondary $row.CustomerRaw -Tertiary $row.Customer
-            } elseif (([string]$row.CustomerRaw) -ne '') {
-                [string]$row.CustomerRaw
-            } else {
-                Normalize-Text $row.Customer
-            }
-            $documentRawValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.DocumentRaw) -ne '') { $repLookup.DocumentRaw } else { Normalize-Text $row.DocumentRaw }
-            $factDateValue = if ($null -ne $repLookup -and $null -ne $repLookup.DateFactValue) { $repLookup.DateFactValue } else { $row.DateFactValue }
-            $noteDateValue = if ($null -ne $repLookup -and $null -ne $repLookup.DateNoteValue) { $repLookup.DateNoteValue } else { $row.DateNoteValue }
+            $garExtDefault = Get-LookupDefaultText -Lookups $Lookups -Section 'RepVtas' -Field 'GarExt'
+            $agencyValue = Get-PreferredSourceText -SourceRaw $row.AgencyRaw -SourceNormalized $row.Agency -LookupValue $(if ($null -ne $repLookup) { $repLookup.Agency } else { '' })
+            $centerValue = Get-PreferredSourceText -SourceRaw $row.CenterRaw -SourceNormalized $row.Center -LookupValue $(if ($null -ne $repLookup) { $repLookup.Center } else { '' })
+            $orderValue = Get-PreferredSourceText -SourceRaw $row.OrderRaw -SourceNormalized $row.Order -LookupValue $(if ($null -ne $repLookup) { $repLookup.Order } else { '' })
+            $advisorValue = Get-PreferredSourceText -SourceRaw $row.AdvisorRaw -SourceNormalized $row.Advisor -LookupValue $(if ($null -ne $repLookup) { $repLookup.Advisor } else { '' })
+            $lineValue = Get-PreferredSourceText -SourceRaw $row.LineRaw -SourceNormalized $row.Line -LookupValue $(if ($null -ne $repLookup) { $repLookup.Line } else { '' })
+            $cedulaValue = Get-PreferredSourceText -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula -LookupValue $(if ($null -ne $repLookup) { $repLookup.Cedula } else { '' })
+            $customerValue = Get-PreferredSourceText -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer -LookupValue $(if ($null -ne $repLookup) { $repLookup.Customer } else { '' })
+            $documentRawValue = Get-PreferredSourceText -SourceRaw $row.DocumentRaw -SourceNormalized $row.DocumentTrim -LookupValue $(if ($null -ne $repLookup) { $repLookup.DocumentRaw } else { '' })
+            $factDateValue = Get-PreferredSourceDate -SourceValue $row.DateFactValue -LookupValue $(if ($null -ne $repLookup) { $repLookup.DateFactValue } else { $null })
+            $noteDateValue = Get-PreferredSourceDate -SourceValue $row.DateNoteValue -LookupValue $(if ($null -ne $repLookup) { $repLookup.DateNoteValue } else { $null })
             if (($row.DocType -in @('DC', 'DE')) -and ($null -eq $noteDateValue -or $noteDateValue -eq '') -and $null -ne $factDateValue) {
                 $noteDateValue = $factDateValue
             }
-            $noteCreditSource = if ($null -ne $repLookup) { $repLookup.NoteCredit } else { $row.NoteCredit }
-            $totalManoObraSource = if ($null -ne $repLookup) { $repLookup.TotalManoObra } else { $row.TotalManoObra }
-            $totalSubcontratosSource = if ($null -ne $repLookup) { $repLookup.TotalSubcontratos } else { $row.TotalSubcontratos }
-            $totalInsumosSource = if ($null -ne $repLookup) { $repLookup.TotalInsumos } else { $row.TotalInsumos }
-            $totalServicioSource = if ($null -ne $repLookup) { $repLookup.TotalServicio } else { $row.TotalServicio }
-            $totalAccesoriosSource = if ($null -ne $repLookup) { $repLookup.TotalAccesorios } else { $row.TotalAccesorios }
-            $totalRepuestosSource = if ($null -ne $repLookup) { $repLookup.TotalRepuestos } else { $row.TotalRepuestos }
-            $interesSource = if ($null -ne $repLookup) { $repLookup.Interes } else { $row.Interes }
-            $ivaSource = if ($null -ne $repLookup) { $repLookup.Iva } else { $row.Iva }
-            $totalSource = if ($null -ne $repLookup) { $repLookup.Total } else { $row.Total }
-            $costoSource = if ($null -ne $repLookup) { $repLookup.Costo } else { $row.Costo }
-            $costoLubricantesSource = if ($null -ne $repLookup) { $repLookup.CostoLubricantes } else { $row.CostoLubricantes }
-            $costoAccesoriosSource = if ($null -ne $repLookup) { $repLookup.CostoAccesorios } else { $row.CostoAccesorios }
-            $costoRepuestosSource = if ($null -ne $repLookup) { $repLookup.CostoRepuestos } else { $row.CostoRepuestos }
-            $costoPinturaSource = if ($null -ne $repLookup) { $repLookup.CostoPintura } else { $row.CostoPintura }
-            $costoSubconNcSource = if ($null -ne $repLookup) { $repLookup.CostoSubconNc } else { $row.CostoSubconNc }
+            $noteCreditSource = $row.NoteCredit
+            $totalManoObraSource = $row.TotalManoObra
+            $totalSubcontratosSource = $row.TotalSubcontratos
+            $totalInsumosSource = $row.TotalInsumos
+            $totalServicioSource = $row.TotalServicio
+            $totalAccesoriosSource = $row.TotalAccesorios
+            $totalRepuestosSource = $row.TotalRepuestos
+            $interesSource = $row.Interes
+            $ivaSource = $row.Iva
+            $totalSource = $row.Total
+            $costoSource = $row.Costo
+            $costoLubricantesSource = $row.CostoLubricantes
+            $costoAccesoriosSource = $row.CostoAccesorios
+            $costoRepuestosSource = $row.CostoRepuestos
+            $costoPinturaSource = $row.CostoPintura
+            $costoSubconNcSource = $row.CostoSubconNc
 
             $noteCreditValue = [double](Round-Amount $noteCreditSource)
             $totalManoObraValue = [double](Round-Amount $totalManoObraSource)
@@ -1047,16 +1193,7 @@ function Fill-RepVtas {
             $costoRepuestosValue = [double](Round-Amount $costoRepuestosSource)
             $costoPinturaValue = [double](Round-Amount $costoPinturaSource)
             $costoSubconNcValue = [double](Round-Amount $costoSubconNcSource)
-            $garExtValue = if ($null -ne $repLookup -and (Normalize-Text $repLookup.GarExt) -ne '') {
-                $repLookup.GarExt
-            } elseif (([string]$row.GarExtRaw) -ne '') {
-                [string]$row.GarExtRaw
-            } else {
-                Normalize-Text $row.GarExt
-            }
-            if ($garExtValue -eq '') {
-                $garExtValue = 'N'
-            }
+            $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $repLookup) { $repLookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
 
             $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
             $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = "'" + $centerValue
@@ -1122,6 +1259,7 @@ function Fill-Invoices {
         try {
             Assert-NotCancelled 'facturas'
             $lookup = Find-LookupEntry -Store $Lookups.Invoice -DocKey $row.DocumentTrim -OrderKey $row.Order
+            $garExtDefault = Get-LookupDefaultText -Lookups $Lookups -Section 'Invoice' -Field 'GarExt'
             if ($null -eq $lookup) {
                 $fallbackCount++
             }
@@ -1132,34 +1270,16 @@ function Fill-Invoices {
             $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
             $discount = if ($null -ne $lookup) { Round-Amount $lookup.Discount } else { 0 }
             $subtotal = if ($null -ne $lookup) { Round-Amount $lookup.Subtotal } else { Round-Amount ($netoConIva + $discount) }
-            $agencyValue = if (([string]$row.AgencyRaw) -ne '') { [string]$row.AgencyRaw } else { Normalize-Text $row.Agency }
-            $seriesValue = if (([string]$row.SeriesRaw) -ne '') { [string]$row.SeriesRaw } else { Normalize-Text $row.Series }
-            $orderValue = if (([string]$row.OrderRaw) -ne '') { [string]$row.OrderRaw } else { Normalize-Text $row.Order }
-            $cedulaValue = if ($null -ne $lookup) {
-                Get-PreferredVisibleText -Primary $lookup.Cedula -Secondary $row.CedulaRaw -Tertiary $row.Cedula
-            } elseif (([string]$row.CedulaRaw) -ne '') {
-                [string]$row.CedulaRaw
-            } else {
-                Normalize-Text $row.Cedula
-            }
-            $customerValue = if ($null -ne $lookup) {
-                Get-PreferredVisibleText -Primary $lookup.Customer -Secondary $row.CustomerRaw -Tertiary $row.Customer
-            } elseif (([string]$row.CustomerRaw) -ne '') {
-                [string]$row.CustomerRaw
-            } else {
-                Normalize-Text $row.Customer
-            }
+            $agencyValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Agency } else { '' }) -SourceRaw $row.AgencyRaw -SourceNormalized $row.Agency
+            $seriesValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Series } else { '' }) -SourceRaw $row.SeriesRaw -SourceNormalized $row.Series
+            $orderValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Order } else { '' }) -SourceRaw $row.OrderRaw -SourceNormalized $row.Order
+            $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
+            $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
             $netoIva0Value = if ($null -ne $lookup) { Round-Amount $lookup.NetoIva0 } else { if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0 } }
             $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
             $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { Get-Invoice-Asiento -Row $row }
-            $garExtValue = if (([string]$row.GarExtRaw) -ne '') { [string]$row.GarExtRaw } else { Normalize-Text $row.GarExt }
-            if ($null -ne $lookup -and (Normalize-Text $lookup.GarExt) -ne '') {
-                $garExtValue = $lookup.GarExt
-            }
-            if ($garExtValue -eq '') {
-                $garExtValue = 'N'
-            }
-            $tvValue = if (([string]$row.LineRaw) -ne '') { [string]$row.LineRaw } else { Normalize-Text $row.Line }
+            $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
+            $tvValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Tv } else { '' }) -SourceRaw $row.LineRaw -SourceNormalized $row.Line
             $markerValue = 'N'
 
             if ($null -ne $lookup) {
@@ -1167,9 +1287,7 @@ function Fill-Invoices {
                 $ivaAmount = Round-Amount $lookup.Iva
                 $interestAmount = Round-Amount $lookup.Interest
                 $totalAmount = Round-Amount $lookup.Total
-                if ((Normalize-Text $lookup.Order) -ne '') {
-                    $orderValue = $lookup.Order
-                } elseif ((Normalize-Text $row.Order) -eq '') {
+                if ((Normalize-Text $lookup.Order) -eq '' -and (Normalize-Text $row.Order) -eq '') {
                     $orderValue = ''
                 }
             }
@@ -1231,6 +1349,7 @@ function Fill-Notes {
             Assert-NotCancelled 'notas'
             $orderKey = Strip-Order-Suffix $row.Order
             $lookup = Find-LookupEntry -Store $Lookups.Note -DocKey $row.DocumentTrim -OrderKey $orderKey
+            $garExtDefault = Get-LookupDefaultText -Lookups $Lookups -Section 'Note' -Field 'GarExt'
             if ($null -eq $lookup) {
                 $fallbackCount++
             }
@@ -1244,7 +1363,7 @@ function Fill-Notes {
             $subtotal = if ($null -ne $lookup) { Round-Amount $lookup.Subtotal } else { Round-Amount ($netoConIva + $discount) }
             $anticipo = if ($null -ne $lookup) { Round-Amount $lookup.Anticipo } else { 0 }
             $neto = if ($null -ne $lookup) { Round-Amount $lookup.Neto } else { Round-Amount ($totalAmount - $anticipo) }
-            $agencyValue = if (([string]$row.AgencyRaw) -ne '') { [string]$row.AgencyRaw } else { Normalize-Text $row.Agency }
+            $agencyValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Agency } else { '' }) -SourceRaw $row.AgencyRaw -SourceNormalized $row.Agency
             $kindValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Kind) -ne '') {
                 $lookup.Kind
             } elseif ($row.DocType -eq 'DE') {
@@ -1252,29 +1371,28 @@ function Fill-Notes {
             } else {
                 'CRE'
             }
-            $seriesValue = if (([string]$row.SeriesRaw) -ne '') { [string]$row.SeriesRaw } else { Normalize-Text $row.Series }
-            $invoiceValue = if (([string]$row.AffectedDocumentRaw) -ne '') { [string]$row.AffectedDocumentRaw } else { Normalize-Text $row.AffectedDocumentTrim }
-            $orderValue = if ($orderKey -ne '') { $orderKey } elseif (([string]$row.OrderRaw) -ne '') { [string]$row.OrderRaw } else { Normalize-Text $row.Order }
-            $cedulaValue = if ($null -ne $lookup) {
-                Get-PreferredVisibleText -Primary $lookup.Cedula -Secondary $row.CedulaRaw -Tertiary $row.Cedula
-            } elseif (([string]$row.CedulaRaw) -ne '') {
-                [string]$row.CedulaRaw
+            $seriesValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Series } else { '' }) -SourceRaw $row.SeriesRaw -SourceNormalized $row.Series
+            $invoiceValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Invoice) -ne '') {
+                $lookup.Invoice
+            } elseif (([string]$row.AffectedDocumentRaw) -ne '') {
+                [string]$row.AffectedDocumentRaw
             } else {
-                Normalize-Text $row.Cedula
+                Normalize-Text $row.AffectedDocumentTrim
             }
-            $customerValue = if ($null -ne $lookup) {
-                Get-PreferredVisibleText -Primary $lookup.Customer -Secondary $row.CustomerRaw -Tertiary $row.Customer
-            } elseif (([string]$row.CustomerRaw) -ne '') {
-                [string]$row.CustomerRaw
+            $orderValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Order) -ne '') {
+                $lookup.Order
+            } elseif ($orderKey -ne '') {
+                $orderKey
+            } elseif (([string]$row.OrderRaw) -ne '') {
+                [string]$row.OrderRaw
             } else {
-                Normalize-Text $row.Customer
+                Normalize-Text $row.Order
             }
+            $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
+            $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
             $iva12Value = if ($null -ne $lookup) { Round-Amount $lookup.Iva12 } else { 0 }
             $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { '' }
-            $garExtValue = if ($null -ne $lookup -and (Normalize-Text $lookup.GarExt) -ne '') { $lookup.GarExt } elseif (([string]$row.GarExtRaw) -ne '') { [string]$row.GarExtRaw } else { Normalize-Text $row.GarExt }
-            if ($garExtValue -eq '') {
-                $garExtValue = 'N'
-            }
+            $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
 
             if ($null -ne $lookup) {
                 $netoSinIva = Round-Amount $lookup.NetoSinIva
@@ -1283,17 +1401,15 @@ function Fill-Notes {
                 $interestAmount = Round-Amount $lookup.Interest
                 $totalAmount = Round-Amount $lookup.Total
 
-                if ((Normalize-Text $lookup.Series) -ne '') {
-                    $seriesValue = $lookup.Series
+                if ((Normalize-Text $lookup.Series) -eq '' -and (Normalize-Text $row.Series) -eq '') {
+                    $seriesValue = ''
                 }
 
-                if ((Normalize-Text $lookup.Invoice) -ne '') {
-                    $invoiceValue = $lookup.Invoice
+                if ((Normalize-Text $lookup.Invoice) -eq '' -and (Normalize-Text $row.AffectedDocumentTrim) -eq '') {
+                    $invoiceValue = ''
                 }
 
-                if ((Normalize-Text $lookup.Order) -ne '') {
-                    $orderValue = $lookup.Order
-                } elseif ($orderKey -eq '' -and (Normalize-Text $row.Order) -eq '') {
+                if ((Normalize-Text $lookup.Order) -eq '' -and $orderKey -eq '' -and (Normalize-Text $row.Order) -eq '') {
                     $orderValue = ''
                 }
             }

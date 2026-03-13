@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/app.php';
+require_once __DIR__ . '/bootstrap.php';
 
 function servicios_job_path(string $jobsDir, string $jobId): string
 {
@@ -273,9 +273,9 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             throw new RuntimeException('No se encontro la carpeta de plantillas.');
         }
 
-        $scriptPath = app_join_path(app_root(), 'run_servicios_marcas.ps1');
+        $scriptPath = app_join_path(app_root(), 'scripts', 'cxp', 'servicios_marcas', 'run.ps1');
         if (!is_file($scriptPath)) {
-            throw new RuntimeException('No existe run_servicios_marcas.ps1 en el proyecto.');
+            throw new RuntimeException('No existe el worker de servicios por marca en scripts/cxp/servicios_marcas/run.ps1.');
         }
 
         $existingStatus = (string)($existingJob['status'] ?? '');
