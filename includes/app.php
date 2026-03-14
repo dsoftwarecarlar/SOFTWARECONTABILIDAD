@@ -332,8 +332,8 @@ function app_output_matches_action(string $fileName, string $actionKey): bool
 
     return match ($actionKey) {
         'accion1' => str_contains($name, '_resultado'),
-        'accion2' => str_contains($name, 'accion2'),
-        'accion3' => str_contains($name, 'accion3'),
+        'accion2' => preg_match('/_\d{8}_\d{6}_accion2(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i', $name) === 1,
+        'accion3' => preg_match('/_\d{8}_\d{6}_accion3(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i', $name) === 1,
         'accion4' => str_contains($name, 'accion4'),
         'bundle' => str_contains($name, 'acciones_resumen'),
         'servicios' => str_starts_with($name, 'servicios_'),

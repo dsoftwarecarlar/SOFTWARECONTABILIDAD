@@ -5,7 +5,11 @@
   "main": "run_bot.js",
   "scripts": {
     "bot": "node run_bot.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:e2e:accion2-3": "node scripts/tests/e2e_action2_action3_contract.js",
+    "test:e2e:repuestos": "node scripts/tests/e2e_repuestos_contract.js",
+    "test:smoke:ui": "node scripts/tests/http_resources_smoke.js",
+    "test:quality:contable": "node scripts/tests/contable_quality_gate.js"
   },
   "keywords": [],
   "author": "",

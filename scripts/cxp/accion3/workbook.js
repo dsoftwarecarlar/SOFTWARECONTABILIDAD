@@ -1,4 +1,5 @@
 const fs = require("fs");
+const crypto = require("crypto");
 
 const AdmZip = require("adm-zip");
 const ExcelJS = require("exceljs");
@@ -11,8 +12,6 @@ const {
   toExcelDateSerial,
 } = require("../shared/core-utils");
 const {
-  captureStyleMatrix,
-  applyStyleFromMatrix,
   clearRangeValues,
   parseXml,
   readZipText,
@@ -62,21 +61,57 @@ function readTemplateSummaryLabels(ws) {
   return labels;
 }
 
+function toCents(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.round((numeric + Number.EPSILON) * 100);
+}
+
+function fromCents(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return numeric / 100;
+}
+
+function createStyleSignatureCache() {
+  const cache = new WeakMap();
+  return (style) => {
+    if (!style || typeof style !== "object") {
+      return styleSignature(style);
+    }
+
+    const cached = cache.get(style);
+    if (cached) {
+      return cached;
+    }
+
+    const computed = styleSignature(style);
+    cache.set(style, computed);
+    return computed;
+  };
+}
+
 function buildSummary(rows, templateLabels) {
   const bucket = new Map();
-  let totalDebe = 0;
-  let totalHaber = 0;
+  let totalDebeCents = 0;
+  let totalHaberCents = 0;
 
   for (const row of rows) {
     const label = sanitizeText(row.CUENTA);
     if (!bucket.has(label)) {
-      bucket.set(label, { debe: 0, haber: 0 });
+      bucket.set(label, { debeCents: 0, haberCents: 0 });
     }
     const item = bucket.get(label);
-    item.debe += row.DEBE;
-    item.haber += row.HABER;
-    totalDebe += row.DEBE;
-    totalHaber += row.HABER;
+    const debeCents = toCents(row.DEBE);
+    const haberCents = toCents(row.HABER);
+    item.debeCents += debeCents;
+    item.haberCents += haberCents;
+    totalDebeCents += debeCents;
+    totalHaberCents += haberCents;
   }
 
   const result = [];
@@ -85,22 +120,69 @@ function buildSummary(rows, templateLabels) {
       result.push({
         row: labelItem.row,
         label: labelItem.label,
-        debe: round2(totalDebe),
-        haber: round2(totalHaber),
+        debe: fromCents(totalDebeCents),
+        haber: fromCents(totalHaberCents),
       });
       continue;
     }
 
-    const values = bucket.get(labelItem.label) || { debe: 0, haber: 0 };
+    const values = bucket.get(labelItem.label) || { debeCents: 0, haberCents: 0 };
     result.push({
       row: labelItem.row,
       label: labelItem.label,
-      debe: round2(values.debe),
-      haber: round2(values.haber),
+      debe: fromCents(values.debeCents),
+      haber: fromCents(values.haberCents),
     });
   }
 
   return result;
+}
+
+function cellPayloadSignature(cell) {
+  return JSON.stringify({
+    t: cell?.["@_t"] ?? null,
+    v: cell?.v ?? null,
+    f: cell?.f ?? null,
+    is: cell?.is ?? null,
+  });
+}
+
+function capturePayloadSnapshot(rows, maxColumn) {
+  const rowsWithPayload = new Set();
+  const payloadEntries = [];
+
+  for (const row of rows) {
+    const rowNumber = Number(row?.["@_r"] || 0);
+    if (rowNumber < 2) {
+      continue;
+    }
+
+    const cells = getCellsArray(row);
+    for (const cell of cells) {
+      const ref = parseCellRef(cell?.["@_r"]);
+      if (!ref || ref.col < 1 || ref.col > maxColumn) {
+        continue;
+      }
+      if (!hasCellPayload(cell)) {
+        continue;
+      }
+
+      rowsWithPayload.add(ref.row);
+      payloadEntries.push(`${ref.row}:${ref.col}:${cellPayloadSignature(cell)}`);
+    }
+  }
+
+  payloadEntries.sort();
+  const payloadHash = crypto
+    .createHash("sha256")
+    .update(payloadEntries.join("\n"), "utf8")
+    .digest("hex");
+
+  return {
+    rows: rowsWithPayload.size,
+    payloadCells: payloadEntries.length,
+    payloadHash,
+  };
 }
 
 async function buildWorkbookFromTemplate(templatePath, rows) {
@@ -118,15 +200,8 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   ensureTemplateCapacity(ws, Math.max(rows.length + 1, ws.rowCount));
   const templateRowCount = ws.rowCount;
 
-  const templateStyles = captureStyleMatrix(ws, templateRowCount, 16);
   clearRangeValues(ws, 2, templateRowCount, 1, 11);
   clearRangeValues(ws, 2, templateRowCount, 14, 15);
-
-  for (let row = 1; row <= templateRowCount; row += 1) {
-    for (let col = 1; col <= 16; col += 1) {
-      applyStyleFromMatrix(ws, templateStyles, row, col);
-    }
-  }
 
   for (let i = 0; i < rows.length; i += 1) {
     const rowNum = i + 2;
@@ -143,10 +218,6 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
     ws.getCell(rowNum, 9).value = round2(row.DEBE);
     ws.getCell(rowNum, 10).value = round2(row.HABER);
     ws.getCell(rowNum, 11).value = round2(row.SALDO);
-
-    for (let col = 1; col <= 11; col += 1) {
-      applyStyleFromMatrix(ws, templateStyles, rowNum, col);
-    }
   }
 
   const summaryLabels = readTemplateSummaryLabels(ws);
@@ -154,9 +225,6 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   for (const item of summary) {
     ws.getCell(item.row, 14).value = round2(item.debe);
     ws.getCell(item.row, 15).value = round2(item.haber);
-    for (let col = 13; col <= 16; col += 1) {
-      applyStyleFromMatrix(ws, templateStyles, item.row, col);
-    }
   }
 
   return { workbook: wb, summary };
@@ -178,6 +246,7 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   const generatedSheet = parseXml(generatedSheetXml);
   const templateRows = getRowsArray(templateSheet);
   const generatedRows = getRowsArray(generatedSheet);
+  const payloadBeforeMerge = capturePayloadSnapshot(generatedRows, 11);
 
   const templateRowMap = new Map();
   const generatedCellMap = new Map();
@@ -263,6 +332,19 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   }
 
   templateRows.sort((a, b) => Number(a?.["@_r"] || 0) - Number(b?.["@_r"] || 0));
+  const payloadAfterMerge = capturePayloadSnapshot(templateRows, 11);
+
+  if (
+    payloadBeforeMerge.rows !== payloadAfterMerge.rows
+    || payloadBeforeMerge.payloadCells !== payloadAfterMerge.payloadCells
+    || payloadBeforeMerge.payloadHash !== payloadAfterMerge.payloadHash
+  ) {
+    throw new Error(
+      `Validacion post-merge Accion 3 fallida: rows ${payloadBeforeMerge.rows}=>${payloadAfterMerge.rows}, `
+      + `payload ${payloadBeforeMerge.payloadCells}=>${payloadAfterMerge.payloadCells}.`,
+    );
+  }
+
   setRowsArray(templateSheet, templateRows);
   if (generatedSheet.worksheet?.dimension) {
     templateSheet.worksheet.dimension = deepClone(generatedSheet.worksheet.dimension);
@@ -276,6 +358,16 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
 
   stripCalcChain(templateZip);
   templateZip.writeZip(generatedPath);
+
+  return {
+    rows_before_merge: payloadBeforeMerge.rows,
+    rows_after_merge: payloadAfterMerge.rows,
+    payload_cells_before: payloadBeforeMerge.payloadCells,
+    payload_cells_after: payloadAfterMerge.payloadCells,
+    payload_hash_before: payloadBeforeMerge.payloadHash,
+    payload_hash_after: payloadAfterMerge.payloadHash,
+    merge_integrity_ok: true,
+  };
 }
 
 async function verifyOutputWorkbook(outputPath, templatePath, rowsCount) {
@@ -327,10 +419,11 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount) {
   if (!templateWs || !outWs) {
     throw new Error(`Validacion final: no se pudo comparar formato de hoja ${SHEET_NAME}.`);
   }
+  const styleSig = createStyleSignatureCache();
 
   for (let col = 1; col <= 16; col += 1) {
-    const expected = styleSignature(templateWs.getCell(1, col).style);
-    const actual = styleSignature(outWs.getCell(1, col).style);
+    const expected = styleSig(templateWs.getCell(1, col).style);
+    const actual = styleSig(outWs.getCell(1, col).style);
     if (expected !== actual) {
       throw new Error(`Validacion final: estilo de encabezado alterado en fila 1, columna ${col}.`);
     }
@@ -340,8 +433,8 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount) {
   if (lastDataRow >= 2) {
     const expectedDataStyleRow = Math.min(lastDataRow, templateWs.rowCount);
     for (let col = 1; col <= 11; col += 1) {
-      const expected = styleSignature(templateWs.getCell(expectedDataStyleRow, col).style);
-      const actual = styleSignature(outWs.getCell(lastDataRow, col).style);
+      const expected = styleSig(templateWs.getCell(expectedDataStyleRow, col).style);
+      const actual = styleSig(outWs.getCell(lastDataRow, col).style);
       if (expected !== actual) {
         throw new Error(`Validacion final: estilo de datos alterado en ${lastDataRow}:${col}.`);
       }
@@ -351,8 +444,8 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount) {
   const summaryLabels = readTemplateSummaryLabels(templateWs);
   for (const item of summaryLabels) {
     for (let col = 13; col <= 16; col += 1) {
-      const expected = styleSignature(templateWs.getCell(item.row, col).style);
-      const actual = styleSignature(outWs.getCell(item.row, col).style);
+      const expected = styleSig(templateWs.getCell(item.row, col).style);
+      const actual = styleSig(outWs.getCell(item.row, col).style);
       if (expected !== actual) {
         throw new Error(`Validacion final: estilo lateral alterado en ${item.row}:${col}.`);
       }

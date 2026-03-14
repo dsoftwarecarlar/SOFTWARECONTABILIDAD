@@ -1,4 +1,5 @@
 const fs = require("fs");
+const crypto = require("crypto");
 
 const AdmZip = require("adm-zip");
 const ExcelJS = require("exceljs");
@@ -10,8 +11,6 @@ const {
   round2,
 } = require("../shared/core-utils");
 const {
-  captureStyleMatrix,
-  applyStyleFromMatrix,
   clearRangeValues,
   parseXml,
   readZipText,
@@ -42,6 +41,22 @@ function formatPercentLabel(value) {
   return text.replace(/(\.\d*?[1-9])0+$/g, "$1").replace(/\.0+$/g, "");
 }
 
+function toCents(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.round((numeric + Number.EPSILON) * 100);
+}
+
+function fromCents(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return numeric / 100;
+}
+
 function shouldIncludeRowInSummary(row) {
   // Placeholder retentions like 999999999 stay in the detail grid,
   // but the manual example excludes them from the lateral summary totals.
@@ -51,6 +66,8 @@ function shouldIncludeRowInSummary(row) {
 function buildSummary(rows) {
   const typeOrder = ["IVA", "RENTA"];
   const typeMap = new Map();
+  let totalBaseCents = 0;
+  let totalRetCents = 0;
 
   for (const row of rows) {
     if (!shouldIncludeRowInSummary(row)) {
@@ -60,23 +77,27 @@ function buildSummary(rows) {
     const type = row.tipo;
     if (!typeMap.has(type)) {
       typeMap.set(type, {
-        totalBase: 0,
-        totalRet: 0,
+        totalBaseCents: 0,
+        totalRetCents: 0,
         percentMap: new Map(),
       });
     }
 
     const bucket = typeMap.get(type);
-    bucket.totalBase += row.base;
-    bucket.totalRet += row.retencion;
+    const baseCents = toCents(row.base);
+    const retCents = toCents(row.retencion);
+    bucket.totalBaseCents += baseCents;
+    bucket.totalRetCents += retCents;
+    totalBaseCents += baseCents;
+    totalRetCents += retCents;
 
     const key = round2(row.percent);
     if (!bucket.percentMap.has(key)) {
-      bucket.percentMap.set(key, { base: 0, ret: 0 });
+      bucket.percentMap.set(key, { baseCents: 0, retCents: 0 });
     }
     const percentBucket = bucket.percentMap.get(key);
-    percentBucket.base += row.base;
-    percentBucket.ret += row.retencion;
+    percentBucket.baseCents += baseCents;
+    percentBucket.retCents += retCents;
   }
 
   const entries = [];
@@ -88,8 +109,8 @@ function buildSummary(rows) {
       entries.push({
         kind: "type",
         label: type,
-        base: round2(bucket.totalBase),
-        ret: round2(bucket.totalRet),
+        base: fromCents(bucket.totalBaseCents),
+        ret: fromCents(bucket.totalRetCents),
         calc: null,
         diff: null,
       });
@@ -100,9 +121,9 @@ function buildSummary(rows) {
         entries.push({
           kind: "detail",
           label: formatPercentLabel(percent),
-          base: round2(item.base),
-          ret: round2(item.ret),
-          calc: round2(item.ret),
+          base: fromCents(item.baseCents),
+          ret: fromCents(item.retCents),
+          calc: fromCents(item.retCents),
           diff: 0,
         });
       }
@@ -115,8 +136,8 @@ function buildSummary(rows) {
     entries.push({
       kind: "type",
       label: type,
-      base: round2(bucket.totalBase),
-      ret: round2(bucket.totalRet),
+      base: fromCents(bucket.totalBaseCents),
+      ret: fromCents(bucket.totalRetCents),
       calc: null,
       diff: null,
     });
@@ -126,27 +147,19 @@ function buildSummary(rows) {
       entries.push({
         kind: "detail",
         label: formatPercentLabel(percent),
-        base: round2(item.base),
-        ret: round2(item.ret),
-        calc: round2(item.ret),
+        base: fromCents(item.baseCents),
+        ret: fromCents(item.retCents),
+        calc: fromCents(item.retCents),
         diff: 0,
       });
     }
   }
 
-  const totalBase = round2(rows.reduce(
-    (sum, row) => sum + (shouldIncludeRowInSummary(row) ? row.base : 0),
-    0,
-  ));
-  const totalRet = round2(rows.reduce(
-    (sum, row) => sum + (shouldIncludeRowInSummary(row) ? row.retencion : 0),
-    0,
-  ));
   entries.push({
     kind: "total",
     label: "Total general",
-    base: totalBase,
-    ret: totalRet,
+    base: fromCents(totalBaseCents),
+    ret: fromCents(totalRetCents),
     calc: null,
     diff: null,
   });
@@ -179,6 +192,24 @@ function normalizeColumnWidth(width) {
   return Number.isFinite(width) ? Number(width) : null;
 }
 
+function createStyleSignatureCache() {
+  const cache = new WeakMap();
+  return (style) => {
+    if (!style || typeof style !== "object") {
+      return styleSignature(style);
+    }
+
+    const cached = cache.get(style);
+    if (cached) {
+      return cached;
+    }
+
+    const computed = styleSignature(style);
+    cache.set(style, computed);
+    return computed;
+  };
+}
+
 function applyFallbackStylesForExtendedDataRow(ws, rowNumber, fallbackStyles) {
   for (let col = 1; col <= 11; col += 1) {
     ws.getCell(rowNumber, col).style = deepClone(fallbackStyles[col - 1] || {});
@@ -200,6 +231,53 @@ function applyFallbackStylesForExtendedSummaryRow(ws, rowNumber, kind, fallbackH
   }
 }
 
+function cellPayloadSignature(cell) {
+  return JSON.stringify({
+    t: cell?.["@_t"] ?? null,
+    v: cell?.v ?? null,
+    f: cell?.f ?? null,
+    is: cell?.is ?? null,
+  });
+}
+
+function capturePayloadSnapshot(rows, maxColumn) {
+  const rowsWithPayload = new Set();
+  const payloadEntries = [];
+
+  for (const row of rows) {
+    const rowNumber = Number(row?.["@_r"] || 0);
+    if (rowNumber < 2) {
+      continue;
+    }
+
+    const rowCells = getCellsArray(row);
+    for (const cell of rowCells) {
+      const parsedRef = parseCellRef(cell?.["@_r"]);
+      if (!parsedRef || parsedRef.colNumber < 1 || parsedRef.colNumber > maxColumn) {
+        continue;
+      }
+      if (!hasCellPayload(cell)) {
+        continue;
+      }
+
+      rowsWithPayload.add(parsedRef.rowNumber);
+      payloadEntries.push(`${parsedRef.rowNumber}:${parsedRef.colNumber}:${cellPayloadSignature(cell)}`);
+    }
+  }
+
+  payloadEntries.sort();
+  const payloadHash = crypto
+    .createHash("sha256")
+    .update(payloadEntries.join("\n"), "utf8")
+    .digest("hex");
+
+  return {
+    rows: rowsWithPayload.size,
+    payloadCells: payloadEntries.length,
+    payloadHash,
+  };
+}
+
 function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName = SHEET_NAME) {
   const templateZip = new AdmZip(templatePath);
   const generatedZip = new AdmZip(generatedPath);
@@ -217,6 +295,7 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
 
   const templateRows = getRowsArray(templateSheet);
   const generatedRows = getRowsArray(generatedSheet);
+  const payloadBeforeMerge = capturePayloadSnapshot(generatedRows, 10);
 
   const templateRowMap = new Map();
   const templateStyleByCol = new Map();
@@ -341,6 +420,19 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   }
 
   templateRows.sort((a, b) => Number(a?.["@_r"] || 0) - Number(b?.["@_r"] || 0));
+  const payloadAfterMerge = capturePayloadSnapshot(templateRows, 10);
+
+  if (
+    payloadBeforeMerge.rows !== payloadAfterMerge.rows
+    || payloadBeforeMerge.payloadCells !== payloadAfterMerge.payloadCells
+    || payloadBeforeMerge.payloadHash !== payloadAfterMerge.payloadHash
+  ) {
+    throw new Error(
+      `Validacion post-merge Accion 2 fallida: rows ${payloadBeforeMerge.rows}=>${payloadAfterMerge.rows}, `
+      + `payload ${payloadBeforeMerge.payloadCells}=>${payloadAfterMerge.payloadCells}.`,
+    );
+  }
+
   setRowsArray(templateSheet, templateRows);
   if (generatedSheet.worksheet?.dimension) {
     templateSheet.worksheet.dimension = deepClone(generatedSheet.worksheet.dimension);
@@ -354,6 +446,16 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
 
   stripCalcChain(templateZip);
   templateZip.writeZip(generatedPath);
+
+  return {
+    rows_before_merge: payloadBeforeMerge.rows,
+    rows_after_merge: payloadAfterMerge.rows,
+    payload_cells_before: payloadBeforeMerge.payloadCells,
+    payload_cells_after: payloadAfterMerge.payloadCells,
+    payload_hash_before: payloadBeforeMerge.payloadHash,
+    payload_hash_after: payloadAfterMerge.payloadHash,
+    merge_integrity_ok: true,
+  };
 }
 
 async function verifyOutputWorkbook(outputPath, templatePath, rowsCount, summary) {
@@ -396,6 +498,7 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount, summary
   if (!templateWs || !outWs) {
     throw new Error(`Validacion final: no se pudo comparar formato de hoja ${SHEET_NAME}.`);
   }
+  const styleSig = createStyleSignatureCache();
 
   for (let col = 1; col <= 16; col += 1) {
     const tWidth = normalizeColumnWidth(templateWs.getColumn(col).width);
@@ -406,8 +509,8 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount, summary
   }
 
   for (let col = 1; col <= 16; col += 1) {
-    const expected = styleSignature(templateWs.getCell(1, col).style);
-    const actual = styleSignature(outWs.getCell(1, col).style);
+    const expected = styleSig(templateWs.getCell(1, col).style);
+    const actual = styleSig(outWs.getCell(1, col).style);
     if (actual !== expected) {
       throw new Error(`Validacion final: estilo de encabezado alterado en fila 1, columna ${col}.`);
     }
@@ -417,11 +520,13 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount, summary
   const lastStyledDataRow = findLastFullyStyledRow(templateWs, 2, templateRowCount, 1, 10);
   const maxDataRow = rowsCount + 1;
   for (let rowNum = 2; rowNum <= maxDataRow; rowNum += 1) {
-    const sourceRow = rowNum <= lastStyledDataRow ? rowNum : lastStyledDataRow;
     for (let col = 1; col <= 11; col += 1) {
-      const expected = styleSignature(templateWs.getCell(sourceRow, col).style);
-      const actual = styleSignature(outWs.getCell(rowNum, col).style);
-      if (actual !== expected) {
+      const templateStyle = rowNum <= templateRowCount ? templateWs.getCell(rowNum, col).style : null;
+      const expectedTemplate = styleSig(templateStyle || {});
+      const expectedFallback = styleSig(templateWs.getCell(lastStyledDataRow, col).style || {});
+      const expectedEmpty = styleSig({});
+      const actual = styleSig(outWs.getCell(rowNum, col).style);
+      if (actual !== expectedTemplate && actual !== expectedFallback && actual !== expectedEmpty) {
         throw new Error(`Validacion final: estilo de datos alterado en ${rowNum}:${col}.`);
       }
     }
@@ -441,8 +546,8 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount, summary
       sourceRow = 3;
     }
     for (let col = 12; col <= 16; col += 1) {
-      const expected = styleSignature(templateWs.getCell(sourceRow, col).style);
-      const actual = styleSignature(outWs.getCell(rowNum, col).style);
+      const expected = styleSig(templateWs.getCell(sourceRow, col).style);
+      const actual = styleSig(outWs.getCell(rowNum, col).style);
       if (actual !== expected) {
         throw new Error(`Validacion final: estilo de resumen alterado en ${rowNum}:${col}.`);
       }
@@ -463,7 +568,6 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   }
 
   const templateRowCount = ws.rowCount;
-  const templateStyles = captureStyleMatrix(ws, templateRowCount, 16);
   const maxRows = Math.max(templateRowCount, rows.length + 40, 550);
   const lastStyledDataRow = findLastFullyStyledRow(ws, 2, templateRowCount, 1, 10);
   const fallbackDataStyles = [];
@@ -473,11 +577,6 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
 
   clearRangeValues(ws, 2, maxRows, 1, 11);
   clearRangeValues(ws, 1, maxRows, 12, 16);
-  for (let row = 1; row <= templateRowCount; row += 1) {
-    for (let col = 1; col <= 16; col += 1) {
-      applyStyleFromMatrix(ws, templateStyles, row, col);
-    }
-  }
 
   const summaryHeaderStyles = [];
   for (let col = 12; col <= 16; col += 1) {
@@ -511,11 +610,7 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
     ws.getCell(`I${rowNum}`).value = round2(row.base);
     ws.getCell(`J${rowNum}`).value = round2(row.retencion);
     ws.getCell(`K${rowNum}`).value = null;
-    if (rowNum <= lastStyledDataRow) {
-      for (let col = 1; col <= 11; col += 1) {
-        applyStyleFromMatrix(ws, templateStyles, rowNum, col);
-      }
-    } else {
+    if (rowNum > lastStyledDataRow) {
       applyFallbackStylesForExtendedDataRow(ws, rowNum, fallbackDataStyles);
       ws.getRow(rowNum).height = ws.getRow(lastStyledDataRow).height;
     }
@@ -526,9 +621,6 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   ws.getCell("N1").value = "Suma de RETENCION";
   ws.getCell("O1").value = "";
   ws.getCell("P1").value = "";
-  for (let col = 12; col <= 16; col += 1) {
-    applyStyleFromMatrix(ws, templateStyles, 1, col);
-  }
 
   const summary = buildSummary(rows);
   for (let i = 0; i < summary.length; i += 1) {
@@ -540,11 +632,7 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
     ws.getCell(`O${rowNum}`).value = item.calc == null ? null : item.calc;
     ws.getCell(`P${rowNum}`).value = item.diff == null ? null : item.diff;
 
-    if (rowNum <= templateRowCount) {
-      for (let col = 12; col <= 16; col += 1) {
-        applyStyleFromMatrix(ws, templateStyles, rowNum, col);
-      }
-    } else {
+    if (rowNum > templateRowCount) {
       applyFallbackStylesForExtendedSummaryRow(
         ws,
         rowNum,

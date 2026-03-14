@@ -57,8 +57,14 @@ $viewData = $controller->handle($_SERVER, $_FILES);
 $successMessage = '';
 if ($viewData['result'] !== null) {
     $successMessage = 'Archivo generado correctamente: ' . (string)$viewData['result']['excel_name'];
+    if (!empty($viewData['result']['generated_at'])) {
+        $successMessage .= ' | Generado: ' . (string)$viewData['result']['generated_at'];
+    }
     if ((int)($viewData['result']['source_count'] ?? 0) > 1) {
         $successMessage .= ' | TXT consolidados: ' . (int)$viewData['result']['source_count'];
+    }
+    if (!empty($viewData['result']['output_origin_note'])) {
+        $successMessage .= ' | ' . (string)$viewData['result']['output_origin_note'];
     }
 }
 

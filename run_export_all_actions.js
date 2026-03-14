@@ -16,13 +16,13 @@ const ACTIONS = [
     key: "accion2",
     label: "Accion 2",
     sheetName: "ACCION 2 RET PROV",
-    matches: (name) => /accion2/i.test(name),
+    matches: (name) => /_\d{8}_\d{6}_accion2(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i.test(name),
   },
   {
     key: "accion3",
     label: "Accion 3",
     sheetName: "ACCION 3 MAYOR RET",
-    matches: (name) => /accion3/i.test(name),
+    matches: (name) => /_\d{8}_\d{6}_accion3(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i.test(name),
   },
   {
     key: "accion4",

@@ -43,6 +43,17 @@ $otherModules = array_values(array_filter(
     static fn(array $module): bool => $module['slug'] !== 'cxp_txt'
 ));
 
+$successMessage = '';
+if ($viewData['result'] !== null) {
+    $successMessage = 'Archivo generado correctamente: ' . (string)$viewData['result']['excel_name'];
+    if (!empty($viewData['result']['generated_at'])) {
+        $successMessage .= ' | Generado: ' . (string)$viewData['result']['generated_at'];
+    }
+    if (!empty($viewData['result']['output_origin_note'])) {
+        $successMessage .= ' | ' . (string)$viewData['result']['output_origin_note'];
+    }
+}
+
 $pageConfig = [
     'top_title' => (string)$viewData['currentModule']['title'],
     'top_note' => 'Accion 2 del flujo contable mensual',
@@ -84,7 +95,7 @@ $pageConfig = [
     'form_accept' => '.txt,text/plain',
     'button_label' => 'Generar Excel',
     'download_label' => 'Descargar Excel',
-    'success_message' => $viewData['result'] !== null ? 'Archivo generado correctamente: ' . (string)$viewData['result']['excel_name'] : '',
+    'success_message' => $successMessage,
     'stats_items' => [
         ['tag' => 'Salida publica', 'title' => 'Solo .xlsx', 'description' => 'No se expone el JSON interno en la interfaz.'],
         ['tag' => 'Historial', 'title' => 'Ordenado por creacion', 'description' => 'Ultimos archivos arriba, mas antiguos abajo.'],

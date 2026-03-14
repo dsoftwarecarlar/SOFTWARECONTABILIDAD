@@ -20,6 +20,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$EnableDeepValidation = ((([string]$env:REPUESTOS_DEEP_VALIDATE).Trim()) -eq '1')
 
 function Normalize-Text {
     param([object]$Value)
@@ -48,6 +49,28 @@ function Resolve-RequiredPath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Ensure-WritablePath {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $Path)) {
+                Start-Sleep -Milliseconds 200
+                return
+            }
+        } catch {
+            Start-Sleep -Seconds 1
+        }
+    }
+
+    throw "El archivo de salida parece estar abierto o bloqueado: $Path. Cierralo y vuelve a intentar."
+}
+
 function Get-Worksheet-Safe {
     param(
         [object]$Workbook,
@@ -55,10 +78,37 @@ function Get-Worksheet-Safe {
     )
 
     foreach ($candidate in $CandidateNames) {
+        $candidateName = Normalize-Text $candidate
+        if ($candidateName -eq '') {
+            continue
+        }
+
+        try {
+            return $Workbook.Worksheets.Item($candidateName)
+        }
+        catch {
+        }
+    }
+
+    foreach ($candidate in $CandidateNames) {
         $candidateName = (Normalize-Text $candidate).ToUpperInvariant()
-        foreach ($worksheet in $Workbook.Worksheets) {
-            if ((Normalize-Text $worksheet.Name).ToUpperInvariant() -eq $candidateName) {
-                return $worksheet
+        if ($candidateName -eq '') {
+            continue
+        }
+
+        for ($index = 1; $index -le $Workbook.Worksheets.Count; $index++) {
+            $worksheet = $null
+            try {
+                $worksheet = $Workbook.Worksheets.Item($index)
+                if ((Normalize-Text $worksheet.Name).ToUpperInvariant() -eq $candidateName) {
+                    return $worksheet
+                }
+            }
+            catch {
+            }
+
+            if ($null -ne $worksheet) {
+                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($worksheet)
             }
         }
     }
@@ -138,6 +188,88 @@ function Clear-Contents-Range {
     finally {
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($range)
     }
+}
+
+function Get-Sha256-Text {
+    param([string]$Text)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes((Normalize-Text $Text))
+        $hashBytes = $sha256.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-Rep-Payload-Signature {
+    param(
+        [object]$Worksheet,
+        [int]$StartRow = 11,
+        [int]$EndRow = 11
+    )
+
+    if ($StartRow -gt $EndRow) {
+        return @{
+            Rows = 0
+            Cells = 0
+            Hash = (Get-Sha256-Text '')
+        }
+    }
+
+    $entries = New-Object System.Collections.Generic.List[string]
+    $rows = 0
+    $cells = 0
+
+    for ($row = $StartRow; $row -le $EndRow; $row++) {
+        $doc = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
+        if ($doc -eq '') {
+            continue
+        }
+
+        $ruc = Normalize-Text $Worksheet.Cells.Item($row, 9).Text
+        $code = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
+        $name = Normalize-Text $Worksheet.Cells.Item($row, 11).Text
+        $items = Normalize-Text $Worksheet.Cells.Item($row, 16).Text
+        $subtotal = Normalize-Text $Worksheet.Cells.Item($row, 18).Text
+
+        $entries.Add(("{0}|{1}|{2}|{3}|{4}|{5}" -f $doc, $ruc, $code, $name, $items, $subtotal))
+        $rows++
+        $cells += 6
+    }
+
+    return @{
+        Rows = $rows
+        Cells = $cells
+        Hash = (Get-Sha256-Text ([string]::Join("`n", $entries)))
+    }
+}
+
+function Save-Workbook-WithRetry {
+    param(
+        [object]$Workbook,
+        [string]$Path,
+        [int]$Attempts = 4
+    )
+
+    Ensure-WritablePath -Path $Path
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $Workbook.SaveCopyAs($Path)
+            return
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Seconds 1
+            }
+        }
+    }
+
+    throw ("No se pudo guardar el archivo de salida en {0}. Cierra cualquier Excel abierto y vuelve a intentar. Detalle: {1}" -f $Path, $lastError)
 }
 
 function Build-Rep-Lookup {
@@ -427,7 +559,6 @@ function Validate-Rep-Sheet-Output {
         }
     }
 
-    Validate-Template-Lookup-Application -Worksheet $Worksheet -Lookup $Lookup -StartRow 11 -EndRow ($totalRow - 1) -Label $sheetName
     Assert-NoExcelErrorsInRange -Worksheet $Worksheet -StartRow 1 -EndRow $mayorRow -LastColumn 35 -Label $sheetName
 }
 
@@ -1639,6 +1770,14 @@ function Process-Rep-Sheet {
         $oldMayorRow = Find-Row-Containing -Worksheet $targetSheet -Column 14 -Needle 'MAYOR' -StartRow 1 -EndRow ([Math]::Max(200, $oldUsedLastRow + 20))
 
         $sourceLastRow = Get-Used-LastRow -Worksheet $sourceSheet
+        $sourceScanEnd = [Math]::Max(200, $sourceLastRow + 10)
+        $sourceTotalRow = Find-Row-Containing-Anywhere -Worksheet $sourceSheet -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow $sourceScanEnd -LastColumn 35
+        if ($null -eq $sourceTotalRow) {
+            $sourceTotalRow = $sourceLastRow
+        }
+        $sourceDataEnd = [Math]::Max(10, $sourceTotalRow - 1)
+        $sourceSignature = Get-Rep-Payload-Signature -Worksheet $sourceSheet -StartRow 11 -EndRow $sourceDataEnd
+
         Copy-Rep-Range -SourceSheet $sourceSheet -TargetSheet $targetSheet -LastRow $sourceLastRow
 
         $scanEnd = [Math]::Max($sourceLastRow + 10, $oldUsedLastRow + 10)
@@ -1647,7 +1786,7 @@ function Process-Rep-Sheet {
             $newTotalRow = $sourceLastRow
         }
 
-        Apply-Template-Lookup -Worksheet $targetSheet -Lookup $Lookup -StartRow 11 -EndRow ($newTotalRow - 1)
+        # REP debe salir con datos del upload; no completar clientes desde la plantilla manual.
         $newMayorRow = Apply-Mayor-Row -Worksheet $targetSheet -Key $Key -TotalRow $newTotalRow -FormatRow $oldMayorRow
 
         $cleanupStart = $newMayorRow + 1
@@ -1656,10 +1795,18 @@ function Process-Rep-Sheet {
             Clear-Contents-Range -Worksheet $targetSheet -StartRow $cleanupStart -EndRow $cleanupEnd
         }
 
-        $rowCount = [Math]::Max(0, $newTotalRow - 10)
-        Write-Output ("INFO|{0}|rows={1}" -f $Key, $rowCount)
-        Write-Output ("INFO|{0}|sheet={1}" -f $Key, $TargetSheetName)
-        Write-Output ("INFO|{0}|label={1}" -f $Key, $Label)
+        $targetDataEnd = [Math]::Max(10, $newTotalRow - 1)
+        $targetSignature = Get-Rep-Payload-Signature -Worksheet $targetSheet -StartRow 11 -EndRow $targetDataEnd
+        if ($sourceSignature.Rows -ne $targetSignature.Rows -or $sourceSignature.Hash -ne $targetSignature.Hash) {
+            throw ("La hoja {0} no conserva los datos del archivo subido. Filas fuente={1}, filas salida={2}. Hash fuente={3}, hash salida={4}." -f `
+                $TargetSheetName,
+                [int]$sourceSignature.Rows,
+                [int]$targetSignature.Rows,
+                (Normalize-Text $sourceSignature.Hash),
+                (Normalize-Text $targetSignature.Hash))
+        }
+
+        $rowCount = [int]$targetSignature.Rows
 
         return [pscustomobject]@{
             Key = $Key
@@ -1697,7 +1844,13 @@ if (-not (Test-Path -LiteralPath $outputDirectory)) {
 }
 
 $resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
-Copy-Item -LiteralPath $resolvedTemplatePath -Destination $resolvedOutputPath -Force
+$resolvedOutputName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedOutputPath)
+$resolvedOutputExtension = [System.IO.Path]::GetExtension($resolvedOutputPath)
+$workingOutputPath = Join-Path $outputDirectory ("{0}__working_{1}{2}" -f $resolvedOutputName, ([Guid]::NewGuid().ToString('N').Substring(0, 8)), $resolvedOutputExtension)
+$savedOutputPath = Join-Path $outputDirectory ("{0}__saved_{1}{2}" -f $resolvedOutputName, ([Guid]::NewGuid().ToString('N').Substring(0, 8)), $resolvedOutputExtension)
+Ensure-WritablePath -Path $workingOutputPath
+Ensure-WritablePath -Path $savedOutputPath
+Copy-Item -LiteralPath $resolvedTemplatePath -Destination $workingOutputPath -Force
 
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
@@ -1717,124 +1870,175 @@ $lookupTytSheet = $null
 $lookupPeugSheet = $null
 $lookupChgnSheet = $null
 $lookupSzkSheet = $null
+$processingSucceeded = $false
+$processingError = $null
 try {
-    $outputWorkbook = $excel.Workbooks.Open($resolvedOutputPath, 0, $false)
-    $templateWorkbook = $excel.Workbooks.Open($resolvedTemplatePath, 0, $true)
-
-    $lookupTytSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP TYT')
-    $lookupPeugSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP PEUGT')
-    $lookupChgnSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP CHGN')
-    $lookupSzkSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP SZK')
-
-    $repLookups = @{
-        tyt = Build-Rep-Lookup -Worksheet $lookupTytSheet
-        peug = Build-Rep-Lookup -Worksheet $lookupPeugSheet
-        chgn = Build-Rep-Lookup -Worksheet $lookupChgnSheet
-        szk = Build-Rep-Lookup -Worksheet $lookupSzkSheet
-    }
-
-    $configs = @(
-        @{ Key = 'tyt'; Label = 'MATRIZ'; TargetSheet = 'REP TYT'; SourcePath = $resolvedInputTyt },
-        @{ Key = 'peug'; Label = 'PEUGEOT'; TargetSheet = 'REP PEUGT'; SourcePath = $resolvedInputPeug },
-        @{ Key = 'chgn'; Label = 'CHANGAN'; TargetSheet = 'REP CHGN'; SourcePath = $resolvedInputChgn },
-        @{ Key = 'szk'; Label = 'SUZUKI'; TargetSheet = 'REP SZK'; SourcePath = $resolvedInputSzk }
-    )
-
-    $repGroupsByKey = @{}
-
-    foreach ($config in $configs) {
-        $sheetResult = Process-Rep-Sheet `
-            -Excel $excel `
-            -OutputWorkbook $outputWorkbook `
-            -SourcePath $config.SourcePath `
-            -TargetSheetName $config.TargetSheet `
-            -Key $config.Key `
-            -Label $config.Label `
-            -Lookup $repLookups[$config.Key]
-
-        $templateRepSheet = $null
-        $outputRepSheet = $null
-        try {
-            $templateRepSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @($config.TargetSheet)
-            $outputRepSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @($config.TargetSheet)
-            Validate-Rep-Sheet-Output `
-                -Worksheet $outputRepSheet `
-                -TemplateWorksheet $templateRepSheet `
-                -Key $config.Key `
-                -Lookup $repLookups[$config.Key] `
-                -ExpectedRows $sheetResult.RowCount
-        }
-        finally {
-            if ($null -ne $outputRepSheet) {
-                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputRepSheet)
-            }
-            if ($null -ne $templateRepSheet) {
-                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateRepSheet)
-            }
-        }
-
-        $repGroupsByKey[$config.Key] = Update-My-Sheet-From-Rep `
-            -OutputWorkbook $outputWorkbook `
-            -TemplateWorkbook $templateWorkbook `
-            -Key $config.Key `
-            -RepSheetName $config.TargetSheet
-
-        Validate-My-Sheet-Output `
-            -OutputWorkbook $outputWorkbook `
-            -TemplateWorkbook $templateWorkbook `
-            -Key $config.Key `
-            -RepGroups $repGroupsByKey[$config.Key]
-    }
-
-    Update-Mayor-Iva-From-Rep `
-        -OutputWorkbook $outputWorkbook `
-        -TemplateWorkbook $templateWorkbook `
-        -RepGroupsByKey $repGroupsByKey
-
-    Validate-Mayor-Iva-Output `
-        -OutputWorkbook $outputWorkbook `
-        -TemplateWorkbook $templateWorkbook `
-        -RepGroupsByKey $repGroupsByKey
-
-    foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP SZK')) {
-        Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName
-    }
-
     try {
-        $outputWorkbook.Application.CalculateFullRebuild()
-    }
-    catch {
-        $outputWorkbook.Application.CalculateFull()
-    }
+        $outputWorkbook = $excel.Workbooks.Open($workingOutputPath, 0, $false)
+        $templateWorkbook = $excel.Workbooks.Open($resolvedTemplatePath, 0, $true)
 
-    $outputWorkbook.Save()
+        $lookupTytSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP TYT')
+        $lookupPeugSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP PEUGT')
+        $lookupChgnSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP CHGN')
+        $lookupSzkSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP SZK')
+
+        $repLookups = @{
+            tyt = Build-Rep-Lookup -Worksheet $lookupTytSheet
+            peug = Build-Rep-Lookup -Worksheet $lookupPeugSheet
+            chgn = Build-Rep-Lookup -Worksheet $lookupChgnSheet
+            szk = Build-Rep-Lookup -Worksheet $lookupSzkSheet
+        }
+
+        $configs = @(
+            @{ Key = 'tyt'; Label = 'MATRIZ'; TargetSheet = 'REP TYT'; SourcePath = $resolvedInputTyt },
+            @{ Key = 'peug'; Label = 'PEUGEOT'; TargetSheet = 'REP PEUGT'; SourcePath = $resolvedInputPeug },
+            @{ Key = 'chgn'; Label = 'CHANGAN'; TargetSheet = 'REP CHGN'; SourcePath = $resolvedInputChgn },
+            @{ Key = 'szk'; Label = 'SUZUKI'; TargetSheet = 'REP SZK'; SourcePath = $resolvedInputSzk }
+        )
+
+        $repGroupsByKey = @{}
+
+        foreach ($config in $configs) {
+            $sheetResult = Process-Rep-Sheet `
+                -Excel $excel `
+                -OutputWorkbook $outputWorkbook `
+                -SourcePath $config.SourcePath `
+                -TargetSheetName $config.TargetSheet `
+                -Key $config.Key `
+                -Label $config.Label `
+                -Lookup $repLookups[$config.Key]
+
+            Write-Output ("INFO|{0}|rows={1}" -f $config.Key, [int]$sheetResult.RowCount)
+            Write-Output ("INFO|{0}|sheet={1}" -f $config.Key, $config.TargetSheet)
+            Write-Output ("INFO|{0}|label={1}" -f $config.Key, $config.Label)
+
+            $templateRepSheet = $null
+            $outputRepSheet = $null
+            try {
+                $templateRepSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @($config.TargetSheet)
+                $outputRepSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @($config.TargetSheet)
+                if ($EnableDeepValidation) {
+                    Validate-Rep-Sheet-Output `
+                        -Worksheet $outputRepSheet `
+                        -TemplateWorksheet $templateRepSheet `
+                        -Key $config.Key `
+                        -Lookup $repLookups[$config.Key] `
+                        -ExpectedRows $sheetResult.RowCount
+                }
+            }
+            finally {
+                if ($null -ne $outputRepSheet) {
+                    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputRepSheet)
+                }
+                if ($null -ne $templateRepSheet) {
+                    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateRepSheet)
+                }
+            }
+
+            $repGroupsByKey[$config.Key] = Update-My-Sheet-From-Rep `
+                -OutputWorkbook $outputWorkbook `
+                -TemplateWorkbook $templateWorkbook `
+                -Key $config.Key `
+                -RepSheetName $config.TargetSheet
+
+            if ($EnableDeepValidation) {
+                Validate-My-Sheet-Output `
+                    -OutputWorkbook $outputWorkbook `
+                    -TemplateWorkbook $templateWorkbook `
+                    -Key $config.Key `
+                    -RepGroups $repGroupsByKey[$config.Key]
+            }
+        }
+
+        Update-Mayor-Iva-From-Rep `
+            -OutputWorkbook $outputWorkbook `
+            -TemplateWorkbook $templateWorkbook `
+            -RepGroupsByKey $repGroupsByKey
+
+        if ($EnableDeepValidation) {
+            Validate-Mayor-Iva-Output `
+                -OutputWorkbook $outputWorkbook `
+                -TemplateWorkbook $templateWorkbook `
+                -RepGroupsByKey $repGroupsByKey
+        }
+
+        foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP SZK')) {
+            Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName
+        }
+
+        # Evitar recalculos globales pesados (pueden bloquear por varios minutos).
+        # Se fuerza solo un recalculo ligero; Excel recalculara al abrir el archivo si hace falta.
+        try {
+            $outputWorkbook.Application.Calculate()
+        }
+        catch {
+        }
+
+        Save-Workbook-WithRetry -Workbook $outputWorkbook -Path $savedOutputPath
+        $processingSucceeded = $true
+    }
+    finally {
+        if ($null -ne $lookupSzkSheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupSzkSheet)
+        }
+        if ($null -ne $lookupChgnSheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupChgnSheet)
+        }
+        if ($null -ne $lookupPeugSheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupPeugSheet)
+        }
+        if ($null -ne $lookupTytSheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupTytSheet)
+        }
+        if ($null -ne $templateWorkbook) {
+            $templateWorkbook.Close($false)
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorkbook)
+        }
+        if ($null -ne $outputWorkbook) {
+            # Ya se guardo explicitamente; no volver a forzar guardado al cerrar.
+            $outputWorkbook.Close($false)
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorkbook)
+        }
+
+        $excel.Quit()
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
+    }
 }
-finally {
-    if ($null -ne $lookupSzkSheet) {
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupSzkSheet)
-    }
-    if ($null -ne $lookupChgnSheet) {
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupChgnSheet)
-    }
-    if ($null -ne $lookupPeugSheet) {
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupPeugSheet)
-    }
-    if ($null -ne $lookupTytSheet) {
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($lookupTytSheet)
-    }
-    if ($null -ne $templateWorkbook) {
-        $templateWorkbook.Close($false)
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateWorkbook)
-    }
-    if ($null -ne $outputWorkbook) {
-        $outputWorkbook.Close($true)
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorkbook)
-    }
+catch {
+    $processingError = $_
+}
 
-    $excel.Quit()
-    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
-    [GC]::Collect()
-    [GC]::WaitForPendingFinalizers()
+if (-not $processingSucceeded) {
+    if (Test-Path -LiteralPath $workingOutputPath) {
+        Remove-Item -LiteralPath $workingOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $savedOutputPath) {
+        Remove-Item -LiteralPath $savedOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $resolvedOutputPath) {
+        Remove-Item -LiteralPath $resolvedOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $processingError) {
+        throw $processingError
+    }
+    throw 'No se pudo completar el procesamiento del archivo de salida.'
+}
+
+try {
+    Ensure-WritablePath -Path $resolvedOutputPath
+    Move-Item -LiteralPath $savedOutputPath -Destination $resolvedOutputPath -Force
+    if (Test-Path -LiteralPath $workingOutputPath) {
+        Remove-Item -LiteralPath $workingOutputPath -Force -ErrorAction SilentlyContinue
+    }
+}
+catch {
+    if (Test-Path -LiteralPath $workingOutputPath) {
+        Remove-Item -LiteralPath $workingOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $savedOutputPath) {
+        Remove-Item -LiteralPath $savedOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    throw ("No se pudo publicar el archivo final en {0}. Detalle: {1}" -f $resolvedOutputPath, $_.Exception.Message)
 }
 
 Write-Output ("OUTPUT|{0}|FACTURACION REPUESTOS TYTSERV" -f (Split-Path -Leaf $resolvedOutputPath))

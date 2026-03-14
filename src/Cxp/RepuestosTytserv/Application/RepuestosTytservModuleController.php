@@ -47,7 +47,12 @@ final class RepuestosTytservModuleController
                     );
                 }
 
-                $stamp = date('Ymd_His');
+                try {
+                    $nonce = bin2hex(random_bytes(3));
+                } catch (\Throwable) {
+                    $nonce = substr(sha1((string)microtime(true) . (string)mt_rand()), 0, 6);
+                }
+                $stamp = date('Ymd_His') . '_' . $nonce;
                 $savedInputs = $this->persistUploadedInputs($files, $paths['uploads_dir'], $stamp, $fileFields);
                 $outputName = 'repuestos_tytserv_' . $stamp . '.xlsx';
                 $outputPath = \app_join_path($paths['outputs_dir'], $outputName);

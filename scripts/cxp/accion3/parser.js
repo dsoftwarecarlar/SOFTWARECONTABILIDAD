@@ -83,6 +83,22 @@ function parseAccountHeaderTotalsFromPdfRow(rowItems) {
   };
 }
 
+function toCents(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.round((numeric + Number.EPSILON) * 100);
+}
+
+function fromCents(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return numeric / 100;
+}
+
 function assignToBoundary(x, boundaries) {
   for (const boundary of boundaries) {
     if (x >= boundary.left && x < boundary.right) {
@@ -181,46 +197,50 @@ function validateAccountTotals(rows, accountHeaderTotals) {
   for (const row of rows) {
     if (!actualByCode.has(row.COD)) {
       actualByCode.set(row.COD, {
-        total_debe: 0,
-        total_haber: 0,
-        saldo_final: 0,
+        total_debe_cents: 0,
+        total_haber_cents: 0,
+        saldo_final_cents: 0,
       });
     }
     const item = actualByCode.get(row.COD);
-    item.total_debe += round2(row.DEBE);
-    item.total_haber += round2(row.HABER);
-    item.saldo_final = round2(row.SALDO);
+    item.total_debe_cents += toCents(row.DEBE);
+    item.total_haber_cents += toCents(row.HABER);
+    item.saldo_final_cents = toCents(row.SALDO);
   }
 
   const mismatches = [];
   for (const [code, expected] of accountHeaderTotals.entries()) {
     const actual = actualByCode.get(code) || {
-      total_debe: 0,
-      total_haber: 0,
-      saldo_final: 0,
+      total_debe_cents: 0,
+      total_haber_cents: 0,
+      saldo_final_cents: 0,
     };
-    const diffDebe = round2(round2(actual.total_debe) - round2(expected.total_debe));
-    const diffHaber = round2(round2(actual.total_haber) - round2(expected.total_haber));
-    const diffSaldo = round2(round2(actual.saldo_final) - round2(expected.saldo_final));
+    const expectedDebeCents = toCents(expected.total_debe);
+    const expectedHaberCents = toCents(expected.total_haber);
+    const expectedSaldoCents = toCents(expected.saldo_final);
 
-    if (Math.abs(diffDebe) > 0.05 || Math.abs(diffHaber) > 0.05 || Math.abs(diffSaldo) > 0.05) {
+    const diffDebeCents = actual.total_debe_cents - expectedDebeCents;
+    const diffHaberCents = actual.total_haber_cents - expectedHaberCents;
+    const diffSaldoCents = actual.saldo_final_cents - expectedSaldoCents;
+
+    if (Math.abs(diffDebeCents) > 1 || Math.abs(diffHaberCents) > 1 || Math.abs(diffSaldoCents) > 1) {
       mismatches.push({
         code,
         name: expected.name,
         expected: {
-          total_debe: round2(expected.total_debe),
-          total_haber: round2(expected.total_haber),
-          saldo_final: round2(expected.saldo_final),
+          total_debe: fromCents(expectedDebeCents),
+          total_haber: fromCents(expectedHaberCents),
+          saldo_final: fromCents(expectedSaldoCents),
         },
         actual: {
-          total_debe: round2(actual.total_debe),
-          total_haber: round2(actual.total_haber),
-          saldo_final: round2(actual.saldo_final),
+          total_debe: fromCents(actual.total_debe_cents),
+          total_haber: fromCents(actual.total_haber_cents),
+          saldo_final: fromCents(actual.saldo_final_cents),
         },
         diff: {
-          debe: diffDebe,
-          haber: diffHaber,
-          saldo: diffSaldo,
+          debe: fromCents(diffDebeCents),
+          haber: fromCents(diffHaberCents),
+          saldo: fromCents(diffSaldoCents),
         },
       });
     }

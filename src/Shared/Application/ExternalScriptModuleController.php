@@ -57,20 +57,27 @@ final class ExternalScriptModuleController
                     throw new \RuntimeException($console === '' ? $this->message('process_failed', 'El proceso fallo.') : $console);
                 }
 
-                $generatedPath = $this->resolveGeneratedPath($outputPath, $execution['lines']);
-                $generatedReal = realpath($generatedPath) ?: $generatedPath;
+                $generatedArtifact = $this->resolveGeneratedArtifact($outputPath, $execution['lines']);
+                $generatedReal = $generatedArtifact['path'];
                 $generatedName = basename($generatedReal);
 
                 if (!is_file($generatedReal)) {
                     throw new \RuntimeException($this->message('generated_missing', 'No se encontro el Excel generado.'));
                 }
 
+                $result = [
+                    'excel_name' => $generatedName,
+                    'download_url' => \app_output_download_url($generatedName),
+                    'console' => $console,
+                    'generated_at' => date('Y-m-d H:i:s'),
+                    'output_origin' => $generatedArtifact['origin'],
+                ];
+                if ($generatedArtifact['fallback_used']) {
+                    $result['output_origin_note'] = 'Se uso ruta segura interna porque la ruta reportada por consola no fue valida.';
+                }
+
                 $result = array_merge(
-                    [
-                        'excel_name' => $generatedName,
-                        'download_url' => \app_output_download_url($generatedName),
-                        'console' => $console,
-                    ],
+                    $result,
                     $this->buildAdditionalResult($savedInputs, $execution, $generatedName)
                 );
 
@@ -380,21 +387,71 @@ final class ExternalScriptModuleController
     /**
      * @param list<string> $lines
      */
-    private function resolveGeneratedPath(string $defaultPath, array $lines): string
+    /**
+     * @param list<string> $lines
+     * @return array{path:string, origin:string, fallback_used:bool}
+     */
+    private function resolveGeneratedArtifact(string $defaultPath, array $lines): array
     {
+        $defaultReal = realpath($defaultPath) ?: $defaultPath;
         $prefix = trim((string)($this->config['generated_path_prefix'] ?? ''));
         if ($prefix === '') {
-            return $defaultPath;
+            return [
+                'path' => $defaultReal,
+                'origin' => 'default_path',
+                'fallback_used' => false,
+            ];
         }
 
+        $consolePath = '';
         foreach ($lines as $line) {
             $trimmed = trim((string)$line);
             if (stripos($trimmed, $prefix) === 0) {
-                return trim(substr($trimmed, strlen($prefix)));
+                $consolePath = trim(substr($trimmed, strlen($prefix)));
+                break;
             }
         }
 
-        return $defaultPath;
+        if ($consolePath === '') {
+            return [
+                'path' => $defaultReal,
+                'origin' => 'default_path',
+                'fallback_used' => false,
+            ];
+        }
+
+        $consoleReal = realpath($consolePath);
+        if ($consoleReal !== false && $this->isPathWithinOutputs($consoleReal) && is_file($consoleReal)) {
+            return [
+                'path' => $consoleReal,
+                'origin' => 'console_path',
+                'fallback_used' => false,
+            ];
+        }
+
+        return [
+            'path' => $defaultReal,
+            'origin' => 'default_path',
+            'fallback_used' => true,
+        ];
+    }
+
+    private function isPathWithinOutputs(string $path): bool
+    {
+        $outputsDir = realpath(\app_storage_path('outputs'));
+        if ($outputsDir === false) {
+            return false;
+        }
+
+        $normalizedPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+        $normalizedOutputs = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $outputsDir), DIRECTORY_SEPARATOR);
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $normalizedPath = strtolower($normalizedPath);
+            $normalizedOutputs = strtolower($normalizedOutputs);
+        }
+
+        return $normalizedPath === $normalizedOutputs
+            || str_starts_with($normalizedPath, $normalizedOutputs . DIRECTORY_SEPARATOR);
     }
 
     /**

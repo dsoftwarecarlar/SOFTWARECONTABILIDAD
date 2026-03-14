@@ -1,8 +1,13 @@
 const path = require("path");
+const fs = require("fs");
 
 const DEFAULT_INPUT_SOURCE = "ACCION2.txt";
 const DEFAULT_OUTPUT_XLSX = "retenciones_proveedor.xlsx";
-const DEFAULT_TEMPLATE_XLSX = path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO", "ACCION2.xlsx");
+const TEMPLATE_CANDIDATES = [
+  path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO", "ACCION2.xlsx"),
+  path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO1", "ACCION2.xlsx"),
+];
+const DEFAULT_TEMPLATE_XLSX = TEMPLATE_CANDIDATES.find((candidate) => fs.existsSync(candidate)) || TEMPLATE_CANDIDATES[0];
 const SHEET_NAME = "RET PROV";
 
 const EXPECTED_COLUMNS = [

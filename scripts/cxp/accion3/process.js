@@ -63,18 +63,39 @@ function parseCliArguments(argv = process.argv.slice(2)) {
 }
 
 async function main() {
+  const processStart = Date.now();
   const cli = parseCliArguments();
   const outputPath = path.resolve(process.cwd(), cli.outputXlsx);
   const templatePath = cli.templateXlsx;
+  const timingsMs = {};
+
+  let stageStart = Date.now();
   const parsed = await parseInputSources(cli.inputSources);
   const rows = parsed.rows;
+  timingsMs.parse = Date.now() - stageStart;
 
+  stageStart = Date.now();
   validateRows(rows);
+  timingsMs.validate = Date.now() - stageStart;
 
+  stageStart = Date.now();
   const { workbook, summary } = await buildWorkbookFromTemplate(templatePath, rows);
+  timingsMs.build = Date.now() - stageStart;
+
+  stageStart = Date.now();
   const finalOutputPath = await writeWorkbookWithRetries(workbook, outputPath);
-  preserveTemplateVisualWorkbook(templatePath, finalOutputPath, SHEET_NAME);
+  timingsMs.write = Date.now() - stageStart;
+
+  stageStart = Date.now();
+  const mergeMetrics = preserveTemplateVisualWorkbook(templatePath, finalOutputPath, SHEET_NAME);
+  timingsMs.merge = Date.now() - stageStart;
+
+  stageStart = Date.now();
   await verifyOutputWorkbook(finalOutputPath, templatePath, rows.length);
+  timingsMs.verify = Date.now() - stageStart;
+  timingsMs.total = Date.now() - processStart;
+
+  const memory = process.memoryUsage();
 
   const auditPath = path.join(
     path.dirname(finalOutputPath),
@@ -99,6 +120,19 @@ async function main() {
     cuentas_validadas_pdf: parsed.diagnostics.account_totals_checked,
     cuentas_descuadradas_pdf: parsed.diagnostics.account_total_mismatches,
     resumen_filtrado: summary.length,
+    rows_before_merge: mergeMetrics.rows_before_merge,
+    rows_after_merge: mergeMetrics.rows_after_merge,
+    payload_cells_before: mergeMetrics.payload_cells_before,
+    payload_cells_after: mergeMetrics.payload_cells_after,
+    payload_hash_before: mergeMetrics.payload_hash_before,
+    payload_hash_after: mergeMetrics.payload_hash_after,
+    merge_integrity_ok: mergeMetrics.merge_integrity_ok === true,
+    timings_ms: timingsMs,
+    memory_bytes: {
+      rss: memory.rss,
+      heap_total: memory.heapTotal,
+      heap_used: memory.heapUsed,
+    },
     verificacion_final_ok: true,
   });
 
@@ -112,6 +146,7 @@ async function main() {
   }
   console.log(`Movimientos extraidos: ${rows.length}`);
   console.log(`Resumen lateral: ${summary.length} filas`);
+  console.log(`Rendimiento (ms): parse=${timingsMs.parse}, validate=${timingsMs.validate}, build=${timingsMs.build}, write=${timingsMs.write}, merge=${timingsMs.merge}, verify=${timingsMs.verify}, total=${timingsMs.total}`);
   console.log(`Excel generado (una sola hoja): ${finalOutputPath}`);
   console.log(`Auditoria JSON: ${auditPath}`);
 }
