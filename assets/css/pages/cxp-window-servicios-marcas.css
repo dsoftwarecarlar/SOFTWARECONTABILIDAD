@@ -25,9 +25,15 @@
 .servicios-marcas-window-page .topbar {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
     gap: 14px;
     margin-bottom: 16px;
+}
+
+.servicios-marcas-window-page .topbar > div {
+    min-width: 0;
+    flex: 1 1 420px;
 }
 
 .servicios-marcas-window-page .chip {
@@ -61,6 +67,7 @@
     color: var(--deep);
     text-decoration: none;
     font-weight: 700;
+    margin-left: auto;
 }
 
 .servicios-marcas-window-page .hero,
@@ -93,9 +100,9 @@
     position: relative;
     z-index: 1;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) minmax(250px, 320px);
     gap: 22px;
-    align-items: center;
+    align-items: start;
 }
 
 .servicios-marcas-window-page h1 {
@@ -145,11 +152,12 @@
     margin-top: 10px;
     font-size: 26px;
     line-height: 1.05;
+    overflow-wrap: anywhere;
 }
 
 .servicios-marcas-window-page .layout {
     display: grid;
-    grid-template-columns: 340px minmax(0, 1fr);
+    grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
     gap: 16px;
     margin-top: 26px;
 }
@@ -224,9 +232,18 @@
     font-weight: 700;
 }
 
-@media (max-width: 980px) {
-    .servicios-marcas-window-page .hero-grid,
+@media (max-width: 1200px) {
     .servicios-marcas-window-page .layout {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 980px) {
+    .servicios-marcas-window-page .hero-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .servicios-marcas-window-page .back-link {
+        margin-left: 0;
     }
 }

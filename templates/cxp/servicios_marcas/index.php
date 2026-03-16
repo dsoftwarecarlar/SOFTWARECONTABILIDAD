@@ -74,6 +74,7 @@ declare(strict_types=1);
                     <span class="tag"><?= htmlspecialchars((string)($pageConfig['template_panel']['base_tag'] ?? 'Base')) ?></span>
                     <strong><?= htmlspecialchars((string)($pageConfig['template_panel']['base_title'] ?? 'Plantillas')) ?></strong>
                     <p><?= htmlspecialchars((string)($pageConfig['template_panel']['base_description'] ?? '')) ?></p>
+                    <div class="role-note template-note">Estas plantillas solo sirven como base visual y de validacion. No son la salida que se descarga al terminar.</div>
                     <div class="base-path"><?= htmlspecialchars($templateDir) ?></div>
                 </article>
                 <article class="box">
@@ -103,6 +104,7 @@ declare(strict_types=1);
                         <span class="tag"><?= htmlspecialchars((string)($pageConfig['upload_panel']['retention_tag'] ?? 'Retencion')) ?></span>
                         <strong><?= htmlspecialchars((string)($pageConfig['upload_panel']['retention_title'] ?? '')) ?></strong>
                         <p><?= htmlspecialchars((string)($pageConfig['upload_panel']['retention_description'] ?? '')) ?></p>
+                        <div class="role-note output-note">Los archivos finales aparecen en esta pantalla y en `storage/outputs`. No salen desde la carpeta de plantillas base.</div>
                     </article>
                 </div>
                 <div class="control-row" style="margin-top: 12px;">
@@ -151,7 +153,19 @@ declare(strict_types=1);
                 <?php endif; ?>
 
                 <?php if ($result !== null): ?>
-                    <div class="msg ok">Archivo procesado: <?= htmlspecialchars((string)$result['source_name']) ?>.</div>
+                    <div class="msg ok">Archivo procesado: <?= htmlspecialchars((string)$result['source_name']) ?>. Los enlaces de abajo son salidas generadas del upload actual.</div>
+                    <div class="result-guide">
+                        <article class="box output-box">
+                            <span class="tag">Entrada subida</span>
+                            <strong><?= htmlspecialchars((string)$result['source_name']) ?></strong>
+                            <div class="meta">Fuente del proceso actual.</div>
+                        </article>
+                        <article class="box output-box">
+                            <span class="tag">Salida generada</span>
+                            <strong><?= count((array)($result['downloads'] ?? [])) ?> archivo(s)</strong>
+                            <div class="meta">Descarga estos enlaces, no la plantilla base del lateral.</div>
+                        </article>
+                    </div>
                     <?php if (($result['summary'] ?? []) !== []): ?>
                         <div class="summary-grid" style="margin-top: 12px;">
                             <?php foreach ((array)$result['summary'] as $item): ?>
@@ -170,8 +184,9 @@ declare(strict_types=1);
                         <?php foreach ((array)$result['downloads'] as $download): ?>
                             <article class="box download-card">
                                 <div>
-                                    <span class="tag"><?= htmlspecialchars((string)$download['label']) ?></span>
+                                    <span class="tag">Salida generada · <?= htmlspecialchars((string)$download['label']) ?></span>
                                     <strong><?= htmlspecialchars((string)$download['name']) ?></strong>
+                                    <div class="meta">Archivo creado desde el Excel subido en este proceso.</div>
                                 </div>
                                 <a class="button-link" href="<?= htmlspecialchars((string)$download['download_url']) ?>">Descargar</a>
                             </article>
@@ -196,7 +211,7 @@ declare(strict_types=1);
 
             <section class="panel">
                 <h2><?= htmlspecialchars((string)($pageConfig['history_panel']['title'] ?? 'Historial')) ?></h2>
-                <p><?= htmlspecialchars((string)($pageConfig['history_panel']['description'] ?? '')) ?></p>
+                <p><?= htmlspecialchars((string)($pageConfig['history_panel']['description'] ?? '')) ?> Aqui solo se listan salidas generadas; las plantillas base viven en la columna lateral.</p>
                 <div class="history" style="margin-top: 14px;">
                     <?php if ($history === []): ?>
                         <article class="box">

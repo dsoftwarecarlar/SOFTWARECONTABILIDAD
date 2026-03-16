@@ -18,6 +18,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $script:CancelFilePath = $CancelPath
+$script:StrictValidationEnabled = ([string]$env:SERVICIOS_MARCAS_STRICT_VALIDATE -eq '1')
 
 function Test-CancelRequested {
     if ([string]::IsNullOrWhiteSpace($script:CancelFilePath)) {
@@ -43,6 +44,374 @@ function Normalize-Text {
     }
 
     return ([string]$Value).Trim()
+}
+
+function Resolve-RequiredPath {
+    param(
+        [string]$Path,
+        [string]$Label
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Parametro vacio: ${Label}"
+    }
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "No existe ${Label}: ${Path}"
+    }
+
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Copy-File-WithRetry {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationPath,
+        [int]$Attempts = 8
+    )
+
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force -ErrorAction Stop
+            return
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Milliseconds (700 * $attempt)
+            }
+        }
+    }
+
+    throw ("No se pudo preparar copia temporal del archivo fuente. Origen: {0}. Destino: {1}. Detalle: {2}" -f $SourcePath, $DestinationPath, $lastError)
+}
+
+function Resolve-NodeBinary {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    try {
+        $nodeCommand = Get-Command node.exe -ErrorAction Stop
+        if ($null -ne $nodeCommand -and -not [string]::IsNullOrWhiteSpace($nodeCommand.Source)) {
+            $candidates.Add($nodeCommand.Source) | Out-Null
+        }
+    } catch {
+    }
+
+    try {
+        $nodeCommand = Get-Command node -ErrorAction Stop
+        if ($null -ne $nodeCommand -and -not [string]::IsNullOrWhiteSpace($nodeCommand.Source)) {
+            $candidates.Add($nodeCommand.Source) | Out-Null
+        }
+    } catch {
+    }
+
+    $programFiles = if ([string]::IsNullOrWhiteSpace($env:ProgramFiles)) { 'C:\Program Files' } else { $env:ProgramFiles }
+    $programFilesX86 = if ([string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) { 'C:\Program Files (x86)' } else { ${env:ProgramFiles(x86)} }
+
+    foreach ($candidate in @(
+        (Join-Path $programFiles 'nodejs\node.exe'),
+        (Join-Path $programFilesX86 'nodejs\node.exe'),
+        'C:\Program Files\nodejs\node.exe'
+    )) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
+            $candidates.Add($candidate) | Out-Null
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+
+    throw 'No se encontro node.exe para leer el Excel fuente sin COM.'
+}
+
+function Read-SourceRows-FromFile {
+    param(
+        [string]$InputPath,
+        [string]$WorkingDirectory
+    )
+
+    $nodeBinary = Resolve-NodeBinary
+    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'scripts\cxp\servicios_marcas\read_source.js') -Label 'read_source.js'
+    $jsonPath = Join-Path $WorkingDirectory 'source_rows.json'
+    if (Test-Path -LiteralPath $jsonPath) {
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $nodeOutput = & $nodeBinary $readerScript '--input' $InputPath '--output-json' $jsonPath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        if ($detail -eq '') {
+            $detail = 'Node termino sin detalle.'
+        }
+        throw ("No se pudo leer el Excel fuente sin COM. Detalle: {0}" -f $detail)
+    }
+
+    if (-not (Test-Path -LiteralPath $jsonPath)) {
+        throw 'El lector del Excel fuente no genero source_rows.json.'
+    }
+
+    $payloadText = Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($payloadText)) {
+        throw 'El lector del Excel fuente devolvio un JSON vacio.'
+    }
+
+    $payload = $payloadText | ConvertFrom-Json
+    $rows = @()
+    if ($null -ne $payload -and $null -ne $payload.rows) {
+        $rows = @($payload.rows)
+    }
+
+    Write-Output ("INFO|source_read|rows={0}" -f $rows.Count)
+    return $rows
+}
+
+function Open-Workbook-WithRetry {
+    param(
+        [object]$Excel,
+        [string]$Path,
+        [bool]$ReadOnly = $true,
+        [int]$Attempts = 20
+    )
+
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            return $Excel.Workbooks.Open($Path, 0, $ReadOnly)
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                if ($lastError -match 'RPC_E_CALL_REJECTED|0x80010001|0x800AC472') {
+                    Start-Sleep -Milliseconds (900 * $attempt)
+                } else {
+                    Start-Sleep -Milliseconds (700 * $attempt)
+                }
+            }
+        }
+    }
+
+    throw ("No se pudo abrir el libro de Excel en {0}. Cierra archivos abiertos o procesos Excel colgados y reintenta. Detalle: {1}" -f $Path, $lastError)
+}
+
+function Save-Workbook-WithRetry {
+    param(
+        [object]$Workbook,
+        [string]$PathForError,
+        [int]$Attempts = 6
+    )
+
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $Workbook.Save()
+            return
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Milliseconds (600 * $attempt)
+            }
+        }
+    }
+
+    throw ("No se pudo guardar el archivo de salida en {0}. Detalle: {1}" -f $PathForError, $lastError)
+}
+
+function Acquire-Excel-Automation-Lock {
+    param(
+        [string]$Name = 'Local\SoftwareContabilidad.ExcelAutomation',
+        [int]$TimeoutSeconds = 240
+    )
+
+    $mutex = New-Object System.Threading.Mutex($false, $Name)
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne([Math]::Max(1, $TimeoutSeconds) * 1000)
+    } catch {
+        $mutex.Dispose()
+        throw "No se pudo inicializar el bloqueo global de Excel: $($_.Exception.Message)"
+    }
+
+    if (-not $acquired) {
+        $mutex.Dispose()
+        throw "Existe otro proceso de Excel ejecutandose. Espera a que termine e intenta de nuevo."
+    }
+
+    return $mutex
+}
+
+function Release-Excel-Automation-Lock {
+    param([object]$Mutex)
+
+    if ($null -eq $Mutex) {
+        return
+    }
+
+    try { $Mutex.ReleaseMutex() } catch {}
+    try { $Mutex.Dispose() } catch {}
+}
+
+function Get-HeadlessExcelProcesses {
+    return @(
+        Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowHandle -eq 0 }
+    )
+}
+
+function Stop-OrphanExcelProcesses {
+    param([int]$TimeoutSeconds = 20)
+
+    $deadline = [datetime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
+    while ($true) {
+        $procs = @(Get-HeadlessExcelProcesses)
+        if ($procs.Count -eq 0) { return }
+
+        foreach ($proc in $procs) {
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+            } catch {
+            }
+        }
+
+        Start-Sleep -Milliseconds 750
+
+        if ([datetime]::UtcNow -ge $deadline) {
+            $pids = ($procs | Select-Object -ExpandProperty Id) -join ','
+            Write-Output ("WARN|excel_orphans|Persisten procesos Excel huerfanos (PID: {0}). Se continua con nueva instancia." -f $pids)
+            return
+        }
+    }
+}
+
+function Assert-NoVisibleExcel {
+    param([int]$TimeoutSeconds = 20)
+
+    $deadline = [datetime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
+    while ($true) {
+        $procs = @(
+            Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
+                Where-Object { $_.MainWindowHandle -ne 0 }
+        )
+        if ($procs.Count -eq 0) { return }
+
+        if ([datetime]::UtcNow -ge $deadline) {
+            $pids = ($procs | Select-Object -ExpandProperty Id) -join ','
+            throw "Hay procesos de Excel abiertos visibles (PID: $pids). Cierralos y vuelve a intentar."
+        }
+
+        Start-Sleep -Seconds 1
+    }
+}
+
+function Register-OleMessageFilter {
+    if (-not ("OleMessageFilter" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+[ComImport, Guid("00000016-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IOleMessageFilter
+{
+    [PreserveSig]
+    int HandleInComingCall(int dwCallType, IntPtr hTaskCaller, int dwTickCount, IntPtr lpInterfaceInfo);
+
+    [PreserveSig]
+    int RetryRejectedCall(IntPtr hTaskCallee, int dwTickCount, int dwRejectType);
+
+    [PreserveSig]
+    int MessagePending(IntPtr hTaskCallee, int dwTickCount, int dwPendingType);
+}
+
+public class OleMessageFilter : IOleMessageFilter
+{
+    [DllImport("Ole32.dll")]
+    private static extern int CoRegisterMessageFilter(IOleMessageFilter newFilter, out IOleMessageFilter oldFilter);
+
+    public static void Register()
+    {
+        IOleMessageFilter newFilter = new OleMessageFilter();
+        IOleMessageFilter oldFilter;
+        CoRegisterMessageFilter(newFilter, out oldFilter);
+    }
+
+    public static void Revoke()
+    {
+        IOleMessageFilter oldFilter;
+        CoRegisterMessageFilter(null, out oldFilter);
+    }
+
+    int IOleMessageFilter.HandleInComingCall(int dwCallType, IntPtr hTaskCaller, int dwTickCount, IntPtr lpInterfaceInfo)
+    {
+        return 0;
+    }
+
+    int IOleMessageFilter.RetryRejectedCall(IntPtr hTaskCallee, int dwTickCount, int dwRejectType)
+    {
+        if (dwRejectType == 2)
+        {
+            return 100;
+        }
+
+        return -1;
+    }
+
+    int IOleMessageFilter.MessagePending(IntPtr hTaskCallee, int dwTickCount, int dwPendingType)
+    {
+        return 2;
+    }
+}
+"@
+    }
+
+    try {
+        [OleMessageFilter]::Register()
+    } catch {
+        Write-Output ("WARN|ole_filter|{0}" -f $_.Exception.Message)
+    }
+}
+
+function Unregister-OleMessageFilter {
+    try {
+        if ("OleMessageFilter" -as [type]) {
+            [OleMessageFilter]::Revoke()
+        }
+    } catch {
+    }
+}
+
+function Stop-Excel-Application {
+    param(
+        [object]$Excel,
+        [int]$Attempts = 6
+    )
+
+    if ($null -eq $Excel) {
+        return
+    }
+
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $Excel.Quit()
+            return
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Milliseconds (450 * $attempt)
+                continue
+            }
+        }
+    }
+
+    if ($lastError -match '0x800AC472|0x80010001') {
+        Write-Output ("WARN|excel_quit|{0}" -f $lastError)
+        return
+    }
+
+    if ($lastError -ne '') {
+        Write-Output ("WARN|excel_quit|{0}" -f $lastError)
+    }
 }
 
 function Normalize-Sheet-Name {
@@ -1118,22 +1487,19 @@ function Get-PreferredSourceText {
     )
 
     $sourceRawText = Normalize-Text $SourceRaw
-    if ($sourceRawText -ne '' -and -not (Test-ObfuscatedText $SourceRaw)) {
+    # La plantilla solo rellena faltantes reales; no debe pisar lo que si vino en el upload.
+    if ($sourceRawText -ne '') {
         return $SourceRaw
     }
 
     $sourceNormalizedText = Normalize-Text $SourceNormalized
-    if ($sourceNormalizedText -ne '' -and -not (Test-ObfuscatedText $SourceNormalized)) {
+    if ($sourceNormalizedText -ne '') {
         return $SourceNormalized
     }
 
     $lookupText = Normalize-Text $LookupValue
-    if ($lookupText -ne '' -and -not (Test-ObfuscatedText $LookupValue)) {
+    if ($lookupText -ne '') {
         return $LookupValue
-    }
-
-    if ($sourceRawText -ne '') {
-        return $SourceRaw
     }
 
     return $SourceNormalized
@@ -1571,7 +1937,7 @@ function Fill-Invoices {
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
             $netoIva0Value = [double]$sourceAmounts.NetoIva0
             $iva12Value = [double]$sourceAmounts.Iva12
-            $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { Get-Invoice-Asiento -Row $row }
+            $asientoValue = Get-PreferredSourceText -SourceRaw (Get-Invoice-Asiento -Row $row) -LookupValue $(if ($null -ne $lookup) { $lookup.Asiento } else { '' })
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
             $tvValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Tv } else { '' }) -SourceRaw $row.LineRaw -SourceNormalized $row.Line
             $markerValue = 'N'
@@ -1691,34 +2057,18 @@ function Fill-Notes {
             $anticipo = [double]$sourceAmounts.Anticipo
             $neto = [double]$sourceAmounts.Neto
             $agencyValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Agency } else { '' }) -SourceRaw $row.AgencyRaw -SourceNormalized $row.Agency
-            $kindValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Kind) -ne '') {
-                $lookup.Kind
-            } elseif ($row.DocType -eq 'DE') {
+            $kindValue = if ($row.DocType -eq 'DE') {
                 'CON'
             } else {
-                'CRE'
+                Get-PreferredSourceText -SourceRaw 'CRE' -LookupValue $(if ($null -ne $lookup) { $lookup.Kind } else { '' })
             }
             $seriesValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Series } else { '' }) -SourceRaw $row.SeriesRaw -SourceNormalized $row.Series
-            $invoiceValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Invoice) -ne '') {
-                $lookup.Invoice
-            } elseif (([string]$row.AffectedDocumentRaw) -ne '') {
-                [string]$row.AffectedDocumentRaw
-            } else {
-                Normalize-Text $row.AffectedDocumentTrim
-            }
-            $orderValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Order) -ne '') {
-                $lookup.Order
-            } elseif ($orderKey -ne '') {
-                $orderKey
-            } elseif (([string]$row.OrderRaw) -ne '') {
-                [string]$row.OrderRaw
-            } else {
-                Normalize-Text $row.Order
-            }
+            $invoiceValue = Get-PreferredSourceText -SourceRaw ([string]$row.AffectedDocumentRaw) -SourceNormalized (Normalize-Text $row.AffectedDocumentTrim) -LookupValue $(if ($null -ne $lookup) { $lookup.Invoice } else { '' })
+            $orderValue = Get-PreferredSourceText -SourceRaw ([string]$row.OrderRaw) -SourceNormalized $(if ($orderKey -ne '') { $orderKey } else { Normalize-Text $row.Order }) -LookupValue $(if ($null -ne $lookup) { $lookup.Order } else { '' })
             $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
             $iva12Value = [double]$sourceAmounts.Iva12
-            $asientoValue = if ($null -ne $lookup -and (Normalize-Text $lookup.Asiento) -ne '') { $lookup.Asiento } else { '' }
+            $asientoValue = ''
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
 
             $rowNumber = $targetRow
@@ -1875,12 +2225,34 @@ function Validate-Services-BrandOutput {
     }
 }
 
-$resolvedInputPath = (Resolve-Path -LiteralPath $InputPath).Path
+$resolvedInputPath = Resolve-RequiredPath -Path $InputPath -Label 'InputPath'
 if (-not (Test-Path -LiteralPath $OutputDir)) {
     $null = New-Item -ItemType Directory -Path $OutputDir -Force
 }
 $resolvedOutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
-$resolvedTemplateDir = (Resolve-Path -LiteralPath $TemplateDir).Path
+$resolvedTemplateDir = Resolve-RequiredPath -Path $TemplateDir -Label 'TemplateDir'
+
+$stagingRoot = Join-Path $resolvedOutputDir '__staging_servicios_marcas'
+if (-not (Test-Path -LiteralPath $stagingRoot)) {
+    $null = New-Item -ItemType Directory -Path $stagingRoot -Force
+}
+$stagingDirectory = Join-Path $stagingRoot ([Guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $stagingDirectory -Force
+$stagedInputPath = Join-Path $stagingDirectory ("input_source{0}" -f ([System.IO.Path]::GetExtension($resolvedInputPath)))
+Copy-File-WithRetry -SourcePath $resolvedInputPath -DestinationPath $stagedInputPath
+try {
+    $sourceRows = Read-SourceRows-FromFile -InputPath $stagedInputPath -WorkingDirectory $stagingDirectory
+    $repVtasRows = Normalize-SourceRows -Rows $sourceRows
+    $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
+    if ($repVtasRows.Count -eq 0 -and $postingRows.Count -eq 0) {
+        throw 'El archivo fuente no contiene filas validas para generar plantillas.'
+    }
+} catch {
+    if (Test-Path -LiteralPath $stagingDirectory) {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    throw
+}
 
 $templateConfigs = @{
     changan = @{
@@ -1907,7 +2279,22 @@ foreach ($config in $templateConfigs.Values) {
     }
 }
 
-$excel = New-Object -ComObject Excel.Application
+$excelLock = Acquire-Excel-Automation-Lock -TimeoutSeconds 300
+Stop-OrphanExcelProcesses -TimeoutSeconds 20
+Assert-NoVisibleExcel -TimeoutSeconds 30
+Register-OleMessageFilter
+
+$excel = $null
+try {
+    $excel = New-Object -ComObject Excel.Application
+}
+catch {
+    Unregister-OleMessageFilter
+    Release-Excel-Automation-Lock -Mutex $excelLock
+    throw
+}
+
+Start-Sleep -Milliseconds 1200
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 $excel.ScreenUpdating = $false
@@ -1920,24 +2307,7 @@ try {
 
 $cancelMessage = $null
 try {
-    $sourceWorkbook = $excel.Workbooks.Open($resolvedInputPath, 0, $false)
-    $sourceSheet = $null
-    try {
-        Assert-NotCancelled 'inicio'
-        $sourceSheet = $sourceWorkbook.Worksheets.Item(1)
-        Validate-Services-SourceWorksheet -Worksheet $sourceSheet
-        $sourceRows = Read-SourceRows -Worksheet $sourceSheet
-        $repVtasRows = Normalize-SourceRows -Rows $sourceRows
-        $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
-    }
-    finally {
-        if ($null -ne $sourceSheet) {
-            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($sourceSheet)
-        }
-        $sourceWorkbook.Close($false)
-        [void][Runtime.Interopservices.Marshal]::ReleaseComObject($sourceWorkbook)
-    }
-
+    Assert-NotCancelled 'inicio'
     $timestamp = if ([string]::IsNullOrWhiteSpace($RunStamp)) {
         Get-Date -Format 'yyyyMMdd_HHmmss'
     } else {
@@ -1954,21 +2324,21 @@ try {
         $rowsPosting = @($postingRows | Where-Object { $_.TemplateKey -eq $templateKey })
         Write-Output ("INFO|processing|{0}|rows={1}" -f $templateKey, $rowsRepVtas.Count)
 
-        $baseWorkbook = $excel.Workbooks.Open($templateConfigs[$templateKey].TemplatePath, 0, $false)
+        $templateWorkbook = $null
+        $templateWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $templateConfigs[$templateKey].TemplatePath -ReadOnly $true
         try {
             Assert-NotCancelled 'base_plantilla'
-            $lookups = Read-TemplateLookups -Workbook $baseWorkbook
+            $lookups = Read-TemplateLookups -Workbook $templateWorkbook
         }
         finally {
-            $baseWorkbook.Close($false)
-            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($baseWorkbook)
+            # Se reutiliza esta plantilla para la validacion del mismo bloque.
         }
 
         $outputName = "servicios_{0}_{1}.xls" -f $templateKey, $timestamp
         $outputPath = Join-Path $resolvedOutputDir $outputName
         Copy-Item -LiteralPath $templateConfigs[$templateKey].TemplatePath -Destination $outputPath -Force
 
-        $outputWorkbook = $excel.Workbooks.Open($outputPath, 0, $false)
+        $outputWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $outputPath -ReadOnly $false
         try {
             Assert-NotCancelled 'salida_plantilla'
             $repSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('REP FACTURACION', 'REP FACTURACIÓN')
@@ -1979,28 +2349,28 @@ try {
             $noteResult = Fill-Notes -Worksheet $noteSheet -Rows $rowsPosting -Lookups $lookups
             $repVtasResult = Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
 
-            $validationWorkbook = $excel.Workbooks.Open($templateConfigs[$templateKey].TemplatePath, 0, $true)
-            try {
+            if ($script:StrictValidationEnabled) {
                 Validate-Services-BrandOutput `
                     -OutputWorkbook $outputWorkbook `
-                    -TemplateWorkbook $validationWorkbook `
+                    -TemplateWorkbook $templateWorkbook `
                     -RepVtasResult $repVtasResult `
                     -InvoiceResult $invoiceResult `
                     -NoteResult $noteResult
             }
-            finally {
-                $validationWorkbook.Close($false)
-                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($validationWorkbook)
-            }
 
             Assert-NotCancelled 'guardado_plantilla'
-            $outputWorkbook.Save()
+            Save-Workbook-WithRetry -Workbook $outputWorkbook -PathForError $outputPath
             Write-Output ("OUTPUT|{0}|{1}" -f $outputName, $templateConfigs[$templateKey].Label)
             Write-Output ("INFO|{0}|invoice_fallbacks={1}|note_fallbacks={2}" -f $templateKey, [int]$invoiceResult.FallbackCount, [int]$noteResult.FallbackCount)
         }
         finally {
             $outputWorkbook.Close($true)
             [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputWorkbook)
+            if ($null -ne $templateWorkbook) {
+                $templateWorkbook.Close($false)
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templateWorkbook)
+                $templateWorkbook = $null
+            }
         }
     }
 }
@@ -2012,8 +2382,14 @@ catch {
     }
 }
 finally {
-    $excel.Quit()
+    Stop-Excel-Application -Excel $excel
     [void][Runtime.Interopservices.Marshal]::ReleaseComObject($excel)
+    Unregister-OleMessageFilter
+    Stop-OrphanExcelProcesses -TimeoutSeconds 20
+    Release-Excel-Automation-Lock -Mutex $excelLock
+    if (-not [string]::IsNullOrWhiteSpace($stagingDirectory) -and (Test-Path -LiteralPath $stagingDirectory)) {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
 }

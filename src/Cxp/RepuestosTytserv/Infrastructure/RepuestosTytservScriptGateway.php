@@ -20,17 +20,14 @@ final class RepuestosTytservScriptGateway
      */
     public function run(array $savedInputs, string $templatePath, string $outputPath, array $fileFields): array
     {
-        if (!is_file($this->scriptPath)) {
-            throw new \RuntimeException('No existe run_repuestos_tytserv.ps1 en el proyecto.');
+        $scriptPath = $this->resolveScriptPath();
+        if (!is_file($scriptPath)) {
+            throw new \RuntimeException('No existe el procesador de repuestos en el proyecto.');
         }
 
         $commandParts = [
-            escapeshellarg($this->resolvePowerShell()),
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            escapeshellarg($this->scriptPath),
+            escapeshellarg($this->resolveNodeBinary()),
+            escapeshellarg($scriptPath),
         ];
 
         foreach ($fileFields as $fieldConfig) {
@@ -41,13 +38,13 @@ final class RepuestosTytservScriptGateway
                 continue;
             }
 
-            $commandParts[] = $flag;
+            $commandParts[] = $this->normalizeFlag($flag);
             $commandParts[] = escapeshellarg($savedInputs[$field]['path']);
         }
 
-        $commandParts[] = '-TemplatePath';
+        $commandParts[] = '--template-path';
         $commandParts[] = escapeshellarg($templatePath);
-        $commandParts[] = '-OutputPath';
+        $commandParts[] = '--output-path';
         $commandParts[] = escapeshellarg($outputPath);
 
         $execution = $this->runner->run(implode(' ', $commandParts) . ' 2>&1');
@@ -70,17 +67,48 @@ final class RepuestosTytservScriptGateway
         ];
     }
 
-    private function resolvePowerShell(): string
+    private function resolveScriptPath(): string
     {
-        $powershell = \app_join_path(
-            getenv('WINDIR') ?: 'C:\\Windows',
-            'System32',
-            'WindowsPowerShell',
-            'v1.0',
-            'powershell.exe'
-        );
+        if (is_file($this->scriptPath) && preg_match('/\.js$/i', $this->scriptPath) === 1) {
+            return $this->scriptPath;
+        }
 
-        return is_file($powershell) ? $powershell : 'powershell.exe';
+        return \app_join_path(\app_root(), 'scripts', 'cxp', 'repuestos_tytserv', 'process.js');
+    }
+
+    private function resolveNodeBinary(): string
+    {
+        $programFiles = getenv('ProgramFiles') ?: 'C:\\Program Files';
+        $programFilesX86 = getenv('ProgramFiles(x86)') ?: 'C:\\Program Files (x86)';
+        $candidates = [
+            \app_join_path($programFiles, 'nodejs', 'node.exe'),
+            \app_join_path($programFilesX86, 'nodejs', 'node.exe'),
+            'C:\\Program Files\\nodejs\\node.exe',
+            'node',
+        ];
+
+        foreach ($candidates as $candidate) {
+            if ($candidate === 'node') {
+                return $candidate;
+            }
+
+            if (is_file($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return 'node';
+    }
+
+    private function normalizeFlag(string $flag): string
+    {
+        return match (strtolower(trim($flag))) {
+            '-inputtyt' => '--input-tyt',
+            '-inputpeug' => '--input-peug',
+            '-inputchgn' => '--input-chgn',
+            '-inputszk' => '--input-szk',
+            default => trim($flag),
+        };
     }
 
     /**

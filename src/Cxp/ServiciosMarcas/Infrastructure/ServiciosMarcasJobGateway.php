@@ -71,6 +71,11 @@ final class ServiciosMarcasJobGateway
         \servicios_job_run($jobId, $inputPath, $outputDir, $templateDir);
     }
 
+    public function dispatch(string $jobId, string $inputPath, string $outputDir, string $templateDir): void
+    {
+        \servicios_job_dispatch($jobId, $inputPath, $outputDir, $templateDir);
+    }
+
     /**
      * @return array<string, array{label:string, prefix:string}>
      */

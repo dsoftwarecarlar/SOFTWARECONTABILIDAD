@@ -251,7 +251,7 @@ function Save-Workbook-WithRetry {
     param(
         [object]$Workbook,
         [string]$Path,
-        [int]$Attempts = 4
+        [int]$Attempts = 8
     )
 
     Ensure-WritablePath -Path $Path
@@ -264,12 +264,249 @@ function Save-Workbook-WithRetry {
         catch {
             $lastError = $_.Exception.Message
             if ($attempt -lt $Attempts) {
-                Start-Sleep -Seconds 1
+                Start-Sleep -Milliseconds (600 * $attempt)
             }
         }
     }
 
     throw ("No se pudo guardar el archivo de salida en {0}. Cierra cualquier Excel abierto y vuelve a intentar. Detalle: {1}" -f $Path, $lastError)
+}
+
+function Open-Workbook-WithRetry {
+    param(
+        [object]$Excel,
+        [string]$Path,
+        [bool]$ReadOnly = $true,
+        [int]$Attempts = 20
+    )
+
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            return $Excel.Workbooks.Open($Path, 0, $ReadOnly)
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                if ($lastError -match 'RPC_E_CALL_REJECTED|0x80010001|0x800AC472') {
+                    Start-Sleep -Milliseconds (900 * $attempt)
+                } else {
+                    Start-Sleep -Milliseconds (700 * $attempt)
+                }
+            }
+        }
+    }
+
+    throw ("No se pudo abrir el libro de Excel en {0}. Cierra archivos abiertos o procesos Excel colgados y reintenta. Detalle: {1}" -f $Path, $lastError)
+}
+
+function Get-HeadlessExcelProcesses {
+    return @(
+        Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowHandle -eq 0 }
+    )
+}
+
+function Stop-OrphanExcelProcesses {
+    param([int]$TimeoutSeconds = 20)
+
+    $deadline = [datetime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
+    while ($true) {
+        $procs = @(Get-HeadlessExcelProcesses)
+        if ($procs.Count -eq 0) {
+            return
+        }
+
+        foreach ($proc in $procs) {
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+            } catch {
+            }
+        }
+
+        Start-Sleep -Milliseconds 750
+
+        if ([datetime]::UtcNow -ge $deadline) {
+            $pids = ($procs | Select-Object -ExpandProperty Id) -join ','
+            Write-Output ("WARN|excel_orphans|Persisten procesos Excel huerfanos (PID: {0}). Se continua con nueva instancia." -f $pids)
+            return
+        }
+    }
+}
+
+function Assert-NoVisibleExcel {
+    param([int]$TimeoutSeconds = 20)
+
+    $deadline = [datetime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
+    while ($true) {
+        $procs = @(
+            Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
+                Where-Object { $_.MainWindowHandle -ne 0 }
+        )
+        if ($procs.Count -eq 0) {
+            return
+        }
+
+        if ([datetime]::UtcNow -ge $deadline) {
+            $pids = ($procs | Select-Object -ExpandProperty Id) -join ','
+            throw "Hay procesos de Excel abiertos visibles (PID: $pids). Cierralos y vuelve a intentar."
+        }
+
+        Start-Sleep -Seconds 1
+    }
+}
+
+function Register-OleMessageFilter {
+    if (-not ("OleMessageFilter" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+[ComImport, Guid("00000016-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IOleMessageFilter
+{
+    [PreserveSig]
+    int HandleInComingCall(int dwCallType, IntPtr hTaskCaller, int dwTickCount, IntPtr lpInterfaceInfo);
+
+    [PreserveSig]
+    int RetryRejectedCall(IntPtr hTaskCallee, int dwTickCount, int dwRejectType);
+
+    [PreserveSig]
+    int MessagePending(IntPtr hTaskCallee, int dwTickCount, int dwPendingType);
+}
+
+public class OleMessageFilter : IOleMessageFilter
+{
+    [DllImport("Ole32.dll")]
+    private static extern int CoRegisterMessageFilter(IOleMessageFilter newFilter, out IOleMessageFilter oldFilter);
+
+    public static void Register()
+    {
+        IOleMessageFilter newFilter = new OleMessageFilter();
+        IOleMessageFilter oldFilter;
+        CoRegisterMessageFilter(newFilter, out oldFilter);
+    }
+
+    public static void Revoke()
+    {
+        IOleMessageFilter oldFilter;
+        CoRegisterMessageFilter(null, out oldFilter);
+    }
+
+    int IOleMessageFilter.HandleInComingCall(int dwCallType, IntPtr hTaskCaller, int dwTickCount, IntPtr lpInterfaceInfo)
+    {
+        return 0;
+    }
+
+    int IOleMessageFilter.RetryRejectedCall(IntPtr hTaskCallee, int dwTickCount, int dwRejectType)
+    {
+        if (dwRejectType == 2)
+        {
+            return 100;
+        }
+
+        return -1;
+    }
+
+    int IOleMessageFilter.MessagePending(IntPtr hTaskCallee, int dwTickCount, int dwPendingType)
+    {
+        return 2;
+    }
+}
+"@
+    }
+
+    try {
+        [OleMessageFilter]::Register()
+    } catch {
+        Write-Output ("WARN|ole_filter|{0}" -f $_.Exception.Message)
+    }
+}
+
+function Unregister-OleMessageFilter {
+    try {
+        if ("OleMessageFilter" -as [type]) {
+            [OleMessageFilter]::Revoke()
+        }
+    } catch {
+    }
+}
+
+function Stop-Excel-Application {
+    param(
+        [object]$Excel,
+        [int]$Attempts = 6
+    )
+
+    if ($null -eq $Excel) {
+        return
+    }
+
+    $lastError = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $Excel.Quit()
+            return
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Milliseconds (450 * $attempt)
+                continue
+            }
+        }
+    }
+
+    # 0x800AC472 es un error transitorio frecuente de COM al cerrar Excel.
+    if ($lastError -match '0x800AC472') {
+        Write-Output ("WARN|excel_quit|{0}" -f $lastError)
+        return
+    }
+
+    if ($lastError -ne '') {
+        Write-Output ("WARN|excel_quit|{0}" -f $lastError)
+    }
+}
+
+function Acquire-Excel-Automation-Lock {
+    param(
+        [string]$Name = 'Local\SoftwareContabilidad.ExcelAutomation',
+        [int]$TimeoutSeconds = 240
+    )
+
+    $mutex = New-Object System.Threading.Mutex($false, $Name)
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne([Math]::Max(1, $TimeoutSeconds) * 1000)
+    } catch {
+        $mutex.Dispose()
+        throw "No se pudo inicializar el bloqueo global de Excel: $($_.Exception.Message)"
+    }
+
+    if (-not $acquired) {
+        $mutex.Dispose()
+        throw "Existe otro proceso de Excel ejecutandose. Espera a que termine e intenta de nuevo."
+    }
+
+    return $mutex
+}
+
+function Release-Excel-Automation-Lock {
+    param([object]$Mutex)
+
+    if ($null -eq $Mutex) {
+        return
+    }
+
+    try {
+        $Mutex.ReleaseMutex()
+    } catch {
+    }
+
+    try {
+        $Mutex.Dispose()
+    } catch {
+    }
 }
 
 function Build-Rep-Lookup {
@@ -1752,7 +1989,7 @@ function Process-Rep-Sheet {
     $sourceSheet = $null
     $targetSheet = $null
     try {
-        $sourceWorkbook = $Excel.Workbooks.Open($SourcePath, 0, $true)
+        $sourceWorkbook = Open-Workbook-WithRetry -Excel $Excel -Path $SourcePath -ReadOnly $true
         try {
             $sourceSheet = Get-Worksheet-Safe -Workbook $sourceWorkbook -CandidateNames @(
                 'RepLibroVentasGeneral',
@@ -1846,13 +2083,36 @@ if (-not (Test-Path -LiteralPath $outputDirectory)) {
 $resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $resolvedOutputName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedOutputPath)
 $resolvedOutputExtension = [System.IO.Path]::GetExtension($resolvedOutputPath)
-$workingOutputPath = Join-Path $outputDirectory ("{0}__working_{1}{2}" -f $resolvedOutputName, ([Guid]::NewGuid().ToString('N').Substring(0, 8)), $resolvedOutputExtension)
-$savedOutputPath = Join-Path $outputDirectory ("{0}__saved_{1}{2}" -f $resolvedOutputName, ([Guid]::NewGuid().ToString('N').Substring(0, 8)), $resolvedOutputExtension)
+$stagingRoot = Join-Path $outputDirectory '__staging_repuestos_tytserv'
+if (-not (Test-Path -LiteralPath $stagingRoot)) {
+    $null = New-Item -ItemType Directory -Path $stagingRoot -Force
+}
+$stagingDirectory = Join-Path $stagingRoot ([Guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $stagingDirectory -Force
+$workingOutputPath = Join-Path $stagingDirectory ("{0}__working_{1}{2}" -f $resolvedOutputName, ([Guid]::NewGuid().ToString('N').Substring(0, 8)), $resolvedOutputExtension)
+$savedOutputPath = Join-Path $stagingDirectory ("{0}__saved_{1}{2}" -f $resolvedOutputName, ([Guid]::NewGuid().ToString('N').Substring(0, 8)), $resolvedOutputExtension)
 Ensure-WritablePath -Path $workingOutputPath
 Ensure-WritablePath -Path $savedOutputPath
 Copy-Item -LiteralPath $resolvedTemplatePath -Destination $workingOutputPath -Force
 
-$excel = New-Object -ComObject Excel.Application
+$excelLock = $null
+$excel = $null
+try {
+    $excelLock = Acquire-Excel-Automation-Lock -TimeoutSeconds 300
+    Stop-OrphanExcelProcesses -TimeoutSeconds 20
+    Assert-NoVisibleExcel -TimeoutSeconds 30
+    Register-OleMessageFilter
+    $excel = New-Object -ComObject Excel.Application
+    Start-Sleep -Milliseconds 1200
+}
+catch {
+    Unregister-OleMessageFilter
+    if ($null -ne $excelLock) {
+        Release-Excel-Automation-Lock -Mutex $excelLock
+    }
+    throw
+}
+
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 $excel.ScreenUpdating = $false
@@ -1874,8 +2134,8 @@ $processingSucceeded = $false
 $processingError = $null
 try {
     try {
-        $outputWorkbook = $excel.Workbooks.Open($workingOutputPath, 0, $false)
-        $templateWorkbook = $excel.Workbooks.Open($resolvedTemplatePath, 0, $true)
+        $outputWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $workingOutputPath -ReadOnly $false
+        $templateWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $resolvedTemplatePath -ReadOnly $true
 
         $lookupTytSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP TYT')
         $lookupPeugSheet = Get-Worksheet-Safe -Workbook $templateWorkbook -CandidateNames @('REP PEUGT')
@@ -2000,8 +2260,15 @@ try {
             [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outputWorkbook)
         }
 
-        $excel.Quit()
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
+        Stop-Excel-Application -Excel $excel
+        try {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
+        }
+        finally {
+            Unregister-OleMessageFilter
+            Stop-OrphanExcelProcesses -TimeoutSeconds 20
+            Release-Excel-Automation-Lock -Mutex $excelLock
+        }
     }
 }
 catch {
@@ -2014,6 +2281,9 @@ if (-not $processingSucceeded) {
     }
     if (Test-Path -LiteralPath $savedOutputPath) {
         Remove-Item -LiteralPath $savedOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $stagingDirectory) {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $resolvedOutputPath) {
         Remove-Item -LiteralPath $resolvedOutputPath -Force -ErrorAction SilentlyContinue
@@ -2030,6 +2300,9 @@ try {
     if (Test-Path -LiteralPath $workingOutputPath) {
         Remove-Item -LiteralPath $workingOutputPath -Force -ErrorAction SilentlyContinue
     }
+    if (Test-Path -LiteralPath $stagingDirectory) {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 catch {
     if (Test-Path -LiteralPath $workingOutputPath) {
@@ -2037,6 +2310,9 @@ catch {
     }
     if (Test-Path -LiteralPath $savedOutputPath) {
         Remove-Item -LiteralPath $savedOutputPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $stagingDirectory) {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
     throw ("No se pudo publicar el archivo final en {0}. Detalle: {1}" -f $resolvedOutputPath, $_.Exception.Message)
 }

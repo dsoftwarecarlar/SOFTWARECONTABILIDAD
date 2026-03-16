@@ -61,7 +61,7 @@ final class ServiciosMarcasModuleController
         $jobEntries = $this->jobs->entries();
         $activeJobs = array_values(array_filter(
             $jobEntries,
-            fn(array $job): bool => in_array((string)($job['status'] ?? ''), $this->jobs->activeStatuses(), true)
+            fn(array $job): bool => $this->isBlockingActiveJob($job)
         ));
 
         $stoppedCount = isset($get['stopped'])
@@ -92,7 +92,7 @@ final class ServiciosMarcasModuleController
         if ($activeJobId !== '') {
             $activeJob = $this->jobs->read($activeJobId);
             if ($activeJob === null) {
-                $error = 'No se encontro el proceso solicitado.';
+                $notice = 'El proceso ya no está disponible (puede haberse limpiado). Ejecuta uno nuevo.';
                 $activeJobId = '';
             } else {
                 $jobStatus = (string)($activeJob['status'] ?? '');
@@ -103,6 +103,10 @@ final class ServiciosMarcasModuleController
                         'summary' => is_array($activeJob['summary'] ?? null) ? $activeJob['summary'] : [],
                         'console' => (string)($activeJob['console'] ?? ''),
                     ];
+                } elseif ($this->isExpiredActiveJob($activeJob)) {
+                    $error = 'El proceso anterior excedio 10 minutos y se considera atascado. Inicia uno nuevo.';
+                    $noticeConsole = (string)($activeJob['console'] ?? '');
+                    $activeJobId = '';
                 } elseif (in_array($jobStatus, ['queued', 'running', 'cancel_requested'], true)) {
                     $pendingJob = $activeJob;
                 } elseif ($jobStatus === 'cancelled') {
@@ -129,8 +133,9 @@ final class ServiciosMarcasModuleController
                     exit;
                 }
 
-                \ignore_user_abort(true);
-                \set_time_limit(0);
+                if ($activeJobs !== []) {
+                    throw new \RuntimeException('Ya existe un proceso en ejecucion o cierre. Espera a que termine antes de iniciar otro.');
+                }
 
                 if (!is_dir($paths['template_dir'])) {
                     throw new \RuntimeException('No existe la carpeta base de plantillas mensuales.');
@@ -168,31 +173,34 @@ final class ServiciosMarcasModuleController
                 }
 
                 $activeJobId = 'servicios_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4));
+                $createdAt = date('Y-m-d H:i:s');
                 $this->jobs->write($activeJobId, [
                     'job_id' => $activeJobId,
                     'status' => 'queued',
                     'source_name' => $originalName,
                     'message' => 'Proceso en cola. La pagina se actualizara automaticamente.',
-                    'created_at' => date('Y-m-d H:i:s'),
+                    'created_at' => $createdAt,
                 ]);
+
+                try {
+                    $this->jobs->dispatch($activeJobId, $inputPath, $paths['outputs_dir'], $paths['template_dir']);
+                } catch (\Throwable $dispatchException) {
+                    $this->jobs->write($activeJobId, [
+                        'job_id' => $activeJobId,
+                        'status' => 'error',
+                        'source_name' => $originalName,
+                        'message' => 'No se pudo iniciar el proceso en segundo plano.',
+                        'error' => $dispatchException->getMessage(),
+                        'created_at' => $createdAt,
+                        'updated_at' => date('Y-m-d H:i:s'),
+                        'completed_at' => date('Y-m-d H:i:s'),
+                    ]);
+
+                    throw new \RuntimeException('No se pudo iniciar el worker en segundo plano: ' . $dispatchException->getMessage());
+                }
 
                 $redirectUrl = \app_url('modules/cxp_servicios_marcas/index.php?job=' . rawurlencode($activeJobId));
                 \header('Location: ' . $redirectUrl);
-                \header('Content-Length: 0');
-                \header('Connection: close');
-                if (function_exists('session_write_close')) {
-                    \session_write_close();
-                }
-                while (ob_get_level() > 0) {
-                    @ob_end_flush();
-                }
-                \flush();
-
-                try {
-                    $this->jobs->run($activeJobId, $inputPath, $paths['outputs_dir'], $paths['template_dir']);
-                } catch (\Throwable) {
-                    // El estado del job queda persistido para el polling del cliente.
-                }
                 exit;
             } catch (\Throwable $exception) {
                 $error = $exception->getMessage();
@@ -273,5 +281,35 @@ final class ServiciosMarcasModuleController
         }
 
         return $history;
+    }
+
+    private function isBlockingActiveJob(array $job): bool
+    {
+        $status = (string)($job['status'] ?? '');
+        if (!in_array($status, $this->jobs->activeStatuses(), true)) {
+            return false;
+        }
+
+        return !$this->isExpiredActiveJob($job);
+    }
+
+    private function isExpiredActiveJob(array $job): bool
+    {
+        $status = (string)($job['status'] ?? '');
+        if (!in_array($status, $this->jobs->activeStatuses(), true)) {
+            return false;
+        }
+
+        $startedAt = trim((string)($job['started_at'] ?? ''));
+        if ($startedAt === '') {
+            return false;
+        }
+
+        $startedTs = strtotime($startedAt);
+        if ($startedTs === false) {
+            return false;
+        }
+
+        return (time() - $startedTs) >= 600;
     }
 }

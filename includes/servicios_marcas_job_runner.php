@@ -30,11 +30,15 @@ function servicios_job_read(string $path): array
 
 function servicios_job_write(string $path, array $payload): void
 {
-    file_put_contents(
-        $path,
-        json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
-        LOCK_EX
-    );
+    $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        throw new RuntimeException('No se pudo serializar el estado del proceso.');
+    }
+
+    $bytes = file_put_contents($path, $json, LOCK_EX);
+    if ($bytes === false || $bytes < strlen($json)) {
+        throw new RuntimeException('No se pudo persistir el estado del proceso.');
+    }
 }
 
 function servicios_job_cleanup(string $jobsDir, int $keep = 24): void
@@ -128,7 +132,7 @@ function servicios_job_active_statuses(): array
     return ['queued', 'running', 'cancel_requested'];
 }
 
-function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 3600): void
+function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 900): void
 {
     if ($maxAgeSeconds <= 0) {
         return;
@@ -143,14 +147,30 @@ function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 
 
         $startedAt = trim((string)($job['started_at'] ?? ''));
         $createdAt = trim((string)($job['created_at'] ?? ''));
+        $cancelRequestedAt = trim((string)($job['cancel_requested_at'] ?? ''));
         $reference = (string)($job['updated_at'] ?? $startedAt ?? $createdAt);
         $referenceTs = strtotime($reference);
+        $startedTs = strtotime($startedAt);
         $createdTs = strtotime($createdAt);
+        $cancelRequestedTs = strtotime($cancelRequestedAt);
         $shouldCloseUnstarted = $startedAt === ''
             && $createdTs !== false
             && ($now - $createdTs) >= 300;
+        $shouldCloseRunningTimeout = $status === 'running'
+            && $startedTs !== false
+            && ($now - $startedTs) >= 600;
+        $shouldCloseCancelRequested = $status === 'cancel_requested'
+            && (
+                ($cancelRequestedTs !== false && ($now - $cancelRequestedTs) >= 120)
+                || ($referenceTs !== false && ($now - $referenceTs) >= 120)
+            );
 
-        if (!$shouldCloseUnstarted && ($referenceTs === false || ($now - $referenceTs) < $maxAgeSeconds)) {
+        if (
+            !$shouldCloseUnstarted
+            && !$shouldCloseRunningTimeout
+            && !$shouldCloseCancelRequested
+            && ($referenceTs === false || ($now - $referenceTs) < $maxAgeSeconds)
+        ) {
             continue;
         }
 
@@ -162,7 +182,13 @@ function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 
         $payload = $job;
         unset($payload['_path'], $payload['_cancel_path']);
         $payload['status'] = 'cancelled';
-        $payload['message'] = 'Proceso antiguo cerrado automaticamente para depurar la cola.';
+        if ($shouldCloseCancelRequested) {
+            $payload['message'] = 'Proceso cancelado automaticamente tras confirmar cierre del worker.';
+        } elseif ($shouldCloseRunningTimeout) {
+            $payload['message'] = 'Proceso cerrado automaticamente por exceder 10 minutos sin finalizar.';
+        } else {
+            $payload['message'] = 'Proceso antiguo cerrado automaticamente para depurar la cola.';
+        }
         $payload['updated_at'] = date('Y-m-d H:i:s');
         $payload['completed_at'] = date('Y-m-d H:i:s');
         servicios_job_write(servicios_job_path($jobsDir, $jobId), $payload);
@@ -216,6 +242,257 @@ function servicios_job_request_cancel_all(string $jobsDir): array
     ];
 }
 
+function servicios_job_resolve_php_binary(): string
+{
+    $candidates = [];
+    $candidates[] = app_join_path(dirname(dirname(app_root())), 'php', 'php.exe');
+    $candidates[] = app_join_path(dirname(dirname(app_root())), 'php', 'php');
+
+    if (defined('PHP_BINDIR') && is_string(PHP_BINDIR) && trim(PHP_BINDIR) !== '') {
+        $candidates[] = app_join_path(PHP_BINDIR, 'php.exe');
+        $candidates[] = app_join_path(PHP_BINDIR, 'php');
+    }
+
+    if (defined('PHP_BINARY') && is_string(PHP_BINARY) && trim(PHP_BINARY) !== '') {
+        $candidates[] = PHP_BINARY;
+    }
+
+    $seen = [];
+    foreach ($candidates as $candidate) {
+        $normalized = str_replace('/', '\\', (string)$candidate);
+        if ($normalized === '' || isset($seen[$normalized])) {
+            continue;
+        }
+        $seen[$normalized] = true;
+
+        if (servicios_job_is_php_binary_candidate($candidate) && servicios_job_probe_php_binary($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return 'php';
+}
+
+function servicios_job_is_php_binary_candidate(string $candidate): bool
+{
+    if (!is_file($candidate)) {
+        return false;
+    }
+
+    $name = strtolower((string)pathinfo($candidate, PATHINFO_BASENAME));
+    return preg_match('/^php(?:-cgi)?(?:[0-9._-]+)?(?:\.exe)?$/i', $name) === 1;
+}
+
+function servicios_job_probe_php_binary(string $binary): bool
+{
+    if (!is_file($binary)) {
+        return false;
+    }
+
+    $output = [];
+    $exitCode = 1;
+    $nullDevice = DIRECTORY_SEPARATOR === '\\' ? 'NUL' : '/dev/null';
+    @exec(escapeshellarg($binary) . ' -v 2>' . $nullDevice, $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        return false;
+    }
+
+    if ($output === []) {
+        return true;
+    }
+
+    $firstLine = strtolower(trim((string)$output[0]));
+    return str_starts_with($firstLine, 'php ');
+}
+
+function servicios_job_quote_powershell_arg(string $value): string
+{
+    return "'" . str_replace("'", "''", $value) . "'";
+}
+
+function servicios_job_wait_until_dequeued(string $jobsDir, string $jobId, int $timeoutSeconds = 20): bool
+{
+    if ($timeoutSeconds <= 0) {
+        return false;
+    }
+
+    $deadline = microtime(true) + $timeoutSeconds;
+    while (microtime(true) < $deadline) {
+        $job = servicios_job_read(servicios_job_path($jobsDir, $jobId));
+        if ($job !== []) {
+            $status = (string)($job['status'] ?? '');
+            if ($status !== '' && $status !== 'queued') {
+                return true;
+            }
+        }
+
+        usleep(250000);
+    }
+
+    return false;
+}
+
+function servicios_job_terminate_process_tree(int $pid): void
+{
+    if ($pid <= 0) {
+        return;
+    }
+
+    if (DIRECTORY_SEPARATOR === '\\') {
+        exec('cmd /C taskkill /PID ' . $pid . ' /T /F >NUL 2>&1');
+        return;
+    }
+
+    exec('kill -TERM ' . $pid . ' >/dev/null 2>&1');
+}
+
+/**
+ * @return array<int, string>
+ */
+function servicios_job_read_console_lines(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $raw = file_get_contents($path);
+    if (!is_string($raw) || $raw === '') {
+        return [];
+    }
+
+    // PowerShell puede escribir UTF-16 con null-bytes cuando redirige salida.
+    $raw = str_replace("\0", '', $raw);
+    if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
+        $raw = substr($raw, 3);
+    }
+    if (strncmp($raw, "\xFF\xFE", 2) === 0 || strncmp($raw, "\xFE\xFF", 2) === 0) {
+        $raw = substr($raw, 2);
+    }
+
+    $normalized = str_replace(["\r\n", "\r"], "\n", $raw);
+    $lines = [];
+    foreach (explode("\n", $normalized) as $line) {
+        $clean = trim((string)$line);
+        if ($clean !== '') {
+            $lines[] = $clean;
+        }
+    }
+
+    return $lines;
+}
+
+function servicios_job_dispatch(string $jobId, string $inputPath, string $outputDir, string $templateDir): void
+{
+    if ($jobId === '' || preg_match('/^[A-Za-z0-9_-]+$/', $jobId) !== 1) {
+        throw new RuntimeException('Job invalido para iniciar en segundo plano.');
+    }
+
+    $runnerPath = app_join_path(app_root(), 'run_servicios_marcas_job.php');
+    if (!is_file($runnerPath)) {
+        throw new RuntimeException('No existe run_servicios_marcas_job.php para iniciar el worker.');
+    }
+
+    $phpBinary = servicios_job_resolve_php_binary();
+    $workerArgs = [
+        $runnerPath,
+        '--job',
+        $jobId,
+        '--input',
+        $inputPath,
+        '--output-dir',
+        $outputDir,
+        '--template-dir',
+        $templateDir,
+    ];
+
+    $jobsDir = app_ensure_dir(app_storage_path('jobs'));
+
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $powershell = app_join_path(
+            getenv('WINDIR') ?: 'C:\\Windows',
+            'System32',
+            'WindowsPowerShell',
+            'v1.0',
+            'powershell.exe'
+        );
+        if (!is_file($powershell)) {
+            $powershell = 'powershell.exe';
+        }
+
+        $psArguments = implode(', ', array_map(
+            static fn(string $arg): string => servicios_job_quote_powershell_arg($arg),
+            $workerArgs
+        ));
+        $psScript = "\$ErrorActionPreference = 'Stop'; Start-Process -FilePath "
+            . servicios_job_quote_powershell_arg($phpBinary)
+            . ' -ArgumentList @(' . $psArguments . ') -WindowStyle Hidden';
+
+        $command = implode(' ', [
+            escapeshellarg($powershell),
+            '-Sta',
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-Command',
+            escapeshellarg($psScript),
+        ]);
+
+        $lines = [];
+        $exitCode = 0;
+        exec($command, $lines, $exitCode);
+        if ($exitCode !== 0) {
+            throw new RuntimeException('No se pudo lanzar el worker de servicios en segundo plano (exit ' . $exitCode . ').');
+        }
+
+        if (servicios_job_wait_until_dequeued($jobsDir, $jobId, 20)) {
+            return;
+        }
+
+        $legacyCommand = 'cmd /C start "" /B ' . implode(' ', array_map(
+            static fn(string $arg): string => escapeshellarg($arg),
+            array_merge([$phpBinary], $workerArgs)
+        )) . ' >NUL 2>&1';
+
+        $legacyHandle = @popen($legacyCommand, 'r');
+        if ($legacyHandle !== false) {
+            pclose($legacyHandle);
+        } else {
+            $legacyExitCode = 0;
+            exec($legacyCommand, $lines, $legacyExitCode);
+            if ($legacyExitCode !== 0) {
+                throw new RuntimeException(
+                    'No se pudo iniciar el worker en segundo plano (PowerShell y fallback cmd fallaron).'
+                );
+            }
+        }
+
+        if (!servicios_job_wait_until_dequeued($jobsDir, $jobId, 20)) {
+            throw new RuntimeException(
+                'El worker no inicio y el proceso quedo en cola. Verifica permisos de PHP/PowerShell e intenta de nuevo. ' .
+                'PHP detectado: ' . $phpBinary . '. Job: ' . $jobId . '.'
+            );
+        }
+
+        return;
+    }
+
+    $workerCommand = implode(' ', array_map(static fn(string $part): string => escapeshellarg($part), $workerArgs));
+    $lines = [];
+    $exitCode = 0;
+    exec(escapeshellarg($phpBinary) . ' ' . $workerCommand . ' > /dev/null 2>&1 &', $lines, $exitCode);
+    if ($exitCode !== 0) {
+        throw new RuntimeException('No se pudo lanzar el worker de servicios en segundo plano (exit ' . $exitCode . ').');
+    }
+
+    if (!servicios_job_wait_until_dequeued($jobsDir, $jobId, 10)) {
+        throw new RuntimeException(
+            'El worker no inicio y el proceso quedo en cola. Intenta nuevamente. ' .
+            'PHP detectado: ' . $phpBinary . '. Job: ' . $jobId . '.'
+        );
+    }
+}
+
 function servicios_job_run(string $jobId, string $inputPath, string $outputDir, string $templateDir): void
 {
     if ($jobId === '' || preg_match('/^[A-Za-z0-9_-]+$/', $jobId) !== 1) {
@@ -259,6 +536,8 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             }
         }
     };
+
+    $console = '';
 
     try {
         if (!is_file($inputPath)) {
@@ -316,6 +595,7 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
 
         $command = implode(' ', [
             escapeshellarg($powershell),
+            '-Sta',
             '-NoProfile',
             '-ExecutionPolicy',
             'Bypass',
@@ -331,12 +611,87 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             escapeshellarg($runStamp),
             '-CancelPath',
             escapeshellarg($cancelPath),
-            '2>&1',
         ]);
 
         $outputLines = [];
-        $exitCode = 0;
-        exec($command, $outputLines, $exitCode);
+        $configByKey = servicios_job_output_config();
+        $startedTs = time();
+        $lastHeartbeatAt = $startedTs;
+        $timedOut = false;
+        $consoleLogPath = app_join_path($jobsDir, 'servicios_marcas_' . $jobId . '.log');
+        if (is_file($consoleLogPath)) {
+            @unlink($consoleLogPath);
+        }
+
+        $consoleStream = fopen($consoleLogPath, 'ab');
+        if (!is_resource($consoleStream)) {
+            throw new RuntimeException('No se pudo abrir el log temporal del worker de servicios por marca.');
+        }
+
+        $touchRunningStatus = static function (string $message) use ($jobPath, $writeStatus): void {
+            $currentStatus = (string)(servicios_job_read($jobPath)['status'] ?? '');
+            if ($currentStatus === 'cancel_requested') {
+                return;
+            }
+
+            $writeStatus('running', ['message' => $message]);
+        };
+
+        $process = proc_open(
+            $command,
+            [
+                1 => $consoleStream,
+                2 => $consoleStream,
+            ],
+            $pipes
+        );
+
+        if (!is_resource($process)) {
+            fclose($consoleStream);
+            throw new RuntimeException('No se pudo lanzar el worker de servicios por marca.');
+        }
+
+        while (true) {
+            $statusInfo = proc_get_status($process);
+            $isRunning = (bool)($statusInfo['running'] ?? false);
+            if (!$isRunning) {
+                break;
+            }
+
+            if ((time() - $startedTs) >= 600) {
+                servicios_job_terminate_process_tree((int)($statusInfo['pid'] ?? 0));
+                $timedOut = true;
+                break;
+            }
+
+            if ((time() - $lastHeartbeatAt) >= 20) {
+                $elapsed = max(1, time() - $startedTs);
+                $minutes = intdiv($elapsed, 60);
+                $seconds = $elapsed % 60;
+                $touchRunningStatus(sprintf(
+                    'Procesando plantillas en segundo plano. Tiempo transcurrido: %02d:%02d.',
+                    $minutes,
+                    $seconds
+                ));
+                $lastHeartbeatAt = time();
+            }
+
+            usleep(500000);
+        }
+
+        $exitCode = proc_close($process);
+        fclose($consoleStream);
+
+        if ($timedOut) {
+            throw new RuntimeException(
+                'El worker de servicios supero el tiempo maximo permitido (10 minutos) y fue detenido para evitar bloqueos.'
+            );
+        }
+
+        $outputLines = servicios_job_read_console_lines($consoleLogPath);
+        if (is_file($consoleLogPath)) {
+            @unlink($consoleLogPath);
+        }
 
         $console = trim(implode(PHP_EOL, $outputLines));
         $downloads = [];
@@ -345,9 +700,16 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
 
         foreach ($outputLines as $line) {
             $text = trim((string)$line);
-            if (str_starts_with($text, 'CANCELLED|')) {
+            $cancelPos = strpos($text, 'CANCELLED|');
+            if ($cancelPos !== false) {
+                $text = substr($text, $cancelPos);
                 $cancelMessage = trim(substr($text, strlen('CANCELLED|')));
                 continue;
+            }
+
+            $infoPos = strpos($text, 'INFO|');
+            if ($infoPos !== false) {
+                $text = substr($text, $infoPos);
             }
 
             if (preg_match('/^INFO\|processing\|([a-z0-9_]+)\|rows=(\d+)$/i', $text, $matches) === 1) {
@@ -372,9 +734,11 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
                 continue;
             }
 
-            if (!str_starts_with($text, 'OUTPUT|')) {
+            $outputPos = strpos($text, 'OUTPUT|');
+            if ($outputPos === false) {
                 continue;
             }
+            $text = substr($text, $outputPos);
 
             $parts = explode('|', $text, 3);
             if (count($parts) < 3) {
@@ -395,7 +759,68 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             ];
         }
 
-        $configByKey = servicios_job_output_config();
+        // Fallback: si la salida de consola no se pudo parsear, resolver por artefactos reales del run_stamp.
+        if ($downloads === []) {
+            foreach (glob(app_join_path($outputDir, 'servicios_*_' . $runStamp . '.xls')) ?: [] as $generatedPath) {
+                if (!is_file($generatedPath)) {
+                    continue;
+                }
+
+                $generatedName = basename($generatedPath);
+                $generatedKey = strtolower(pathinfo($generatedName, PATHINFO_FILENAME));
+                if (isset($downloads[$generatedKey])) {
+                    continue;
+                }
+
+                $label = 'SALIDA';
+                foreach ($configByKey as $brandKey => $brandConfig) {
+                    if (str_starts_with(strtolower($generatedName), 'servicios_' . strtolower($brandKey) . '_')) {
+                        $label = (string)($brandConfig['label'] ?? strtoupper($brandKey));
+                        break;
+                    }
+                }
+
+                $downloads[$generatedKey] = [
+                    'label' => $label,
+                    'name' => $generatedName,
+                    'download_url' => app_output_download_url($generatedName),
+                ];
+            }
+        }
+
+        if ($downloads === []) {
+            foreach (glob(app_join_path($outputDir, 'servicios_*.xls')) ?: [] as $generatedPath) {
+                if (!is_file($generatedPath)) {
+                    continue;
+                }
+
+                $mtime = filemtime($generatedPath);
+                if ($mtime === false || $mtime < ($startedTs - 10)) {
+                    continue;
+                }
+
+                $generatedName = basename($generatedPath);
+                $generatedKey = strtolower(pathinfo($generatedName, PATHINFO_FILENAME));
+                if (isset($downloads[$generatedKey])) {
+                    continue;
+                }
+
+                $label = 'SALIDA';
+                foreach ($configByKey as $brandKey => $brandConfig) {
+                    if (str_starts_with(strtolower($generatedName), 'servicios_' . strtolower($brandKey) . '_')) {
+                        $label = (string)($brandConfig['label'] ?? strtoupper($brandKey));
+                        break;
+                    }
+                }
+
+                $downloads[$generatedKey] = [
+                    'label' => $label,
+                    'name' => $generatedName,
+                    'download_url' => app_output_download_url($generatedName),
+                ];
+            }
+        }
+
         $order = array_keys($configByKey);
         $downloads = array_values($downloads);
         usort(
@@ -497,6 +922,7 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
         $writeStatus('error', [
             'message' => 'El proceso termino con error.',
             'error' => $exception->getMessage(),
+            'console' => $console,
             'completed_at' => date('Y-m-d H:i:s'),
         ]);
         throw $exception;
