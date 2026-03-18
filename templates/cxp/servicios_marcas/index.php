@@ -122,11 +122,28 @@ declare(strict_types=1);
                             <input type="file" name="repventas_file" accept=".xls,.xlsx" required>
                         </div>
                         <div class="field">
-                            <label>VENTAS (txt) opcional</label>
+                            <label>Mayor CHANGAN (CON_MAYORGEN2CHAN.TXT) opcional</label>
+                            <input type="file" name="mayor_changan_file" accept=".txt">
+                        </div>
+                        <div class="field">
+                            <label>Mayor PEUGEOT (CON_MAYORGEN2PEU.TXT) opcional</label>
+                            <input type="file" name="mayor_peug_file" accept=".txt">
+                        </div>
+                        <div class="field">
+                            <label>Mayor SUZUKI (CON_MAYORGEN2SUZ.TXT) opcional</label>
+                            <input type="file" name="mayor_szk_file" accept=".txt">
+                        </div>
+                        <div class="field">
+                            <label>Mayor MATRIZ (CON_MAYORGEN2TOY.TXT) opcional</label>
+                            <input type="file" name="mayor_tyt_file" accept=".txt">
+                        </div>
+                        <div class="field">
+                            <label>Mayor general legacy (VENTAS.txt) opcional</label>
                             <input type="file" name="ventas_file" accept=".txt">
+                            <div class="meta">Solo como respaldo si no usas los TXT separados por marca.</div>
                         </div>
                         <div class="field riobamba-field" data-riobamba-field style="display:none;">
-                            <label>REP FACTURACIÓN Suzuki Riobamba (solo CHANGAN) opcional</label>
+                            <label>REP FACTURACION Suzuki Riobamba (legacy) opcional</label>
                             <input type="file" name="riobamba_file" accept=".txt,.xls,.xlsx">
                         </div>
                         <button type="submit" data-submit-button data-processing-label="<?= htmlspecialchars((string)($pageConfig['upload_panel']['processing_label'] ?? 'Procesando...')) ?>">

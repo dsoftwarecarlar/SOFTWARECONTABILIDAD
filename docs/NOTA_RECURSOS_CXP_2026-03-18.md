@@ -10,6 +10,7 @@ Las plantillas manuales y fixtures de prueba de CXP se movieron fuera de `output
 
 - `resources/cxp/acciones/templates`
 - `resources/cxp/acciones/fixtures`
+- `resources/cxp/acciones/contracts`
 - `resources/cxp/servicios_marcas/templates`
 - `resources/cxp/servicios_marcas/fixtures`
 - `resources/cxp/repuestos_tytserv/templates`
@@ -27,3 +28,15 @@ Las plantillas manuales y fixtures de prueba de CXP se movieron fuera de `output
 ## Compatibilidad
 
 Las rutas activas ya priorizan `resources/cxp/...` y mantienen fallback temporal a las rutas legacy eliminadas del repo de trabajo. Esto permite conservar compatibilidad de código mientras se termina de limpiar cualquier referencia residual.
+
+## Archivo manual
+
+Los historicos manuales que no participan en produccion ni en pruebas activas quedaron archivados en:
+
+- `archive/cxp_manual_outputs`
+
+Con esto:
+
+- la raiz del proyecto deja de mezclar fixtures y salidas manuales
+- `outputs/` deja de cargar historicos viejos
+- los artefactos no se pierden, solo salen del camino operativo

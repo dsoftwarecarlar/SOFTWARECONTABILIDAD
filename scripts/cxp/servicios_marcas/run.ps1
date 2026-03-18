@@ -31,6 +31,18 @@ param(
     [string]$RepVtasPath = '',
 
     [Parameter(Mandatory = $false)]
+    [string]$MayorChanganPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$MayorPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$MayorSzkPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$MayorTytPath = '',
+
+    [Parameter(Mandatory = $false)]
     [string]$VentasPath = '',
 
     [Parameter(Mandatory = $false)]
@@ -53,6 +65,10 @@ if (-not (Test-Path -LiteralPath $legacyScript)) {
     -NotaPath $NotaPath `
     -PxPath $PxPath `
     -RepVtasPath $RepVtasPath `
+    -MayorChanganPath $MayorChanganPath `
+    -MayorPeugPath $MayorPeugPath `
+    -MayorSzkPath $MayorSzkPath `
+    -MayorTytPath $MayorTytPath `
     -VentasPath $VentasPath `
     -RiobambaPath $RiobambaPath
 

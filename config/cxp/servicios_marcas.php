@@ -15,7 +15,7 @@ return [
         'module_note' => 'Modulo operativo para conciliar servicios por marca',
         'hero' => [
             'chip' => 'Flujo productivo activo',
-            'lead' => 'Sube los 4 archivos mensuales (2 TXT + 2 Excel). El sistema separa por marca y genera una plantilla final descargable.',
+            'lead' => 'Sube los 4 archivos base del mes y, si quieres cuadrar mayores, agrega los CON_MAYORGEN2 por marca. El sistema separa por marca y genera una plantilla final descargable.',
             'note' => 'Salida de usuario: un .xls por marca con sus hojas operativas.',
         ],
         'template_panel' => [
@@ -27,7 +27,7 @@ return [
         ],
         'upload_panel' => [
             'title' => 'Cargar archivos',
-            'description' => 'Sube REP FACTURACION (txt), NOTA DE CREDITO (txt), PX (xlsx) y REP VENTAS (xls/xlsx).',
+            'description' => 'Sube REP FACTURACION (txt), NOTA DE CREDITO (txt), PX (xlsx), REP VENTAS (xls/xlsx) y, de forma opcional, los CON_MAYORGEN2 por marca.',
             'button_label' => 'Procesar y generar plantillas',
             'processing_label' => 'Procesando en segundo plano...',
             'retention_tag' => 'Retencion',

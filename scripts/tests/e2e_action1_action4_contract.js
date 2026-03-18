@@ -38,6 +38,20 @@ function actionFixturePath(fileName) {
   ]);
 }
 
+function action1FixturePath(fileName) {
+  return firstExistingPath([
+    path.join(ROOT, "resources", "cxp", "acciones", "fixtures", fileName),
+    path.join(ROOT, fileName),
+  ]);
+}
+
+function action1ContractPath(fileName) {
+  return firstExistingPath([
+    path.join(ROOT, "resources", "cxp", "acciones", "contracts", fileName),
+    path.join(ROOT, "outputs", fileName),
+  ]);
+}
+
 function normalizeText(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -258,7 +272,7 @@ function columnValues(sheet, columnIndex, startRow = 2) {
 }
 
 async function runAction1Contract() {
-  const inputPath = path.join(ROOT, "CXPREP_docproveedor.pdf");
+  const inputPath = action1FixturePath("CXPREP_docproveedor.pdf");
   const payload = buildMultipartBody([
     { field: "pdf_file", path: inputPath, contentType: "application/pdf" },
   ]);
@@ -286,7 +300,7 @@ async function runAction1Contract() {
 
   const generatedSignature = buildAction1NormalizedSignature(download.buffer);
   const referenceSignature = buildAction1NormalizedSignature(
-    path.join(ROOT, "outputs", "CXPREP_docproveedor_20260306_092810_resultado.xlsx"),
+    action1ContractPath("CXPREP_docproveedor_20260306_092810_resultado.xlsx"),
   );
   assertCondition(
     generatedSignature.rows === referenceSignature.rows && generatedSignature.hash === referenceSignature.hash,

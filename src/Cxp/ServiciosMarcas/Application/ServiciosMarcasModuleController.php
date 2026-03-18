@@ -160,6 +160,10 @@ final class ServiciosMarcasModuleController
                     'repventas_file' => ['label' => 'REP VENTAS', 'accept' => ['xls', 'xlsx']],
                 ];
                 $optionalFiles = [
+                    'mayor_changan_file' => ['label' => 'Mayor CHANGAN', 'accept' => ['txt']],
+                    'mayor_peug_file' => ['label' => 'Mayor PEUGEOT', 'accept' => ['txt']],
+                    'mayor_szk_file' => ['label' => 'Mayor SUZUKI', 'accept' => ['txt']],
+                    'mayor_tyt_file' => ['label' => 'Mayor MATRIZ', 'accept' => ['txt']],
                     'ventas_file' => ['label' => 'VENTAS', 'accept' => ['txt']],
                     'riobamba_file' => ['label' => 'Suzuki Riobamba', 'accept' => ['txt', 'xls', 'xlsx']],
                 ];

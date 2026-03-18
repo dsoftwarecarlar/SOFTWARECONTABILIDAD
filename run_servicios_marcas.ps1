@@ -31,6 +31,18 @@ param(
     [string]$RepVtasPath = '',
 
     [Parameter(Mandatory = $false)]
+    [string]$MayorChanganPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$MayorPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$MayorSzkPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$MayorTytPath = '',
+
+    [Parameter(Mandatory = $false)]
     [string]$VentasPath = '',
 
     [Parameter(Mandatory = $false)]
@@ -445,6 +457,47 @@ function Read-PxRows {
         $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
         if ($detail -eq '') { $detail = 'Node termino sin detalle.' }
         throw ("No se pudo leer el archivo PX. Detalle: {0}" -f $detail)
+    }
+
+    if (-not (Test-Path -LiteralPath $jsonPath)) {
+        return @()
+    }
+
+    $payloadText = Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($payloadText)) {
+        return @()
+    }
+
+    $payload = $payloadText | ConvertFrom-Json
+    if ($null -eq $payload -or $null -eq $payload.rows) {
+        return @()
+    }
+
+    return @($payload.rows)
+}
+
+function Read-MayorRows {
+    param(
+        [string]$MayorPath,
+        [string]$WorkingDirectory
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MayorPath) -or -not (Test-Path -LiteralPath $MayorPath)) {
+        return @()
+    }
+
+    $nodeBinary = Resolve-NodeBinary
+    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'scripts\cxp\servicios_marcas\read_mayor_txt.js') -Label 'read_mayor_txt.js'
+    $jsonPath = Join-Path $WorkingDirectory ("mayor_{0}.json" -f ([Guid]::NewGuid().ToString('N')))
+    if (Test-Path -LiteralPath $jsonPath) {
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $nodeOutput = & $nodeBinary $readerScript '--input' $MayorPath '--output-json' $jsonPath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        if ($detail -eq '') { $detail = 'Node termino sin detalle.' }
+        throw ("No se pudo leer el mayor TXT. Detalle: {0}" -f $detail)
     }
 
     if (-not (Test-Path -LiteralPath $jsonPath)) {
@@ -1733,6 +1786,30 @@ function Clear-Worksheet-UsedRange {
     }
 }
 
+function Clear-Worksheet-RangeContents {
+    param(
+        [object]$Worksheet,
+        [string]$StartColumn = 'A',
+        [int]$StartRow = 1,
+        [string]$EndColumn = 'A',
+        [int]$EndRow = 1
+    )
+
+    if ($null -eq $Worksheet -or $StartRow -gt $EndRow) {
+        return
+    }
+
+    $range = $null
+    try {
+        $range = $Worksheet.Range("${StartColumn}${StartRow}:${EndColumn}${EndRow}")
+        $null = $range.ClearContents()
+    } finally {
+        if ($null -ne $range) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($range)
+        }
+    }
+}
+
 function Write-Rows-ToWorksheet {
     param(
         [object]$Worksheet,
@@ -1765,6 +1842,193 @@ function Write-Rows-ToWorksheet {
             }
             $Worksheet.Cells.Item($StartRow + $r, $StartColumn + $c).Value2 = $value
         }
+    }
+}
+
+function Resolve-MayorPathForBrand {
+    param(
+        [string]$BrandKey,
+        [hashtable]$MayorPaths,
+        [string]$LegacyPath = ''
+    )
+
+    $key = (Normalize-Text $BrandKey).ToLowerInvariant()
+    if ($MayorPaths.ContainsKey($key)) {
+        $specificPath = Normalize-Text $MayorPaths[$key]
+        if ($specificPath -ne '') {
+            return $specificPath
+        }
+    }
+
+    return (Normalize-Text $LegacyPath)
+}
+
+function Get-MayorSheetSectionLayouts {
+    param([object]$Worksheet)
+
+    $layouts = New-Object System.Collections.Generic.List[object]
+    $summaryRanges = New-Object System.Collections.Generic.List[object]
+    $usedRange = $null
+    $lastRow = 0
+    try {
+        $usedRange = $Worksheet.UsedRange
+        $lastRow = [int]($usedRange.Row + $usedRange.Rows.Count - 1)
+    } finally {
+        if ($null -ne $usedRange) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($usedRange)
+        }
+    }
+
+    for ($row = 1; $row -le $lastRow; $row++) {
+        $formulaText = Normalize-Text $Worksheet.Cells.Item($row, 9).Formula
+        if ($formulaText -eq '') {
+            continue
+        }
+
+        $normalizedFormula = $formulaText.ToUpperInvariant().Replace('$', '')
+        if ($normalizedFormula -notmatch 'SUBTOTAL\(9,I(\d+):I(\d+)\)') {
+            continue
+        }
+
+        $summaryRanges.Add([pscustomobject]@{
+            StartRow = [int]$Matches[1]
+            EndRow = [int]$Matches[2]
+        }) | Out-Null
+    }
+
+    if ($summaryRanges.Count -eq 0) {
+        return @()
+    }
+
+    $accountStarts = New-Object System.Collections.Generic.List[object]
+    $seenAccounts = @{}
+    for ($row = 1; $row -le $lastRow; $row++) {
+        $account = Normalize-Text $Worksheet.Cells.Item($row, 1).Text
+        if ($account -notmatch '^\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{4}$' -or $seenAccounts.ContainsKey($account)) {
+            continue
+        }
+
+        $parentRange = $null
+        foreach ($range in $summaryRanges) {
+            if ($row -ge [int]$range.StartRow -and $row -le [int]$range.EndRow) {
+                $parentRange = $range
+                break
+            }
+        }
+
+        if ($null -eq $parentRange) {
+            continue
+        }
+
+        $seenAccounts[$account] = $true
+        $accountStarts.Add([pscustomobject]@{
+            Account = $account
+            Name = Normalize-Text $Worksheet.Cells.Item($row, 2).Text
+            StartRow = [int]$row
+            ParentStartRow = [int]$parentRange.StartRow
+            ParentEndRow = [int]$parentRange.EndRow
+        }) | Out-Null
+    }
+
+    $orderedStarts = @($accountStarts | Sort-Object @{ Expression = { [int]$_.StartRow } })
+    for ($index = 0; $index -lt $orderedStarts.Count; $index++) {
+        $current = $orderedStarts[$index]
+        $endRow = [int]$current.ParentEndRow
+        for ($nextIndex = $index + 1; $nextIndex -lt $orderedStarts.Count; $nextIndex++) {
+            $next = $orderedStarts[$nextIndex]
+            if ([int]$next.ParentStartRow -ne [int]$current.ParentStartRow) {
+                break
+            }
+
+            $endRow = [int]$next.StartRow - 1
+            break
+        }
+
+        $layouts.Add([pscustomobject]@{
+            Account = $current.Account
+            Name = $current.Name
+            StartRow = [int]$current.StartRow
+            EndRow = [int]$endRow
+        }) | Out-Null
+    }
+
+    return $layouts.ToArray()
+}
+
+function Write-MayorDataRow {
+    param(
+        [object]$Worksheet,
+        [int]$TargetRow,
+        [pscustomobject]$MayorRow
+    )
+
+    $null = $Worksheet.Cells.Item($TargetRow, 1).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.account))
+    $null = $Worksheet.Cells.Item($TargetRow, 2).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.name))
+    $null = $Worksheet.Cells.Item($TargetRow, 3).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.ext))
+    Set-DateCellValue -Worksheet $Worksheet -Row $TargetRow -Column 4 -Value $MayorRow.date_value -Context 'MAYOR_FECHA'
+    $null = $Worksheet.Cells.Item($TargetRow, 5).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.origin))
+    $null = $Worksheet.Cells.Item($TargetRow, 6).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.seat))
+    $null = $Worksheet.Cells.Item($TargetRow, 7).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.reference))
+    $null = $Worksheet.Cells.Item($TargetRow, 8).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.detail))
+    Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 9 -Value (To-Number $MayorRow.debit)
+    Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 10 -Value (To-Number $MayorRow.credit)
+    Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 11 -Value (To-Number $MayorRow.balance)
+}
+
+function Write-MayorRows-ToWorksheet {
+    param(
+        [object]$Worksheet,
+        [object[]]$Rows,
+        [string]$BrandKey = ''
+    )
+
+    $layouts = @(Get-MayorSheetSectionLayouts -Worksheet $Worksheet)
+    if ($layouts.Count -eq 0) {
+        throw "La hoja $($Worksheet.Name) no tiene secciones SUBTOTAL reconocibles para cargar el mayor."
+    }
+
+    $rowsByAccount = @{}
+    foreach ($row in @($Rows)) {
+        $account = Normalize-Text $row.account
+        if ($account -eq '') {
+            continue
+        }
+
+        if (-not $rowsByAccount.ContainsKey($account)) {
+            $rowsByAccount[$account] = New-Object System.Collections.Generic.List[object]
+        }
+
+        $rowsByAccount[$account].Add($row) | Out-Null
+    }
+
+    $knownAccounts = @{}
+    $writtenCount = 0
+    foreach ($layout in $layouts) {
+        $knownAccounts[$layout.Account] = $true
+        Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'A' -StartRow $layout.StartRow -EndColumn 'M' -EndRow $layout.EndRow
+        $accountRows = if ($rowsByAccount.ContainsKey($layout.Account)) { @($rowsByAccount[$layout.Account]) } else { @() }
+        $capacity = [int]($layout.EndRow - $layout.StartRow + 1)
+        if ($accountRows.Count -gt $capacity) {
+            throw ("El mayor para {0} excede la capacidad de la seccion {1} en {2}. Capacidad={3}, filas={4}" -f $BrandKey, $layout.Account, $Worksheet.Name, $capacity, $accountRows.Count)
+        }
+
+        $targetRow = [int]$layout.StartRow
+        foreach ($accountRow in $accountRows) {
+            Write-MayorDataRow -Worksheet $Worksheet -TargetRow $targetRow -MayorRow $accountRow
+            $targetRow++
+            $writtenCount++
+        }
+    }
+
+    foreach ($account in $rowsByAccount.Keys) {
+        if (-not $knownAccounts.ContainsKey($account)) {
+            Write-Output ("WARN|mayor_account_unmapped|{0}|{1}|sheet={2}" -f $BrandKey, $account, $Worksheet.Name)
+        }
+    }
+
+    return [pscustomobject]@{
+        RowCount = $writtenCount
+        SectionCount = $layouts.Count
     }
 }
 
@@ -2708,6 +2972,13 @@ $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocumen
     throw
 }
 
+$mayorPaths = @{
+    changan = $MayorChanganPath
+    peug = $MayorPeugPath
+    szk = $MayorSzkPath
+    tyt = $MayorTytPath
+}
+
 $templateConfigs = @{
     changan = @{
         Label = 'CHANGAN'
@@ -2811,24 +3082,21 @@ try {
             $pxSheet = $null
             try { $pxSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PX') } catch {}
             if ($null -ne $pxSheet) {
-                Clear-Worksheet-UsedRange -Worksheet $pxSheet
                 $pxRows = Read-PxRows -PxPath $PxPath -BrandKey $templateKey -WorkingDirectory $stagingDirectory
-                Write-Rows-ToWorksheet -Worksheet $pxSheet -Rows $pxRows -StartRow 1 -StartColumn 1
+                Clear-Worksheet-RangeContents -Worksheet $pxSheet -StartColumn 'A' -StartRow 6 -EndColumn 'R' -EndRow 65536
+                Write-Rows-ToWorksheet -Worksheet $pxSheet -Rows $pxRows -StartRow 6 -StartColumn 1
             }
 
-            $ventasSheet = $null
-            try { $ventasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('VENTAS') } catch {}
-            if ($null -ne $ventasSheet) {
-                Clear-Worksheet-UsedRange -Worksheet $ventasSheet
-                $ventasRows = Read-TabRows -Path $VentasPath
-                Write-Rows-ToWorksheet -Worksheet $ventasSheet -Rows $ventasRows -StartRow 1 -StartColumn 1
-            }
-
-            foreach ($preSheetName in @('PRECONTABILIZACION VENTAS', 'PRECONTABILIZACION COSTOS', 'PRECONTABILIZACIÓN VENTAS', 'PRECONTABILIZACIÓN COSTOS')) {
-                $preSheet = $null
-                try { $preSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @($preSheetName) } catch {}
-                if ($null -ne $preSheet) {
-                    Clear-Worksheet-UsedRange -Worksheet $preSheet
+            $mayorSheet = $null
+            try { $mayorSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('VENTAS', 'MAY VTAS') } catch {}
+            if ($null -ne $mayorSheet) {
+                $mayorPath = Resolve-MayorPathForBrand -BrandKey $templateKey -MayorPaths $mayorPaths -LegacyPath $VentasPath
+                if (-not [string]::IsNullOrWhiteSpace($mayorPath) -and (Test-Path -LiteralPath $mayorPath)) {
+                    $mayorRows = Read-MayorRows -MayorPath $mayorPath -WorkingDirectory $stagingDirectory
+                    $mayorResult = Write-MayorRows-ToWorksheet -Worksheet $mayorSheet -Rows $mayorRows -BrandKey $templateKey
+                    Write-Output ("INFO|mayor|{0}|rows={1}|sections={2}" -f $templateKey, $mayorResult.RowCount, $mayorResult.SectionCount)
+                } else {
+                    Write-Output ("WARN|mayor_missing|{0}|template_sheet_preserved" -f $templateKey)
                 }
             }
 

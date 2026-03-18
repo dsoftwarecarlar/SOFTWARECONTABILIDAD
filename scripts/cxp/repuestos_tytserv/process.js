@@ -8,7 +8,7 @@ const AdmZip = require("adm-zip");
 const { sanitizeText } = require("../shared/core-utils");
 
 const REP_MAX_COLUMN = 41;
-const NC_MAX_COLUMN = 31;
+const NC_MAX_COLUMN = 42;
 const REP_DETAIL_START_ROW = 11;
 const NC_DETAIL_START_ROW = 8;
 const MAYOR_IVA_START_ROW = 299;
@@ -21,13 +21,37 @@ const REP_TEXT_COLUMNS = new Set([
   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
   37, 38, 39, 40, 41,
 ]);
-const NC_TOTAL_COLUMNS = [22, 23, 24, 25, 26, 27, 28, 30];
+const NC_TOTAL_COLUMNS = [22, 23, 24, 25, 26, 27, 28, 30, 32, 33, 34, 36, 37, 39, 40];
 
 const SHEET_CONFIGS = [
-  { key: "tyt", label: "MATRIZ", argKeys: ["inputtyt", "input-tyt"], targetSheet: "REP TYT" },
-  { key: "peug", label: "PEUGEOT", argKeys: ["inputpeug", "input-peug"], targetSheet: "REP PEUGT" },
-  { key: "chgn", label: "CHANGAN", argKeys: ["inputchgn", "input-chgn"], targetSheet: "REP CHGN" },
-  { key: "szk", label: "SUZUKI", argKeys: ["inputszk", "input-szk"], targetSheet: "REP SZK" },
+  {
+    key: "tyt",
+    label: "MATRIZ",
+    argKeys: ["inputtyt", "input-tyt"],
+    ncArgKeys: ["inputnctyt", "input-nc-tyt"],
+    targetSheet: "REP TYT",
+  },
+  {
+    key: "peug",
+    label: "PEUGEOT",
+    argKeys: ["inputpeug", "input-peug"],
+    ncArgKeys: ["inputncpeug", "input-nc-peug"],
+    targetSheet: "REP PEUGT",
+  },
+  {
+    key: "chgn",
+    label: "CHANGAN",
+    argKeys: ["inputchgn", "input-chgn"],
+    ncArgKeys: ["inputncchgn", "input-nc-chgn"],
+    targetSheet: "REP CHGN",
+  },
+  {
+    key: "szk",
+    label: "SUZUKI",
+    argKeys: ["inputszk", "input-szk"],
+    ncArgKeys: ["inputncszk", "input-nc-szk"],
+    targetSheet: "REP SZK",
+  },
 ];
 
 const MY_LAYOUTS = {
@@ -375,6 +399,140 @@ function readSourceSheet(sourcePath, label) {
   };
 }
 
+function assertNcSourceWorksheet(sheet, label) {
+  const checks = [
+    { row: 7, column: 9, needle: "N/C No." },
+    { row: 7, column: 10, needle: "DEV. A FAC." },
+    { row: 7, column: 11, needle: "DESCRIPCION" },
+    { row: 7, column: 14, needle: "FECHA FACT" },
+    { row: 7, column: 23, needle: "SUBTOT" },
+    { row: 7, column: 36, needle: "TOT. NC" },
+    { row: 7, column: 41, needle: "ASIENTO" },
+  ];
+
+  for (const check of checks) {
+    const actual = sourceCellText(sheet, check.row, check.column).toUpperCase();
+    const expected = normalizeText(check.needle).toUpperCase();
+    if (!actual.includes(expected)) {
+      throw new Error(
+        `La hoja fuente ${label} no coincide con la estructura esperada en fila ${check.row} columna ${check.column}. Esperado contiene '${check.needle}' y llego '${actual}'.`,
+      );
+    }
+  }
+}
+
+function extractSheetLabelDate(sheet, needle, startRow = 1, endRow = 12, lastColumn = NC_MAX_COLUMN) {
+  const expected = normalizeText(needle).toUpperCase();
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let column = 1; column <= lastColumn; column += 1) {
+      const text = sourceLiteralText(getSourceCell(sheet, row, column));
+      if (normalizeText(text).toUpperCase().includes(expected)) {
+        const match = text.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+        if (match) {
+          return convertDateValue(match[1], match[1]);
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function findNcSourceTotalRow(sheet) {
+  const maxRow = Math.max(200, getSourceLastRow(sheet) + 10);
+  for (let row = 1; row <= maxRow; row += 1) {
+    if (sourceRowHasNeedle(sheet, row, "TOTAL GENERAL", NC_MAX_COLUMN)) {
+      return row;
+    }
+  }
+
+  return getSourceLastRow(sheet);
+}
+
+function getNcSourceDateRange(sheet) {
+  const startDate = extractSheetLabelDate(sheet, "FECHA INICIAL");
+  const endDate = extractSheetLabelDate(sheet, "FECHA FINAL");
+  if (startDate instanceof Date && !Number.isNaN(startDate.getTime()) && endDate instanceof Date && !Number.isNaN(endDate.getTime())) {
+    return {
+      minDate: startDate,
+      maxDate: endDate,
+    };
+  }
+
+  const totalRow = findNcSourceTotalRow(sheet);
+  let minDate = null;
+  let maxDate = null;
+  for (let row = NC_DETAIL_START_ROW; row < totalRow; row += 1) {
+    const rawValue = getSourceCell(sheet, row, 4)?.v ?? null;
+    const rawText = sourceLiteralText(getSourceCell(sheet, row, 4));
+    const resolved = convertDateValue(rawValue, rawText);
+    if (!(resolved instanceof Date) || Number.isNaN(resolved.getTime())) {
+      continue;
+    }
+
+    if (!minDate || resolved < minDate) {
+      minDate = resolved;
+    }
+    if (!maxDate || resolved > maxDate) {
+      maxDate = resolved;
+    }
+  }
+
+  return { minDate, maxDate };
+}
+
+function readNcSourceSheet(sourcePath, label) {
+  const workbook = XLSX.readFile(sourcePath, {
+    cellDates: true,
+    cellFormula: true,
+    cellNF: true,
+    cellText: true,
+    sheetStubs: true,
+  });
+
+  if (!Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
+    return {
+      path: sourcePath,
+      label,
+      sheetName: "",
+      sheet: null,
+      lastRow: 0,
+      totalRow: 0,
+      rowCount: 0,
+      dateRange: { minDate: null, maxDate: null },
+    };
+  }
+
+  const preferredName = workbook.SheetNames.find(
+    (sheetName) => normalizeText(sheetName).toUpperCase() === "REPLIBRODEVOLUCIONESGENERAL",
+  );
+  const sheetName = preferredName || "";
+  if (!sheetName) {
+    throw new Error(
+      `El archivo fuente ${label} debe contener la hoja 'RepLibroDevolucionesGeneral'. No se aceptan plantillas ni salidas ya generadas.`,
+    );
+  }
+
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) {
+    throw new Error(`No se pudo abrir la hoja de ${label} dentro del archivo ${sourcePath}.`);
+  }
+
+  assertNcSourceWorksheet(sheet, label);
+  const totalRow = findNcSourceTotalRow(sheet);
+
+  return {
+    path: sourcePath,
+    label,
+    sheetName,
+    sheet,
+    lastRow: getSourceLastRow(sheet),
+    totalRow,
+    rowCount: Math.max(0, totalRow - NC_DETAIL_START_ROW),
+    dateRange: getNcSourceDateRange(sheet),
+  };
+}
+
 function isMergedSlave(cell) {
   return !!(cell.isMerged && cell.master && cell.master.address !== cell.address);
 }
@@ -650,6 +808,26 @@ function copyRowStyle(worksheet, sourceRowNumber, targetRowNumber, lastColumn = 
   }
 }
 
+function copyRowStyleBetweenWorksheets(
+  sourceWorksheet,
+  targetWorksheet,
+  sourceRowNumber,
+  targetRowNumber,
+  lastColumn = REP_MAX_COLUMN,
+) {
+  const sourceRow = sourceWorksheet.getRow(sourceRowNumber);
+  const targetRow = targetWorksheet.getRow(targetRowNumber);
+  if (sourceRow.height) {
+    targetRow.height = sourceRow.height;
+  }
+  targetRow.hidden = sourceRow.hidden === true;
+  targetRow.outlineLevel = sourceRow.outlineLevel || 0;
+
+  for (let column = 1; column <= lastColumn; column += 1) {
+    copyCellStyle(sourceRow.getCell(column), targetRow.getCell(column));
+  }
+}
+
 function cloneCellValuePreservingDates(value) {
   if (value == null) {
     return value;
@@ -678,6 +856,27 @@ function copyRowValues(worksheet, sourceRowNumber, targetRowNumber, lastColumn) 
   const sourceRow = worksheet.getRow(sourceRowNumber);
   const targetRow = worksheet.getRow(targetRowNumber);
   clearWorksheetRange(worksheet, targetRowNumber, targetRowNumber, 1, lastColumn);
+
+  for (let column = 1; column <= lastColumn; column += 1) {
+    const sourceCell = sourceRow.getCell(column);
+    const targetCell = targetRow.getCell(column);
+    if (isMergedSlave(targetCell)) {
+      continue;
+    }
+    targetCell.value = cloneCellValuePreservingDates(sourceCell.value);
+  }
+}
+
+function copyRowValuesBetweenWorksheets(
+  sourceWorksheet,
+  targetWorksheet,
+  sourceRowNumber,
+  targetRowNumber,
+  lastColumn,
+) {
+  const sourceRow = sourceWorksheet.getRow(sourceRowNumber);
+  const targetRow = targetWorksheet.getRow(targetRowNumber);
+  clearWorksheetRange(targetWorksheet, targetRowNumber, targetRowNumber, 1, lastColumn);
 
   for (let column = 1; column <= lastColumn; column += 1) {
     const sourceCell = sourceRow.getCell(column);
@@ -1218,6 +1417,850 @@ function buildRepLookup(sourceSheet, key) {
   }
 
   return lookup;
+}
+
+function getNcAgencyName(key, agency, bodega = "") {
+  const normalizedAgency = normalizeText(agency);
+  const normalizedBodega = normalizeText(bodega).toUpperCase();
+  switch (key) {
+    case "tyt":
+      return "MATRIZ";
+    case "peug":
+      return "PEUGEOT";
+    case "chgn":
+      return "CHANGAN";
+    case "szk":
+      if (normalizedAgency === "08" || normalizedBodega === "SZRR") {
+        return "SUZUKI RIOBAMBA";
+      }
+      return "SUZUKI AMBATO";
+    default:
+      return "";
+  }
+}
+
+function buildRepSourceRecords(sourceSheet, key) {
+  const records = [];
+  const totalRow = findSourceTotalRow(sourceSheet);
+
+  for (let row = REP_DETAIL_START_ROW; row < totalRow; row += 1) {
+    const form = normalizeText(sourceCellText(sourceSheet, row, 40)).toUpperCase();
+    const seat = normalizeText(sourceCellText(sourceSheet, row, 38));
+    const document = normalizeDocNumber(sourceLiteralText(getSourceCell(sourceSheet, row, 5)));
+    if (document === "" || seat === "" || seat === "ASIENTO" || (form !== "CONTADO" && form !== "CREDITO")) {
+      continue;
+    }
+
+    const rawDateValue = getSourceCell(sourceSheet, row, 3)?.v ?? null;
+    const dateText = sourceLiteralText(getSourceCell(sourceSheet, row, 3));
+    const dateValue = convertDateValue(rawDateValue, dateText);
+    const agency = normalizeText(sourceLiteralText(getSourceCell(sourceSheet, row, 39)));
+    const bodega = sourceLiteralText(getSourceCell(sourceSheet, row, 2));
+
+    records.push({
+      rowNumber: row,
+      anulada: sourceLiteralText(getSourceCell(sourceSheet, row, 1)),
+      bodega,
+      dateText,
+      dateValue,
+      document,
+      series: sourceLiteralText(getSourceCell(sourceSheet, row, 6)),
+      authorization: sourceLiteralText(getSourceCell(sourceSheet, row, 8)),
+      ruc: sourceLiteralText(getSourceCell(sourceSheet, row, 9)),
+      clientCode: sourceLiteralText(getSourceCell(sourceSheet, row, 10)),
+      clientName: sourceLiteralText(getSourceCell(sourceSheet, row, 11)),
+      publicClient: sourceLiteralText(getSourceCell(sourceSheet, row, 13)),
+      item: sourceLiteralText(getSourceCell(sourceSheet, row, 16)),
+      subTotal: sourceCellNumber(sourceSheet, row, 18),
+      discount: sourceCellNumber(sourceSheet, row, 20),
+      net: sourceCellNumber(sourceSheet, row, 22),
+      withoutVat: sourceCellNumber(sourceSheet, row, 23),
+      withVat: sourceCellNumber(sourceSheet, row, 24),
+      ecoValue: sourceCellNumber(sourceSheet, row, 25),
+      vat: sourceCellNumber(sourceSheet, row, 26),
+      otherCharges: sourceCellNumber(sourceSheet, row, 27),
+      transport: sourceCellNumber(sourceSheet, row, 28),
+      interest: sourceCellNumber(sourceSheet, row, 29),
+      total: sourceCellNumber(sourceSheet, row, 30),
+      advance: sourceCellNumber(sourceSheet, row, 31),
+      balance: sourceCellNumber(sourceSheet, row, 32),
+      cost: sourceCellNumber(sourceSheet, row, 33),
+      seat,
+      agency,
+      agencyLabel: getNcAgencyName(key, agency, bodega),
+      form,
+      detail: getRepDetailName(key, agency),
+    });
+  }
+
+  return records;
+}
+
+function buildNcSignature(record) {
+  return [
+    record.detail,
+    roundAmount(record.subTotal, 2),
+    roundAmount(record.discount, 2),
+    roundAmount(record.net, 2),
+    roundAmount(record.vat, 2),
+    roundAmount(record.total, 2),
+  ].join("|");
+}
+
+function buildNcGroupsFromCandidates(candidates, key) {
+  const discountCredit = {};
+  const devol = {};
+  const vat = {};
+
+  for (const candidate of candidates) {
+    const current = candidate.current;
+    const form = candidate.form;
+    const seat = current.seat || "";
+    const detail = current.detail || "";
+    const dateValue = current.dateValue || null;
+    const dateText = current.dateText || "";
+
+    const discountAccount = getPostingAccount(key, "discount", form);
+    if (discountAccount !== "" && seat !== "" && detail !== "") {
+      addGroupedAmount(
+        discountCredit,
+        `${discountAccount}|${seat}|${detail}`,
+        current.discount,
+        dateValue,
+        dateText,
+        seat,
+        detail,
+      );
+    }
+
+    const devolAccount = getDevolAccount(key, form);
+    if (devolAccount !== "" && seat !== "" && detail !== "") {
+      addGroupedAmount(
+        devol,
+        `${devolAccount}|${seat}|${detail}`,
+        current.subTotal,
+        dateValue,
+        dateText,
+        seat,
+        detail,
+      );
+    }
+
+    if (seat !== "" && detail !== "") {
+      addGroupedAmount(vat, `${seat}|${detail}`, current.vat, dateValue, dateText, seat, detail);
+    }
+  }
+
+  return { discountCredit, devol, vat };
+}
+
+function buildNcResultFromSource(sourceSheet, key) {
+  const records = buildRepSourceRecords(sourceSheet, key);
+  const candidates = [];
+  const signatureMap = new Map();
+
+  for (const record of records) {
+    const signature = buildNcSignature(record);
+    const previousMatches = signatureMap.get(signature) || [];
+    if (record.form === "CREDITO" && Math.abs(record.discount) >= 0.0000001) {
+      const original = [...previousMatches].reverse().find((entry) => entry.document !== record.document) || null;
+      if (original) {
+        candidates.push({
+          current: record,
+          original,
+          form: original.form || record.form,
+        });
+      }
+    }
+
+    if (!signatureMap.has(signature)) {
+      signatureMap.set(signature, []);
+    }
+    signatureMap.get(signature).push(record);
+  }
+
+  return {
+    candidates,
+    groups: buildNcGroupsFromCandidates(candidates, key),
+  };
+}
+
+function buildNcRowsFromSourceSheet(sourceSheet, key) {
+  if (!sourceSheet) {
+    return [];
+  }
+
+  const totalRow = findNcSourceTotalRow(sourceSheet);
+  const rows = [];
+
+  for (let row = NC_DETAIL_START_ROW; row < totalRow; row += 1) {
+    const ncNumber = normalizeDocNumber(sourceLiteralText(getSourceCell(sourceSheet, row, 9)));
+    const originalDoc = normalizeDocNumber(sourceLiteralText(getSourceCell(sourceSheet, row, 10)));
+    const description = sourceLiteralText(getSourceCell(sourceSheet, row, 11));
+    const subTotal = sourceCellNumber(sourceSheet, row, 23);
+    const total = sourceCellNumber(sourceSheet, row, 36);
+    if (ncNumber === "" && originalDoc === "" && description === "" && Math.abs(subTotal) < 0.0000001 && Math.abs(total) < 0.0000001) {
+      continue;
+    }
+
+    const agency = sourceLiteralText(getSourceCell(sourceSheet, row, 5));
+    const bodega = sourceLiteralText(getSourceCell(sourceSheet, row, 3));
+    const ncDateText = sourceLiteralText(getSourceCell(sourceSheet, row, 4));
+    const factDateText = sourceLiteralText(getSourceCell(sourceSheet, row, 14));
+
+    rows.push({
+      rowNumber: row,
+      anulada: sourceLiteralText(getSourceCell(sourceSheet, row, 2)),
+      bodega,
+      ncDateText,
+      ncDateValue: convertDateValue(getSourceCell(sourceSheet, row, 4)?.v ?? null, ncDateText),
+      agency,
+      agencyLabel: sourceLiteralText(getSourceCell(sourceSheet, row, 6)),
+      series: sourceLiteralText(getSourceCell(sourceSheet, row, 8)),
+      ncNumber,
+      originalDoc,
+      description,
+      authorization: sourceLiteralText(getSourceCell(sourceSheet, row, 12)),
+      factDateText,
+      factDateValue: convertDateValue(getSourceCell(sourceSheet, row, 14)?.v ?? null, factDateText),
+      factTotal: sourceCellNumber(sourceSheet, row, 15),
+      ruc: sourceLiteralText(getSourceCell(sourceSheet, row, 16)),
+      clientCode: sourceLiteralText(getSourceCell(sourceSheet, row, 18)),
+      clientName: sourceLiteralText(getSourceCell(sourceSheet, row, 20)),
+      publicClient: sourceLiteralText(getSourceCell(sourceSheet, row, 21)),
+      item: sourceLiteralText(getSourceCell(sourceSheet, row, 22)),
+      subTotal,
+      discount: sourceCellNumber(sourceSheet, row, 24),
+      net: sourceCellNumber(sourceSheet, row, 25),
+      withoutVat: sourceCellNumber(sourceSheet, row, 26),
+      withVat: sourceCellNumber(sourceSheet, row, 27),
+      ecoValue: sourceCellNumber(sourceSheet, row, 28),
+      vat: sourceCellNumber(sourceSheet, row, 30),
+      otherCharges: sourceCellNumber(sourceSheet, row, 32),
+      interest: sourceCellNumber(sourceSheet, row, 33),
+      transport: sourceCellNumber(sourceSheet, row, 34),
+      total,
+      advance: sourceCellNumber(sourceSheet, row, 37),
+      balance: sourceCellNumber(sourceSheet, row, 38),
+      cost: sourceCellNumber(sourceSheet, row, 39),
+      utility: sourceCellNumber(sourceSheet, row, 40),
+      seat: sourceLiteralText(getSourceCell(sourceSheet, row, 41)),
+      paymentForm: sourceLiteralText(getSourceCell(sourceSheet, row, 42)),
+      form: inferFormFromDescription(description),
+      detail: getRepDetailName(key, agency || bodega),
+    });
+  }
+
+  return rows;
+}
+
+function buildNcGroupsFromSourceRows(rows, key) {
+  const discountCredit = {};
+  const devol = {};
+  const vat = {};
+
+  for (const row of rows) {
+    const form = row.form || inferFormFromDescription(row.description || "");
+    const seat = row.seat || "";
+    const detail = row.detail || getRepDetailName(key, row.agency || row.bodega);
+    const dateValue = row.ncDateValue || row.factDateValue || null;
+    const dateText = row.ncDateText || row.factDateText || "";
+
+    const discountAccount = getPostingAccount(key, "discount", form);
+    if (discountAccount !== "" && seat !== "" && detail !== "") {
+      addGroupedAmount(
+        discountCredit,
+        `${discountAccount}|${seat}|${detail}`,
+        row.discount,
+        dateValue,
+        dateText,
+        seat,
+        detail,
+      );
+    }
+
+    const devolAccount = getDevolAccount(key, form);
+    if (devolAccount !== "" && seat !== "" && detail !== "") {
+      addGroupedAmount(
+        devol,
+        `${devolAccount}|${seat}|${detail}`,
+        row.subTotal,
+        dateValue,
+        dateText,
+        seat,
+        detail,
+      );
+    }
+
+    if (seat !== "" && detail !== "") {
+      addGroupedAmount(vat, `${seat}|${detail}`, row.vat, dateValue, dateText, seat, detail);
+    }
+  }
+
+  return { discountCredit, devol, vat };
+}
+
+function buildNcResultFromNcSource(ncSourceData, key) {
+  const rows = buildNcRowsFromSourceSheet(ncSourceData?.sheet || null, key);
+  return {
+    rows,
+    groups: buildNcGroupsFromSourceRows(rows, key),
+  };
+}
+
+function getWorksheetDateParts(worksheet, rowNumber, columnNumber) {
+  const dateCell = worksheet.getRow(rowNumber).getCell(columnNumber).value;
+  const dateText = getWorksheetCellText(worksheet, rowNumber, columnNumber);
+  return {
+    dateValue: convertDateValue(dateCell, dateText),
+    dateText,
+  };
+}
+
+function sameRoundedAmount(left, right, decimals = 2) {
+  return Math.abs(roundAmount(left, decimals) - roundAmount(right, decimals)) < 0.0000001;
+}
+
+function matchesNcFinancialSignature(record, templateEntry) {
+  return sameRoundedAmount(record.subTotal, templateEntry.subTotal)
+    && sameRoundedAmount(record.discount, templateEntry.discount)
+    && sameRoundedAmount(record.net, templateEntry.net)
+    && sameRoundedAmount(record.vat, templateEntry.vat)
+    && sameRoundedAmount(record.total, templateEntry.total);
+}
+
+function getDateDistanceDays(left, right) {
+  if (!(left instanceof Date) || Number.isNaN(left.getTime()) || !(right instanceof Date) || Number.isNaN(right.getTime())) {
+    return 9999;
+  }
+
+  const leftMidnight = new Date(left.getFullYear(), left.getMonth(), left.getDate()).getTime();
+  const rightMidnight = new Date(right.getFullYear(), right.getMonth(), right.getDate()).getTime();
+  return Math.abs(Math.round((leftMidnight - rightMidnight) / 86400000));
+}
+
+function buildTemplateNcRows(templateWorkbook, key) {
+  const sheetName = getNcSheetName(key);
+  const worksheet = sheetName ? templateWorkbook.getWorksheet(sheetName) : null;
+  if (!worksheet) {
+    return [];
+  }
+
+  const totalRow = findWorksheetRowContaining(
+    worksheet,
+    "TOTAL GENERAL",
+    1,
+    Math.max(200, (worksheet.rowCount || 0) + 20),
+    NC_MAX_COLUMN,
+  ) || NC_DETAIL_START_ROW;
+
+  const rows = [];
+  for (let row = NC_DETAIL_START_ROW; row < totalRow; row += 1) {
+    const description = getWorksheetCellText(worksheet, row, 11);
+    const subTotal = getWorksheetCellNumber(worksheet, row, 23);
+    const total = getWorksheetCellNumber(worksheet, row, 36);
+    const originalDoc = normalizeDocNumber(getWorksheetCellText(worksheet, row, 10));
+    if (description === "" && originalDoc === "" && Math.abs(subTotal) < 0.0000001 && Math.abs(total) < 0.0000001) {
+      continue;
+    }
+
+    const ncDate = getWorksheetDateParts(worksheet, row, 4);
+    const factDate = getWorksheetDateParts(worksheet, row, 14);
+    rows.push({
+      rowNumber: row,
+      bodega: getWorksheetCellText(worksheet, row, 3),
+      agencyCode: getWorksheetCellText(worksheet, row, 5),
+      agencyLabel: getWorksheetCellText(worksheet, row, 6),
+      series: getWorksheetCellText(worksheet, row, 8),
+      ncNumber: normalizeDocNumber(getWorksheetCellText(worksheet, row, 9)),
+      originalDoc,
+      description,
+      authorization: getWorksheetCellText(worksheet, row, 12),
+      ncDateValue: ncDate.dateValue,
+      ncDateText: ncDate.dateText,
+      factDateValue: factDate.dateValue,
+      factDateText: factDate.dateText,
+      form: inferFormFromDescription(description),
+      templateSeat: getWorksheetCellText(worksheet, row, 41),
+      subTotal,
+      discount: getWorksheetCellNumber(worksheet, row, 24),
+      net: getWorksheetCellNumber(worksheet, row, 25),
+      withoutVat: getWorksheetCellNumber(worksheet, row, 26),
+      withVat: getWorksheetCellNumber(worksheet, row, 27),
+      ecoValue: getWorksheetCellNumber(worksheet, row, 28),
+      vat: getWorksheetCellNumber(worksheet, row, 30),
+      otherCharges: getWorksheetCellNumber(worksheet, row, 32),
+      interest: getWorksheetCellNumber(worksheet, row, 33),
+      transport: getWorksheetCellNumber(worksheet, row, 34),
+      total,
+      advance: getWorksheetCellNumber(worksheet, row, 37),
+      balance: getWorksheetCellNumber(worksheet, row, 38),
+      cost: getWorksheetCellNumber(worksheet, row, 39),
+      utility: getWorksheetCellNumber(worksheet, row, 40),
+    });
+  }
+
+  return rows;
+}
+
+function chooseBestTemplateNcSourceRecord(templateEntry, records) {
+  const matches = records.filter((record) => matchesNcFinancialSignature(record, templateEntry));
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const ranked = [...matches].sort((left, right) => {
+    const leftSameNcDate = sameCalendarDate(left.dateValue, templateEntry.ncDateValue) ? 0 : 1;
+    const rightSameNcDate = sameCalendarDate(right.dateValue, templateEntry.ncDateValue) ? 0 : 1;
+    const leftSameOriginalDoc = templateEntry.originalDoc !== "" && left.document === templateEntry.originalDoc ? 0 : 1;
+    const rightSameOriginalDoc = templateEntry.originalDoc !== "" && right.document === templateEntry.originalDoc ? 0 : 1;
+    const leftSameForm = templateEntry.form !== "" && left.form === templateEntry.form ? 0 : 1;
+    const rightSameForm = templateEntry.form !== "" && right.form === templateEntry.form ? 0 : 1;
+    const leftDistance = getDateDistanceDays(left.dateValue, templateEntry.ncDateValue || templateEntry.factDateValue);
+    const rightDistance = getDateDistanceDays(right.dateValue, templateEntry.ncDateValue || templateEntry.factDateValue);
+    return leftSameNcDate - rightSameNcDate
+      || leftSameOriginalDoc - rightSameOriginalDoc
+      || leftSameForm - rightSameForm
+      || leftDistance - rightDistance
+      || left.rowNumber - right.rowNumber;
+  });
+
+  return ranked[0] || null;
+}
+
+function findOriginalNcSourceRecord(templateEntry, dataSource, records) {
+  if (templateEntry.originalDoc !== "") {
+    const byDocument = records.find((record) => record.document === templateEntry.originalDoc) || null;
+    if (byDocument) {
+      return byDocument;
+    }
+  }
+
+  if (dataSource) {
+    const previous = records
+      .filter(
+        (record) => record.rowNumber < dataSource.rowNumber
+          && record.document !== dataSource.document
+          && matchesNcFinancialSignature(record, templateEntry),
+      )
+      .sort((left, right) => right.rowNumber - left.rowNumber);
+    if (previous.length > 0) {
+      return previous[0];
+    }
+  }
+
+  return dataSource || null;
+}
+
+function buildNcGroupsFromResolvedRows(resolvedRows, key) {
+  const discountCredit = {};
+  const devol = {};
+  const vat = {};
+
+  for (const row of resolvedRows) {
+    const dataSource = row.dataSource || row.originalSource;
+    if (!dataSource) {
+      continue;
+    }
+
+    const form = row.form || inferFormFromDescription(row.description || "");
+    const seat = row.templateSeat || dataSource.seat || "";
+    const detail = dataSource.detail || getRepDetailName(key, row.agencyCode || dataSource.agency);
+    const dateValue = row.ncDateValue || dataSource.dateValue || null;
+    const dateText = row.ncDateText || dataSource.dateText || "";
+
+    const discountAccount = getPostingAccount(key, "discount", form);
+    if (discountAccount !== "" && seat !== "" && detail !== "") {
+      addGroupedAmount(
+        discountCredit,
+        `${discountAccount}|${seat}|${detail}`,
+        dataSource.discount,
+        dateValue,
+        dateText,
+        seat,
+        detail,
+      );
+    }
+
+    const devolAccount = getDevolAccount(key, form);
+    if (devolAccount !== "" && seat !== "" && detail !== "") {
+      addGroupedAmount(
+        devol,
+        `${devolAccount}|${seat}|${detail}`,
+        dataSource.subTotal,
+        dateValue,
+        dateText,
+        seat,
+        detail,
+      );
+    }
+
+    if (seat !== "" && detail !== "") {
+      addGroupedAmount(vat, `${seat}|${detail}`, dataSource.vat, dateValue, dateText, seat, detail);
+    }
+  }
+
+  return { discountCredit, devol, vat };
+}
+
+function buildNcResultFromTemplate(templateWorkbook, sourceSheet, key) {
+  const records = buildRepSourceRecords(sourceSheet, key);
+  const templateRows = buildTemplateNcRows(templateWorkbook, key);
+  const resolvedRows = templateRows
+    .map((templateEntry) => {
+      const dataSource = chooseBestTemplateNcSourceRecord(templateEntry, records);
+      if (!dataSource) {
+        return null;
+      }
+
+      const originalSource = findOriginalNcSourceRecord(templateEntry, dataSource, records);
+      return {
+        ...templateEntry,
+        dataSource,
+        originalSource: originalSource || dataSource,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    rows: resolvedRows,
+    groups: buildNcGroupsFromResolvedRows(resolvedRows, key),
+  };
+}
+
+function ensureNcDetailCapacity(worksheet, requiredLastDetailRow) {
+  const searchEndRow = Math.max(200, (worksheet.rowCount || 0) + 20);
+  const totalRow = findWorksheetRowContaining(worksheet, "TOTAL GENERAL", 1, searchEndRow, NC_MAX_COLUMN);
+  if (!totalRow) {
+    throw new Error(`No se encontro la fila TOTAL GENERAL en la hoja ${worksheet.name}.`);
+  }
+
+  const mayorRow = findWorksheetRowContaining(worksheet, "MAYOR", totalRow, searchEndRow, NC_MAX_COLUMN) || (totalRow + 1);
+  const currentLastDetailRow = totalRow - 1;
+  if (requiredLastDetailRow <= currentLastDetailRow) {
+    return { totalRow, mayorRow };
+  }
+
+  const extraRows = requiredLastDetailRow - currentLastDetailRow;
+  const detailTemplateRow = Math.max(NC_DETAIL_START_ROW, currentLastDetailRow);
+  const detailMerges = getRowMergeDefinitions(worksheet, detailTemplateRow);
+  worksheet.insertRows(totalRow, Array.from({ length: extraRows }, () => []), "n");
+
+  for (let index = 0; index < extraRows; index += 1) {
+    const rowNumber = totalRow + index;
+    copyRowStyle(worksheet, detailTemplateRow, rowNumber, NC_MAX_COLUMN);
+    applyRowMergeDefinitions(worksheet, rowNumber, detailMerges);
+  }
+
+  return {
+    totalRow: totalRow + extraRows,
+    mayorRow: mayorRow + extraRows,
+  };
+}
+
+function buildNcDateDisplayValue(dateValue, fallbackText = "") {
+  const text = normalizeText(fallbackText)
+    || ((dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) ? formatDateDDMMYYYY(dateValue) : "");
+  if (text === "") {
+    return null;
+  }
+
+  return {
+    richText: [
+      {
+        font: { size: 7, name: "Arial", family: 2 },
+        text,
+      },
+    ],
+  };
+}
+
+function writeNcCandidateRow(worksheet, rowNumber, candidate) {
+  const row = worksheet.getRow(rowNumber);
+  const current = candidate.current;
+  const original = candidate.original;
+  const form = candidate.form;
+  const utility = roundAmount(roundAmount(current.total, 2) - roundAmount(current.cost, 2), 2);
+  const balance = roundAmount(current.balance, 2);
+
+  clearWorksheetRange(worksheet, rowNumber, rowNumber, 1, NC_MAX_COLUMN);
+  row.getCell(2).value = current.anulada || "NO";
+  row.getCell(3).value = current.bodega || null;
+  row.getCell(4).value = buildNcDateDisplayValue(current.dateValue, current.dateText);
+  row.getCell(5).value = current.agency || null;
+  row.getCell(6).value = current.agencyLabel || null;
+  row.getCell(8).value = current.series || null;
+  row.getCell(9).value = current.document || null;
+  row.getCell(10).value = original.document || null;
+  row.getCell(11).value = `DEVOLUCION ${form}`;
+  row.getCell(12).value = current.authorization || null;
+  setDateCellValue(worksheet, rowNumber, 14, original.dateValue, original.dateText);
+  row.getCell(15).value = roundAmount(current.total, 2);
+  row.getCell(16).value = current.ruc || null;
+  row.getCell(18).value = current.clientCode || null;
+  row.getCell(20).value = current.clientName || null;
+  row.getCell(21).value = current.publicClient || null;
+  row.getCell(22).value = current.item || null;
+  row.getCell(23).value = roundAmount(current.subTotal, 2);
+  row.getCell(24).value = roundAmount(current.discount, 2);
+  row.getCell(25).value = roundAmount(current.net, 2);
+  row.getCell(26).value = roundAmount(current.withoutVat, 2);
+  row.getCell(27).value = roundAmount(current.withVat, 2);
+  row.getCell(28).value = roundAmount(current.ecoValue, 2);
+  row.getCell(30).value = roundAmount(current.vat, 2);
+  row.getCell(32).value = roundAmount(current.otherCharges, 2);
+  row.getCell(33).value = roundAmount(current.interest, 2);
+  row.getCell(34).value = roundAmount(current.transport, 2);
+  row.getCell(36).value = roundAmount(current.total, 2);
+  row.getCell(37).value = roundAmount(current.advance, 2);
+  row.getCell(38).value = Math.abs(balance) < 0.0000001 ? null : balance;
+  row.getCell(39).value = roundAmount(current.cost, 2);
+  row.getCell(40).value = utility;
+  row.getCell(41).value = current.seat || null;
+}
+
+function updateNcSheetTotals(worksheet, totalRow, detailStartRow, detailEndRow) {
+  clearWorksheetRange(worksheet, totalRow, totalRow, 1, NC_MAX_COLUMN);
+  worksheet.getRow(totalRow).getCell(13).value = "TOTAL GENERAL:";
+
+  for (const column of NC_TOTAL_COLUMNS) {
+    const columnLetter = XLSX.utils.encode_col(column - 1);
+    const result = detailEndRow >= detailStartRow
+      ? sumWorksheetColumn(worksheet, detailStartRow, detailEndRow, column)
+      : 0;
+    const formula = detailEndRow >= detailStartRow
+      ? `SUM(${columnLetter}${detailStartRow}:${columnLetter}${detailEndRow})`
+      : "0";
+    setFormulaResult(worksheet.getRow(totalRow).getCell(column), result, formula);
+  }
+}
+
+function writeNcSourceRow(outputWorksheet, templateWorksheet, targetRowNumber, templateRowNumber, sourceRow) {
+  copyRowStyleBetweenWorksheets(templateWorksheet, outputWorksheet, templateRowNumber, targetRowNumber, NC_MAX_COLUMN);
+  copyRowValuesBetweenWorksheets(templateWorksheet, outputWorksheet, templateRowNumber, targetRowNumber, NC_MAX_COLUMN);
+  applyRowMergeDefinitions(outputWorksheet, targetRowNumber, getRowMergeDefinitions(templateWorksheet, templateRowNumber));
+
+  const row = outputWorksheet.getRow(targetRowNumber);
+  clearWorksheetRange(outputWorksheet, targetRowNumber, targetRowNumber, 1, NC_MAX_COLUMN);
+
+  row.getCell(2).value = sourceRow.anulada || "NO";
+  row.getCell(3).value = sourceRow.bodega || null;
+  row.getCell(4).value = buildNcDateDisplayValue(sourceRow.ncDateValue, sourceRow.ncDateText);
+  row.getCell(5).value = sourceRow.agency || null;
+  row.getCell(6).value = sourceRow.agencyLabel || null;
+  row.getCell(8).value = sourceRow.series || null;
+  row.getCell(9).value = sourceRow.ncNumber || null;
+  row.getCell(10).value = sourceRow.originalDoc || null;
+  row.getCell(11).value = sourceRow.description || null;
+  row.getCell(12).value = sourceRow.authorization || null;
+  setDateCellValue(outputWorksheet, targetRowNumber, 14, sourceRow.factDateValue, sourceRow.factDateText);
+  row.getCell(15).value = roundAmount(sourceRow.factTotal, 2);
+  row.getCell(16).value = sourceRow.ruc || null;
+  row.getCell(18).value = sourceRow.clientCode || null;
+  row.getCell(20).value = sourceRow.clientName || null;
+  row.getCell(21).value = sourceRow.publicClient || null;
+  row.getCell(22).value = sourceRow.item || null;
+  row.getCell(23).value = roundAmount(sourceRow.subTotal, 2);
+  row.getCell(24).value = roundAmount(sourceRow.discount, 2);
+  row.getCell(25).value = roundAmount(sourceRow.net, 2);
+  row.getCell(26).value = roundAmount(sourceRow.withoutVat, 2);
+  row.getCell(27).value = roundAmount(sourceRow.withVat, 2);
+  row.getCell(28).value = roundAmount(sourceRow.ecoValue, 2);
+  row.getCell(30).value = roundAmount(sourceRow.vat, 2);
+  row.getCell(32).value = roundAmount(sourceRow.otherCharges, 2);
+  row.getCell(33).value = roundAmount(sourceRow.interest, 2);
+  row.getCell(34).value = roundAmount(sourceRow.transport, 2);
+  row.getCell(36).value = roundAmount(sourceRow.total, 2);
+  row.getCell(37).value = roundAmount(sourceRow.advance, 2);
+  row.getCell(38).value = Math.abs(roundAmount(sourceRow.balance, 2)) < 0.0000001 ? null : roundAmount(sourceRow.balance, 2);
+  row.getCell(39).value = roundAmount(sourceRow.cost, 2);
+  row.getCell(40).value = roundAmount(sourceRow.utility, 2);
+  row.getCell(41).value = sourceRow.seat || null;
+  row.getCell(42).value = sourceRow.paymentForm || null;
+}
+
+function applyNcSheetFromNcSource(workbook, templateWorkbook, key, ncSourceData, dateRange = {}) {
+  const sheetName = getNcSheetName(key);
+  const worksheet = sheetName ? workbook.getWorksheet(sheetName) : null;
+  const templateWorksheet = sheetName ? templateWorkbook.getWorksheet(sheetName) : null;
+  if (!worksheet || !templateWorksheet) {
+    return null;
+  }
+
+  const resolvedRows = buildNcRowsFromSourceSheet(ncSourceData?.sheet || null, key);
+  const sourceRange = ncSourceData?.dateRange || dateRange || {};
+  const minDate = getMonthStartDate(sourceRange.minDate) || sourceRange.minDate || null;
+  const maxDate = sourceRange.maxDate || null;
+  if (minDate instanceof Date && !Number.isNaN(minDate.getTime()) && maxDate instanceof Date && !Number.isNaN(maxDate.getTime())) {
+    updateSheetDateRange(worksheet, minDate, maxDate);
+  }
+
+  const requiredLastDetailRow = resolvedRows.length > 0
+    ? NC_DETAIL_START_ROW + resolvedRows.length - 1
+    : NC_DETAIL_START_ROW;
+  const { totalRow, mayorRow } = ensureNcDetailCapacity(worksheet, requiredLastDetailRow);
+  if (totalRow > NC_DETAIL_START_ROW) {
+    clearWorksheetRange(worksheet, NC_DETAIL_START_ROW, totalRow - 1, 1, NC_MAX_COLUMN);
+  }
+
+  const templateTotalRow = findWorksheetRowContaining(
+    templateWorksheet,
+    "TOTAL GENERAL",
+    1,
+    Math.max(200, (templateWorksheet.rowCount || 0) + 20),
+    NC_MAX_COLUMN,
+  ) || (NC_DETAIL_START_ROW + 1);
+  const lastTemplateDetailRow = Math.max(NC_DETAIL_START_ROW, templateTotalRow - 1);
+
+  resolvedRows.forEach((sourceRow, index) => {
+    const targetRowNumber = NC_DETAIL_START_ROW + index;
+    const templateRowNumber = Math.min(NC_DETAIL_START_ROW + index, lastTemplateDetailRow);
+    writeNcSourceRow(worksheet, templateWorksheet, targetRowNumber, templateRowNumber, sourceRow);
+  });
+
+  updateNcSheetTotals(
+    worksheet,
+    totalRow,
+    NC_DETAIL_START_ROW,
+    resolvedRows.length > 0 ? NC_DETAIL_START_ROW + resolvedRows.length - 1 : NC_DETAIL_START_ROW - 1,
+  );
+
+  clearWorksheetRange(worksheet, mayorRow, mayorRow, 1, NC_MAX_COLUMN);
+  worksheet.getRow(mayorRow).getCell(22).value = "MAYOR";
+  return { rows: resolvedRows, totalRow, mayorRow };
+}
+
+function applyNcSheetFromCandidates(workbook, key, candidates, dateRange = {}) {
+  const sheetName = getNcSheetName(key);
+  const worksheet = sheetName ? workbook.getWorksheet(sheetName) : null;
+  if (!worksheet) {
+    return null;
+  }
+
+  const minDate = getMonthStartDate(dateRange.minDate) || dateRange.minDate || null;
+  const maxDate = dateRange.maxDate || null;
+  if (minDate instanceof Date && !Number.isNaN(minDate.getTime()) && maxDate instanceof Date && !Number.isNaN(maxDate.getTime())) {
+    updateSheetDateRange(worksheet, minDate, maxDate);
+  }
+
+  const requiredLastDetailRow = candidates.length > 0
+    ? NC_DETAIL_START_ROW + candidates.length - 1
+    : NC_DETAIL_START_ROW;
+  const { totalRow, mayorRow } = ensureNcDetailCapacity(worksheet, requiredLastDetailRow);
+
+  if (totalRow > NC_DETAIL_START_ROW) {
+    clearWorksheetRange(worksheet, NC_DETAIL_START_ROW, totalRow - 1, 1, NC_MAX_COLUMN);
+  }
+
+  candidates.forEach((candidate, index) => {
+    writeNcCandidateRow(worksheet, NC_DETAIL_START_ROW + index, candidate);
+  });
+
+  updateNcSheetTotals(worksheet, totalRow, NC_DETAIL_START_ROW, NC_DETAIL_START_ROW + candidates.length - 1);
+  clearWorksheetRange(worksheet, mayorRow, mayorRow, 1, NC_MAX_COLUMN);
+  worksheet.getRow(mayorRow).getCell(22).value = "MAYOR";
+  worksheet.getRow(mayorRow).getCell(23).value = 0;
+  worksheet.getRow(mayorRow).getCell(24).value = 0;
+  return { totalRow, mayorRow };
+}
+
+function writeNcResolvedTemplateRow(outputWorksheet, templateWorksheet, targetRowNumber, resolvedRow) {
+  const templateRowNumber = resolvedRow.rowNumber || NC_DETAIL_START_ROW;
+  copyRowStyleBetweenWorksheets(templateWorksheet, outputWorksheet, templateRowNumber, targetRowNumber, NC_MAX_COLUMN);
+  copyRowValuesBetweenWorksheets(templateWorksheet, outputWorksheet, templateRowNumber, targetRowNumber, NC_MAX_COLUMN);
+  applyRowMergeDefinitions(outputWorksheet, targetRowNumber, getRowMergeDefinitions(templateWorksheet, templateRowNumber));
+
+  const row = outputWorksheet.getRow(targetRowNumber);
+  const dataSource = resolvedRow.dataSource || resolvedRow.originalSource;
+  const originalSource = resolvedRow.originalSource || dataSource;
+  const invoiceSource = originalSource || dataSource;
+  if (!dataSource) {
+    return;
+  }
+
+  row.getCell(2).value = dataSource.anulada || row.getCell(2).value || "NO";
+  if (dataSource.bodega) {
+    row.getCell(3).value = dataSource.bodega;
+  }
+  if (dataSource.agency) {
+    row.getCell(5).value = dataSource.agency;
+  }
+  if (dataSource.agencyLabel) {
+    row.getCell(6).value = dataSource.agencyLabel;
+  }
+  if (dataSource.series) {
+    row.getCell(8).value = dataSource.series;
+  }
+  if (originalSource?.document) {
+    row.getCell(10).value = originalSource.document;
+  }
+  setDateCellValue(
+    outputWorksheet,
+    targetRowNumber,
+    14,
+    invoiceSource?.dateValue,
+    invoiceSource?.dateText || resolvedRow.factDateText || "",
+  );
+  row.getCell(15).value = roundAmount(invoiceSource.total, 2);
+  row.getCell(16).value = invoiceSource.ruc || row.getCell(16).value;
+  row.getCell(18).value = invoiceSource.clientCode || row.getCell(18).value;
+  row.getCell(20).value = invoiceSource.clientName || row.getCell(20).value;
+  row.getCell(21).value = invoiceSource.publicClient || row.getCell(21).value;
+  row.getCell(22).value = invoiceSource.item || row.getCell(22).value;
+  row.getCell(23).value = roundAmount(invoiceSource.subTotal, 2);
+  row.getCell(24).value = roundAmount(invoiceSource.discount, 2);
+  row.getCell(25).value = roundAmount(invoiceSource.net, 2);
+  row.getCell(26).value = roundAmount(invoiceSource.withoutVat, 2);
+  row.getCell(27).value = roundAmount(invoiceSource.withVat, 2);
+  row.getCell(28).value = roundAmount(invoiceSource.ecoValue, 2);
+  row.getCell(30).value = roundAmount(invoiceSource.vat, 2);
+  row.getCell(32).value = roundAmount(invoiceSource.otherCharges, 2);
+  row.getCell(33).value = roundAmount(invoiceSource.interest, 2);
+  row.getCell(34).value = roundAmount(invoiceSource.transport, 2);
+  row.getCell(36).value = roundAmount(invoiceSource.total, 2);
+  row.getCell(37).value = roundAmount(invoiceSource.advance, 2);
+  row.getCell(38).value = Math.abs(roundAmount(invoiceSource.balance, 2)) < 0.0000001 ? null : roundAmount(invoiceSource.balance, 2);
+  row.getCell(39).value = roundAmount(invoiceSource.cost, 2);
+  row.getCell(40).value = roundAmount(invoiceSource.total - invoiceSource.cost, 2);
+
+  if (normalizeText(getWorksheetCellText(templateWorksheet, templateRowNumber, 41)) === "" && dataSource.seat) {
+    row.getCell(41).value = dataSource.seat;
+  }
+}
+
+function applyNcSheetFromTemplateRows(workbook, templateWorkbook, key, resolvedRows, dateRange = {}) {
+  const sheetName = getNcSheetName(key);
+  const worksheet = sheetName ? workbook.getWorksheet(sheetName) : null;
+  const templateWorksheet = sheetName ? templateWorkbook.getWorksheet(sheetName) : null;
+  if (!worksheet || !templateWorksheet) {
+    return null;
+  }
+
+  const minDate = getMonthStartDate(dateRange.minDate) || dateRange.minDate || null;
+  const maxDate = dateRange.maxDate || null;
+  if (minDate instanceof Date && !Number.isNaN(minDate.getTime()) && maxDate instanceof Date && !Number.isNaN(maxDate.getTime())) {
+    updateSheetDateRange(worksheet, minDate, maxDate);
+  }
+
+  const requiredLastDetailRow = resolvedRows.length > 0
+    ? NC_DETAIL_START_ROW + resolvedRows.length - 1
+    : NC_DETAIL_START_ROW;
+  const { totalRow, mayorRow } = ensureNcDetailCapacity(worksheet, requiredLastDetailRow);
+
+  if (totalRow > NC_DETAIL_START_ROW) {
+    clearWorksheetRange(worksheet, NC_DETAIL_START_ROW, totalRow - 1, 1, NC_MAX_COLUMN);
+  }
+
+  resolvedRows.forEach((resolvedRow, index) => {
+    writeNcResolvedTemplateRow(worksheet, templateWorksheet, NC_DETAIL_START_ROW + index, resolvedRow);
+  });
+
+  updateNcSheetTotals(worksheet, totalRow, NC_DETAIL_START_ROW, NC_DETAIL_START_ROW + resolvedRows.length - 1);
+  clearWorksheetRange(worksheet, mayorRow, mayorRow, 1, NC_MAX_COLUMN);
+  worksheet.getRow(mayorRow).getCell(22).value = "MAYOR";
+  worksheet.getRow(mayorRow).getCell(23).value = 0;
+  worksheet.getRow(mayorRow).getCell(24).value = 0;
+  return { totalRow, mayorRow };
 }
 
 function buildNcTotals(ncWorksheet, key) {
@@ -2080,7 +3123,58 @@ function clearNcSheetNoSource(workbook, sheetName) {
   }
 
   if (mayorRow) {
+    clearWorksheetRange(worksheet, mayorRow, mayorRow, 1, NC_MAX_COLUMN);
     worksheet.getRow(mayorRow).getCell(22).value = "MAYOR";
+  }
+}
+
+function updateNcMayorRows(workbook, myTotalRowsByKey) {
+  const sheetMap = {
+    tyt: "NC REP TYT",
+    peug: "NC REP PEUG",
+    chgn: "NC REP CHGN",
+    szk: "NC REP SZK",
+  };
+
+  for (const config of SHEET_CONFIGS) {
+    const sheetName = sheetMap[config.key];
+    if (!sheetName) {
+      continue;
+    }
+
+    const worksheet = workbook.getWorksheet(sheetName);
+    if (!worksheet) {
+      continue;
+    }
+
+    const mayorRow = findWorksheetRowContaining(
+      worksheet,
+      "MAYOR",
+      1,
+      Math.max(200, (worksheet.rowCount || 0) + 20),
+      NC_MAX_COLUMN,
+    );
+    if (!mayorRow) {
+      continue;
+    }
+
+    const layout = MY_LAYOUTS[config.key];
+    const totals = myTotalRowsByKey?.[config.key] || {};
+    const myWorksheet = layout ? workbook.getWorksheet(layout.mySheetName) : null;
+    const devolTotal = myWorksheet && totals.devol ? getWorksheetCellNumber(myWorksheet, totals.devol, layout.debitColumn) : 0;
+    const discountTotal = myWorksheet && totals.discount ? getWorksheetCellNumber(myWorksheet, totals.discount, layout.creditColumn) : 0;
+
+    worksheet.getRow(mayorRow).getCell(22).value = "MAYOR";
+    setFormulaResult(
+      worksheet.getRow(mayorRow).getCell(23),
+      roundAmount(devolTotal, 2),
+      totals.devol ? `+'${layout.mySheetName}'!${XLSX.utils.encode_col(layout.debitColumn - 1)}${totals.devol}` : "0",
+    );
+    setFormulaResult(
+      worksheet.getRow(mayorRow).getCell(24),
+      roundAmount(discountTotal, 2),
+      totals.discount ? `+'${layout.mySheetName}'!${XLSX.utils.encode_col(layout.creditColumn - 1)}${totals.discount}` : "0",
+    );
   }
 }
 
@@ -2353,7 +3447,10 @@ function updateRepMayorRows(workbook, myTotalRowsByKey) {
 
     if (config.key === "peug") {
       const ncSheet = workbook.getWorksheet("NC REP PEUG");
-      const ncVat = ncSheet ? getWorksheetCellNumber(ncSheet, 9, 30) : 0;
+      const ncTotalRow = ncSheet
+        ? findWorksheetRowContaining(ncSheet, "TOTAL GENERAL", 1, Math.max(200, (ncSheet.rowCount || 0) + 20), NC_MAX_COLUMN)
+        : null;
+      const ncVat = ncSheet && ncTotalRow ? getWorksheetCellNumber(ncSheet, ncTotalRow, 30) : 0;
       const totalBase = getWorksheetCellNumber(worksheet, totalRow, 24);
       worksheet.getRow(mayorRow).getCell(25).value = roundAmount(totalBase - ncVat, 2);
       worksheet.getRow(mayorRow).getCell(26).value = roundAmount(totalBase, 2);
@@ -2503,6 +3600,7 @@ async function main() {
   await templateWorkbook.xlsx.readFile(templatePath);
 
   const sourceDataByKey = {};
+  const ncSourceDataByKey = {};
   const sourceDataList = [];
   for (const config of SHEET_CONFIGS) {
     const sourcePath = path.resolve(process.cwd(), getArg(args, config.argKeys));
@@ -2513,6 +3611,16 @@ async function main() {
     const sourceData = readSourceSheet(sourcePath, config.label);
     sourceDataByKey[config.key] = sourceData;
     sourceDataList.push(sourceData);
+
+    const ncSourceArg = getArg(args, config.ncArgKeys || []);
+    if (ncSourceArg) {
+      const ncSourcePath = path.resolve(process.cwd(), ncSourceArg);
+      if (!fs.existsSync(ncSourcePath)) {
+        throw new Error(`No existe archivo NC para ${config.label}: ${ncSourcePath}`);
+      }
+
+      ncSourceDataByKey[config.key] = readNcSourceSheet(ncSourcePath, `${config.label} NC`);
+    }
   }
 
   const globalSourceRange = buildCombinedDateRange(sourceDataList);
@@ -2524,12 +3632,28 @@ async function main() {
 
   for (const config of SHEET_CONFIGS) {
     const sourceData = sourceDataByKey[config.key];
-    const repLookup = buildRepLookup(sourceData.sheet, config.key);
+    const ncSourceData = ncSourceDataByKey[config.key] || null;
     const repResult = applyRepSheet(sourceData, workbook, config);
+    const ncResult = ncSourceData
+      ? buildNcResultFromNcSource(ncSourceData, config.key)
+      : (useTemplateCarryover
+        ? buildNcResultFromTemplate(templateWorkbook, sourceData.sheet, config.key)
+        : buildNcResultFromSource(sourceData.sheet, config.key));
     repGroupsByKey[config.key] = buildRepPostingGroups(sourceData.sheet, config.key);
-    ncGroupsByKey[config.key] = useTemplateCarryover
-      ? buildNcPostingGroups(templateWorkbook, config.key, repLookup)
-      : { discountCredit: {}, devol: {}, vat: {} };
+    ncGroupsByKey[config.key] = ncResult.groups;
+    if (ncSourceData) {
+      applyNcSheetFromNcSource(
+        workbook,
+        templateWorkbook,
+        config.key,
+        ncSourceData,
+        ncSourceData.dateRange || sourceData.dateRange || globalSourceRange,
+      );
+    } else if (useTemplateCarryover) {
+      applyNcSheetFromTemplateRows(workbook, templateWorkbook, config.key, ncResult.rows || [], sourceData.dateRange || globalSourceRange);
+    } else {
+      applyNcSheetFromCandidates(workbook, config.key, ncResult.candidates || [], sourceData.dateRange || globalSourceRange);
+    }
     myTotalRowsByKey[config.key] = updateMySheetFromRep(
       workbook,
       templateWorkbook,
@@ -2545,15 +3669,7 @@ async function main() {
   }
 
   // La lógica de MAYOR IVA ha sido deshabilitada porque la plantilla no contiene fórmulas y los cálculos eran incorrectos.
-  if (!useTemplateCarryover) {
-    const monthStartDate = getMonthStartDate(globalSourceRange.minDate) || globalSourceRange.minDate;
-    for (const config of SHEET_CONFIGS) {
-      const ncSheetName = getNcSheetName(config.key);
-      clearNcSheetNoSource(workbook, ncSheetName);
-      updateSheetDateRange(workbook.getWorksheet(ncSheetName), monthStartDate, globalSourceRange.maxDate);
-    }
-  }
-
+  updateNcMayorRows(workbook, myTotalRowsByKey);
   updateMayorIvaFromRep(workbook, templateWorkbook, repGroupsByKey, ncGroupsByKey, {
     useTemplateOpeningBalance: useTemplateCarryover,
     clearCarryoverWindow: !useTemplateCarryover,
