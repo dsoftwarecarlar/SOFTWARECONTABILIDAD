@@ -26,6 +26,23 @@ function assertCondition(condition, message) {
   }
 }
 
+function firstExistingPath(candidates) {
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
+}
+
+function actionFixturePath(fileName) {
+  return firstExistingPath([
+    path.join(ROOT, "resources", "cxp", "acciones", "fixtures", fileName),
+    path.join(ROOT, "outputs", "EJEMPLOSAMANO1", fileName),
+  ]);
+}
+
 function normalizeText(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -185,7 +202,7 @@ function fetchHistoryFromPhp(actionKey) {
 }
 
 function createAction2CanaryFile() {
-  const sourcePath = path.join(ROOT, "outputs", "EJEMPLOSAMANO1", "CXPREP_RET_GENERALACCION2.txt");
+  const sourcePath = actionFixturePath("CXPREP_RET_GENERALACCION2.txt");
   const sourceText = fs.readFileSync(sourcePath, "utf8");
 
   const rows = normalizeParsedRows(extractRowsFromTxt(sourcePath), loadTemplateTipoHints(accion2Constants.DEFAULT_TEMPLATE_XLSX));
@@ -215,7 +232,7 @@ function createAction2CanaryFile() {
 }
 
 async function createAction3CanaryFile() {
-  const sourcePath = path.join(ROOT, "outputs", "EJEMPLOSAMANO1", "CON_MAYORGEN2ACCION3.txt");
+  const sourcePath = actionFixturePath("CON_MAYORGEN2ACCION3.txt");
   const sourceText = fs.readFileSync(sourcePath, "utf8");
   const parsed = await parseInputSources([sourcePath]);
   const baseRow = parsed.rows.find((item) => String(item.DOCU || "").trim() !== "");

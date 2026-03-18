@@ -3,8 +3,13 @@ declare(strict_types=1);
 
 return [
     'paths' => [
-        'template_dir' => app_join_path(app_root(), 'outputs', 'EJEMPLOAMANOTAREA3'),
-        'script_path' => app_join_path(app_root(), 'run_repuestos_tytserv.ps1'),
+        'template_dir' => app_first_existing_path(
+            app_join_path(app_root(), 'resources', 'cxp', 'repuestos_tytserv', 'templates'),
+            app_join_path(app_root(), 'outputs', 'EJEMPLOAMANOTAREA3')
+        ),
+        // Ruta productiva actual del modulo web.
+        // run_repuestos_tytserv.ps1 queda como fallback/manual probe verificado aparte.
+        'script_path' => app_join_path(app_root(), 'scripts', 'cxp', 'repuestos_tytserv', 'process.js'),
     ],
     'module' => [
         'window_slug' => 'facturacion_repuestos_tytserv',

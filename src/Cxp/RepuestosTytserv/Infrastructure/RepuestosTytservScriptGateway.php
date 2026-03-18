@@ -25,10 +25,22 @@ final class RepuestosTytservScriptGateway
             throw new \RuntimeException('No existe el procesador de repuestos en el proyecto.');
         }
 
-        $commandParts = [
-            escapeshellarg($this->resolveNodeBinary()),
-            escapeshellarg($scriptPath),
-        ];
+        $isPsScript = preg_match('/\.ps1$/i', $scriptPath) === 1;
+        if ($isPsScript) {
+            $commandParts = [
+                'powershell',
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                escapeshellarg($scriptPath),
+            ];
+        } else {
+            $commandParts = [
+                escapeshellarg($this->resolveNodeBinary()),
+                escapeshellarg($scriptPath),
+            ];
+        }
 
         foreach ($fileFields as $fieldConfig) {
             $field = (string)($fieldConfig['field'] ?? '');
@@ -38,14 +50,25 @@ final class RepuestosTytservScriptGateway
                 continue;
             }
 
-            $commandParts[] = $this->normalizeFlag($flag);
+            if ($isPsScript) {
+                $commandParts[] = $flag;
+            } else {
+                $commandParts[] = $this->normalizeFlag($flag);
+            }
             $commandParts[] = escapeshellarg($savedInputs[$field]['path']);
         }
 
-        $commandParts[] = '--template-path';
-        $commandParts[] = escapeshellarg($templatePath);
-        $commandParts[] = '--output-path';
-        $commandParts[] = escapeshellarg($outputPath);
+        if ($isPsScript) {
+            $commandParts[] = '-TemplatePath';
+            $commandParts[] = escapeshellarg($templatePath);
+            $commandParts[] = '-OutputPath';
+            $commandParts[] = escapeshellarg($outputPath);
+        } else {
+            $commandParts[] = '--template-path';
+            $commandParts[] = escapeshellarg($templatePath);
+            $commandParts[] = '--output-path';
+            $commandParts[] = escapeshellarg($outputPath);
+        }
 
         $execution = $this->runner->run(implode(' ', $commandParts) . ' 2>&1');
         $console = trim(implode(
@@ -69,7 +92,7 @@ final class RepuestosTytservScriptGateway
 
     private function resolveScriptPath(): string
     {
-        if (is_file($this->scriptPath) && preg_match('/\.js$/i', $this->scriptPath) === 1) {
+        if (is_file($this->scriptPath)) {
             return $this->scriptPath;
         }
 

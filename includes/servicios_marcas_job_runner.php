@@ -593,6 +593,12 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             $powershell = 'powershell.exe';
         }
 
+        $brandKey = trim((string)($existingJob['brand_key'] ?? ''));
+        $uploads = is_array($existingJob['uploads'] ?? null) ? $existingJob['uploads'] : [];
+        $getUpload = static function (string $key) use ($uploads): string {
+            $path = (string)($uploads[$key] ?? '');
+            return is_file($path) ? $path : '';
+        };
         $command = implode(' ', [
             escapeshellarg($powershell),
             '-Sta',
@@ -611,6 +617,20 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             escapeshellarg($runStamp),
             '-CancelPath',
             escapeshellarg($cancelPath),
+            '-BrandKey',
+            escapeshellarg($brandKey),
+            '-FacturaPath',
+            escapeshellarg($getUpload('factura_file')),
+            '-NotaPath',
+            escapeshellarg($getUpload('nota_file')),
+            '-PxPath',
+            escapeshellarg($getUpload('px_file')),
+            '-RepVtasPath',
+            escapeshellarg($getUpload('repventas_file')),
+            '-VentasPath',
+            escapeshellarg($getUpload('ventas_file')),
+            '-RiobambaPath',
+            escapeshellarg($getUpload('riobamba_file')),
         ]);
 
         $outputLines = [];

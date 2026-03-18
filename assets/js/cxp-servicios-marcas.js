@@ -23,6 +23,24 @@
         });
     }
 
+    const brandSelect = document.querySelector('select[name="brand_key"]');
+    const riobambaField = document.querySelector('[data-riobamba-field]');
+    if (brandSelect && riobambaField) {
+        const toggleRiobamba = () => {
+            if (brandSelect.value === 'changan' || brandSelect.value === '') {
+                riobambaField.style.display = '';
+            } else {
+                riobambaField.style.display = 'none';
+                const input = riobambaField.querySelector('input[type="file"]');
+                if (input) {
+                    input.value = '';
+                }
+            }
+        };
+        brandSelect.addEventListener('change', toggleRiobamba);
+        toggleRiobamba();
+    }
+
     const jobBox = document.querySelector('[data-job-box]');
     if (!jobBox) {
         return;

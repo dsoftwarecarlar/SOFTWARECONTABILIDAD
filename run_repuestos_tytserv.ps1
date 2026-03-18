@@ -19,6 +19,16 @@ param(
     [string]$OutputPath
 )
 
+<#
+NOTA DE ARQUITECTURA
+- Este script no es la ruta productiva del modulo web actual.
+- El flujo activo de /modules/cxp_repuestos_tytserv/index.php usa
+  scripts/cxp/repuestos_tytserv/process.js definido en config/cxp/repuestos_tytserv.php.
+- Se conserva este .ps1 como fallback/manual probe para soporte operativo y comparaciones
+  controladas cuando haga falta validar o recuperar el proceso fuera del runtime Node.
+- Verificado manualmente con los archivos de ejemplo el 2026-03-18.
+#>
+
 $ErrorActionPreference = 'Stop'
 $EnableDeepValidation = ((([string]$env:REPUESTOS_DEEP_VALIDATE).Trim()) -eq '1')
 
@@ -69,6 +79,23 @@ function Ensure-WritablePath {
     }
 
     throw "El archivo de salida parece estar abierto o bloqueado: $Path. Cierralo y vuelve a intentar."
+}
+
+function Paths-Are-Same {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+        return $false
+    }
+
+    return ( [string]::Equals(
+        [System.IO.Path]::GetFullPath($Left).TrimEnd('\', '/'),
+        [System.IO.Path]::GetFullPath($Right).TrimEnd('\', '/'),
+        [System.StringComparison]::OrdinalIgnoreCase
+    ))
 }
 
 function Get-Worksheet-Safe {
@@ -162,6 +189,8 @@ function Copy-Rep-Range {
     $sourceRange = $SourceSheet.Range("A1:AO$LastRow")
     $targetRange = $TargetSheet.Range("A1:AO$LastRow")
     try {
+        # Limpia destino y copia valores + formulas desde la fuente (sin usar portapapeles compartido).
+        $null = $targetRange.ClearContents()
         $null = $sourceRange.Copy($targetRange)
     }
     finally {
@@ -222,6 +251,11 @@ function Get-Rep-Payload-Signature {
     $entries = New-Object System.Collections.Generic.List[string]
     $rows = 0
     $cells = 0
+    $payloadColumns = @(
+        1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 16,
+        18, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        32, 33, 34, 35, 36, 37, 38, 39, 40
+    )
 
     for ($row = $StartRow; $row -le $EndRow; $row++) {
         $doc = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
@@ -229,15 +263,14 @@ function Get-Rep-Payload-Signature {
             continue
         }
 
-        $ruc = Normalize-Text $Worksheet.Cells.Item($row, 9).Text
-        $code = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
-        $name = Normalize-Text $Worksheet.Cells.Item($row, 11).Text
-        $items = Normalize-Text $Worksheet.Cells.Item($row, 16).Text
-        $subtotal = Normalize-Text $Worksheet.Cells.Item($row, 18).Text
+        $rowValues = @()
+        foreach ($column in $payloadColumns) {
+            $rowValues += Normalize-Text $Worksheet.Cells.Item($row, [int]$column).Text
+        }
 
-        $entries.Add(("{0}|{1}|{2}|{3}|{4}|{5}" -f $doc, $ruc, $code, $name, $items, $subtotal))
+        $entries.Add(([string]::Join('|', $rowValues)))
         $rows++
-        $cells += 6
+        $cells += $payloadColumns.Count
     }
 
     return @{
@@ -334,26 +367,17 @@ function Stop-OrphanExcelProcesses {
     }
 }
 
-function Assert-NoVisibleExcel {
-    param([int]$TimeoutSeconds = 20)
-
-    $deadline = [datetime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
-    while ($true) {
-        $procs = @(
-            Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
-                Where-Object { $_.MainWindowHandle -ne 0 }
-        )
-        if ($procs.Count -eq 0) {
-            return
-        }
-
-        if ([datetime]::UtcNow -ge $deadline) {
-            $pids = ($procs | Select-Object -ExpandProperty Id) -join ','
-            throw "Hay procesos de Excel abiertos visibles (PID: $pids). Cierralos y vuelve a intentar."
-        }
-
-        Start-Sleep -Seconds 1
+function Warn-VisibleExcelProcesses {
+    $procs = @(
+        Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowHandle -ne 0 }
+    )
+    if ($procs.Count -eq 0) {
+        return
     }
+
+    $pids = ($procs | Select-Object -ExpandProperty Id) -join ','
+    Write-Output ("WARN|excel_visible|Hay procesos de Excel visibles (PID: {0}). Se continua con una instancia aislada para Tarea 3." -f $pids)
 }
 
 function Register-OleMessageFilter {
@@ -1543,6 +1567,16 @@ function Apply-Section-Scaling {
         [string]$Key
 )
 
+    # Limpiar completamente el rango de la seccion antes de reescribir datos
+    for ($row = $Section.StartRow; $row -le $Section.EndRow; $row++) {
+        $OutputWorksheet.Cells.Item($row, $Layout.DebitColumn).Value2 = 0.0
+        $OutputWorksheet.Cells.Item($row, $Layout.CreditColumn).Value2 = 0.0
+        $OutputWorksheet.Cells.Item($row, $Layout.SaldoColumn).ClearContents()
+        $OutputWorksheet.Cells.Item($row, $Layout.DateColumn).ClearContents()
+        $OutputWorksheet.Cells.Item($row, $Layout.SeatColumn).ClearContents()
+        $OutputWorksheet.Cells.Item($row, $Layout.DetailColumn).ClearContents()
+    }
+
     $templateGroups = Get-Template-Section-Groups -Worksheet $TemplateWorksheet -Layout $Layout -Section $Section
     $matchedGroups = @{}
     $amountColumn = [int]$Section.AmountColumn
@@ -1613,6 +1647,10 @@ function Apply-Section-Scaling {
 
                 $OutputWorksheet.Cells.Item($rowNumber, $seatColumn).Value2 = [string]$sourceGroup.Seat
                 $OutputWorksheet.Cells.Item($rowNumber, $detailColumn).Value2 = [string]$sourceGroup.Detail
+            } else {
+                $OutputWorksheet.Cells.Item($rowNumber, $dateColumn).ClearContents()
+                $OutputWorksheet.Cells.Item($rowNumber, $seatColumn).ClearContents()
+                $OutputWorksheet.Cells.Item($rowNumber, $detailColumn).ClearContents()
             }
         }
     }
@@ -1779,12 +1817,22 @@ function Clear-My-Devol-Rows {
 function Clear-Nc-Sheet-NoSource {
     param(
         [object]$Workbook,
-        [string]$SheetName
+        [string]$SheetName,
+        [object]$TemplateWorkbook = $null
     )
 
     $worksheet = $null
+    $templateSheet = $null
     try {
-        $worksheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @($SheetName)
+        try {
+            $worksheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @($SheetName)
+        }
+        catch {
+            return
+        }
+        if ($null -ne $TemplateWorkbook) {
+            try { $templateSheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @($SheetName) } catch {}
+        }
         $totalRow = Find-Row-Containing-Anywhere -Worksheet $worksheet -Needle 'TOTAL GENERAL' -StartRow 1 -EndRow 40 -LastColumn 35
         $mayorRow = Find-Row-Containing-Anywhere -Worksheet $worksheet -Needle 'MAYOR' -StartRow 1 -EndRow 40 -LastColumn 35
 
@@ -1802,7 +1850,8 @@ function Clear-Nc-Sheet-NoSource {
             }
         }
 
-        foreach ($column in 22..24) {
+        # Cuando NC no tiene fuente no debe conservar totales precargados de la plantilla.
+        foreach ($column in @(22, 23, 24, 25, 26, 27, 28, 30)) {
             $worksheet.Cells.Item($totalRow, $column).Value2 = 0.0
         }
 
@@ -1811,10 +1860,32 @@ function Clear-Nc-Sheet-NoSource {
         }
     }
     finally {
+        if ($null -ne $templateSheet) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($templateSheet)
+        }
         if ($null -ne $worksheet) {
             [void][Runtime.InteropServices.Marshal]::ReleaseComObject($worksheet)
         }
     }
+}
+
+function Resolve-Rep-SourceWorksheet {
+    param(
+        [object]$Workbook,
+        [string]$Label
+    )
+
+    try {
+        return Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @('RepLibroVentasGeneral')
+    }
+    catch {
+    }
+
+    if ([int]$Workbook.Worksheets.Count -eq 1) {
+        return $Workbook.Worksheets.Item(1)
+    }
+
+    throw ("El archivo fuente {0} debe contener la hoja 'RepLibroVentasGeneral'. No se aceptan plantillas ni reportes finales ya generados." -f $Label)
 }
 
 function Get-Mayor-Iva-Template-Groups {
@@ -1884,6 +1955,15 @@ function Update-Mayor-Iva-From-Rep {
         $outputWorksheet = Get-Worksheet-Safe -Workbook $OutputWorkbook -CandidateNames @('MAYOR IVA')
         $templateWorksheet = Get-Worksheet-Safe -Workbook $TemplateWorkbook -CandidateNames @('MAYOR IVA')
 
+        for ($row = 299; $row -le 366; $row++) {
+            $outputWorksheet.Cells.Item($row, 4).ClearContents() | Out-Null
+            $outputWorksheet.Cells.Item($row, 6).ClearContents() | Out-Null
+            $outputWorksheet.Cells.Item($row, 7).ClearContents() | Out-Null
+            $outputWorksheet.Cells.Item($row, 8).Value2 = 0.0
+            $outputWorksheet.Cells.Item($row, 9).Value2 = 0.0
+            $outputWorksheet.Cells.Item($row, 10).ClearContents() | Out-Null
+        }
+
         $templateGroups = Get-Mayor-Iva-Template-Groups -Worksheet $templateWorksheet -StartRow 299 -EndRow 366
         $sourceGroups = @{}
 
@@ -1932,6 +2012,10 @@ function Update-Mayor-Iva-From-Rep {
 
                     $outputWorksheet.Cells.Item($rowNumber, 6).Value2 = [string]$sourceGroup.Seat
                     $outputWorksheet.Cells.Item($rowNumber, 7).Value2 = [string]$sourceGroup.Detail
+                } else {
+                    $outputWorksheet.Cells.Item($rowNumber, 4).ClearContents() | Out-Null
+                    $outputWorksheet.Cells.Item($rowNumber, 6).ClearContents() | Out-Null
+                    $outputWorksheet.Cells.Item($rowNumber, 7).ClearContents() | Out-Null
                 }
             }
         }
@@ -1990,15 +2074,7 @@ function Process-Rep-Sheet {
     $targetSheet = $null
     try {
         $sourceWorkbook = Open-Workbook-WithRetry -Excel $Excel -Path $SourcePath -ReadOnly $true
-        try {
-            $sourceSheet = Get-Worksheet-Safe -Workbook $sourceWorkbook -CandidateNames @(
-                'RepLibroVentasGeneral',
-                $TargetSheetName
-            )
-        }
-        catch {
-            $sourceSheet = $sourceWorkbook.Worksheets.Item(1)
-        }
+        $sourceSheet = Resolve-Rep-SourceWorksheet -Workbook $sourceWorkbook -Label $Label
 
         Assert-Rep-SourceWorksheet -Worksheet $sourceSheet -Label $Label
 
@@ -2072,6 +2148,12 @@ $resolvedInputChgn = Resolve-RequiredPath -Path $InputChgn -Label 'InputChgn'
 $resolvedInputSzk = Resolve-RequiredPath -Path $InputSzk -Label 'InputSzk'
 $resolvedTemplatePath = Resolve-RequiredPath -Path $TemplatePath -Label 'TemplatePath'
 
+foreach ($candidate in @($resolvedInputTyt, $resolvedInputPeug, $resolvedInputChgn, $resolvedInputSzk)) {
+    if (Paths-Are-Same -Left $candidate -Right $resolvedTemplatePath) {
+        throw "El archivo de entrada coincide con la plantilla base. Sube el RepLibroVentasGeneral real, no la plantilla."
+    }
+}
+
 $outputDirectory = Split-Path -Path $OutputPath -Parent
 if ([string]::IsNullOrWhiteSpace($outputDirectory)) {
     throw 'No se pudo resolver la carpeta de salida.'
@@ -2100,7 +2182,7 @@ $excel = $null
 try {
     $excelLock = Acquire-Excel-Automation-Lock -TimeoutSeconds 300
     Stop-OrphanExcelProcesses -TimeoutSeconds 20
-    Assert-NoVisibleExcel -TimeoutSeconds 30
+    Warn-VisibleExcelProcesses
     Register-OleMessageFilter
     $excel = New-Object -ComObject Excel.Application
     Start-Sleep -Milliseconds 1200
@@ -2150,7 +2232,7 @@ try {
         }
 
         $configs = @(
-            @{ Key = 'tyt'; Label = 'MATRIZ'; TargetSheet = 'REP TYT'; SourcePath = $resolvedInputTyt },
+            @{ Key = 'tyt'; Label = 'TOYOTA'; TargetSheet = 'REP TYT'; SourcePath = $resolvedInputTyt },
             @{ Key = 'peug'; Label = 'PEUGEOT'; TargetSheet = 'REP PEUGT'; SourcePath = $resolvedInputPeug },
             @{ Key = 'chgn'; Label = 'CHANGAN'; TargetSheet = 'REP CHGN'; SourcePath = $resolvedInputChgn },
             @{ Key = 'szk'; Label = 'SUZUKI'; TargetSheet = 'REP SZK'; SourcePath = $resolvedInputSzk }
@@ -2222,8 +2304,8 @@ try {
                 -RepGroupsByKey $repGroupsByKey
         }
 
-        foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP SZK')) {
-            Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName
+        foreach ($sheetName in @('NC REP TYT', 'NC REP PEUG', 'NC REP CHGN', 'NC REP SZK')) {
+            Clear-Nc-Sheet-NoSource -Workbook $outputWorkbook -SheetName $sheetName -TemplateWorkbook $templateWorkbook
         }
 
         # Evitar recalculos globales pesados (pueden bloquear por varios minutos).

@@ -14,6 +14,11 @@ const STEPS = [
     args: ["scripts/tests/e2e_action2_action3_contract.js"],
   },
   {
+    name: "E2E accion1-4",
+    command: "node",
+    args: ["scripts/tests/e2e_action1_action4_contract.js"],
+  },
+  {
     name: "E2E repuestos",
     command: "node",
     args: ["scripts/tests/e2e_repuestos_contract.js"],

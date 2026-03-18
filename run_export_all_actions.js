@@ -3,34 +3,8 @@ const path = require("path");
 const ExcelJS = require("exceljs");
 
 const OUTPUTS_DIR = path.join(__dirname, "storage", "outputs");
+const ACTIONS_CONFIG_PATH = path.join(__dirname, "config", "cxp", "action_exports.json");
 const DEFAULT_OUTPUT_XLSX = "acciones_resumen.xlsx";
-
-const ACTIONS = [
-  {
-    key: "accion1",
-    label: "Accion 1",
-    sheetName: "ACCION 1 LIBRO COMPRAS",
-    matches: (name) => /_resultado/i.test(name),
-  },
-  {
-    key: "accion2",
-    label: "Accion 2",
-    sheetName: "ACCION 2 RET PROV",
-    matches: (name) => /_\d{8}_\d{6}_accion2(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i.test(name),
-  },
-  {
-    key: "accion3",
-    label: "Accion 3",
-    sheetName: "ACCION 3 MAYOR RET",
-    matches: (name) => /_\d{8}_\d{6}_accion3(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i.test(name),
-  },
-  {
-    key: "accion4",
-    label: "Accion 4",
-    sheetName: "ACCION 4 MAYOR IVA",
-    matches: (name) => /accion4/i.test(name),
-  },
-];
 
 function cloneValue(value) {
   if (value instanceof Date) {
@@ -66,19 +40,80 @@ function parseCliArguments(argv = process.argv.slice(2)) {
   };
 }
 
+function normalizeExtension(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^\./, "")
+    .toLowerCase();
+}
+
+function loadActionDefinitions() {
+  if (!fs.existsSync(ACTIONS_CONFIG_PATH)) {
+    throw new Error("No existe config/cxp/action_exports.json en el proyecto.");
+  }
+
+  const parsed = JSON.parse(fs.readFileSync(ACTIONS_CONFIG_PATH, "utf8"));
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error("config/cxp/action_exports.json no contiene acciones exportables validas.");
+  }
+
+  return parsed.map((item) => ({
+    key: String(item.key || "").trim(),
+    label: String(item.label || item.key || "").trim(),
+    sheetName: String(item.sheet_name || item.key || "").trim(),
+    bundleExtensions: Array.isArray(item.bundle_extensions)
+      ? item.bundle_extensions.map(normalizeExtension).filter(Boolean)
+      : ["xlsx"],
+    fileMatch: item && typeof item.file_match === "object" ? item.file_match : {},
+  })).filter((item) => item.key && item.sheetName);
+}
+
+function matchesActionFile(action, fileName) {
+  const rule = action.fileMatch || {};
+  const type = String(rule.type || "").trim().toLowerCase();
+  const value = String(rule.value || "");
+
+  if (type === "contains") {
+    return value !== "" && fileName.toLowerCase().includes(value.toLowerCase());
+  }
+
+  if (type === "regex") {
+    if (value === "") {
+      return false;
+    }
+    const flags = String(rule.flags || "").replace(/[^dgimsuvy]/g, "");
+    return new RegExp(value, flags).test(fileName);
+  }
+
+  return false;
+}
+
+function collectBundleExtensions(actions) {
+  const extensions = new Set();
+  for (const action of actions) {
+    for (const extension of action.bundleExtensions) {
+      if (extension) {
+        extensions.add(extension);
+      }
+    }
+  }
+
+  return extensions.size > 0 ? extensions : new Set(["xlsx"]);
+}
+
 function getFileTimestamp(filePath) {
   const stats = fs.statSync(filePath);
   return Number(stats.birthtimeMs || stats.mtimeMs || 0);
 }
 
-function listOutputFiles(outputDir) {
+function listOutputFiles(outputDir, allowedExtensions) {
   if (!fs.existsSync(outputDir)) {
     return [];
   }
 
   return fs
     .readdirSync(outputDir)
-    .filter((name) => name.toLowerCase().endsWith(".xlsx"))
+    .filter((name) => allowedExtensions.has(normalizeExtension(path.extname(name))))
     .map((name) => ({
       name,
       path: path.join(outputDir, name),
@@ -87,11 +122,11 @@ function listOutputFiles(outputDir) {
     .sort((left, right) => right.timestamp - left.timestamp || right.name.localeCompare(left.name, "es"));
 }
 
-function findLatestActionFiles(outputDir) {
-  const files = listOutputFiles(outputDir);
-  return ACTIONS.map((action) => ({
+function findLatestActionFiles(outputDir, actions) {
+  const files = listOutputFiles(outputDir, collectBundleExtensions(actions));
+  return actions.map((action) => ({
     ...action,
-    latest: files.find((file) => action.matches(file.name)) || null,
+    latest: files.find((file) => matchesActionFile(action, file.name)) || null,
   }));
 }
 
@@ -215,7 +250,8 @@ async function writeWorkbookWithRetries(workbook, preferredPath, maxAttempts = 2
 async function main() {
   const cli = parseCliArguments();
   const outputPath = path.resolve(process.cwd(), cli.outputXlsx);
-  const latestFiles = findLatestActionFiles(OUTPUTS_DIR);
+  const actions = loadActionDefinitions();
+  const latestFiles = findLatestActionFiles(OUTPUTS_DIR, actions);
   const missing = latestFiles.filter((item) => item.latest === null);
 
   if (missing.length > 0) {

@@ -4,6 +4,7 @@ const fs = require("fs");
 const DEFAULT_INPUT_SOURCE = "ACCION2.txt";
 const DEFAULT_OUTPUT_XLSX = "retenciones_proveedor.xlsx";
 const TEMPLATE_CANDIDATES = [
+  path.resolve(__dirname, "..", "..", "..", "resources", "cxp", "acciones", "templates", "ACCION2.xlsx"),
   path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO", "ACCION2.xlsx"),
   path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO1", "ACCION2.xlsx"),
 ];

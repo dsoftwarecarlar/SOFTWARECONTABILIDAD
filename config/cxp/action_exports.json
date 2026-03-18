@@ -1,0 +1,48 @@
+[
+  {
+    "key": "accion1",
+    "label": "Libro Compras Proveedores",
+    "sheet_name": "ACCION 1 LIBRO COMPRAS",
+    "module_path": "modules/cxp_pdf/index.php",
+    "bundle_extensions": ["xlsx"],
+    "file_match": {
+      "type": "contains",
+      "value": "_resultado"
+    }
+  },
+  {
+    "key": "accion2",
+    "label": "Retenciones Proveedores",
+    "sheet_name": "ACCION 2 RET PROV",
+    "module_path": "modules/cxp_txt/index.php",
+    "bundle_extensions": ["xlsx"],
+    "file_match": {
+      "type": "regex",
+      "value": "_\\d{8}_\\d{6}_accion2(?:_nuevo(?:_\\d+)?)?\\.(xlsx|xls)$",
+      "flags": "i"
+    }
+  },
+  {
+    "key": "accion3",
+    "label": "Mayor Retenciones",
+    "sheet_name": "ACCION 3 MAYOR RET",
+    "module_path": "modules/cxp_accion3/index.php",
+    "bundle_extensions": ["xlsx"],
+    "file_match": {
+      "type": "regex",
+      "value": "_\\d{8}_\\d{6}_accion3(?:_nuevo(?:_\\d+)?)?\\.(xlsx|xls)$",
+      "flags": "i"
+    }
+  },
+  {
+    "key": "accion4",
+    "label": "Mayor IVA",
+    "sheet_name": "ACCION 4 MAYOR IVA",
+    "module_path": "modules/cxp_accion4/index.php",
+    "bundle_extensions": ["xlsx"],
+    "file_match": {
+      "type": "contains",
+      "value": "accion4"
+    }
+  }
+]

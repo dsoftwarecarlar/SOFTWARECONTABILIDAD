@@ -52,7 +52,7 @@ async function main() {
   timingsMs.write = Date.now() - stageStart;
 
   stageStart = Date.now();
-  const mergeMetrics = preserveTemplateVisualWorkbook(templatePath, finalOutputPath, SHEET_NAME);
+  const mergeMetrics = preserveTemplateVisualWorkbook(templatePath, finalOutputPath, SHEET_NAME, rows.length);
   timingsMs.merge = Date.now() - stageStart;
 
   stageStart = Date.now();

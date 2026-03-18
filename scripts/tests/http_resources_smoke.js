@@ -8,6 +8,10 @@ const PORT = 18996;
 
 const PAGES = [
   "/",
+  "/areas/cxp/index.php",
+  "/areas/cxp/libro-compras-aclt.php",
+  "/areas/cxp/conciliacion-servicios-marcas.php",
+  "/areas/cxp/facturacion-repuestos-tytserv.php",
   "/modules/cxp_txt/index.php",
   "/modules/cxp_accion3/index.php",
   "/modules/cxp_repuestos_tytserv/index.php",

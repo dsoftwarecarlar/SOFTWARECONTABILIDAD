@@ -22,6 +22,7 @@ const {
   getCellsArray,
   setCellsArray,
   parseCellRef,
+  columnNumberToName,
   cellRef,
   copyCellPayload,
   cloneTemplateRow,
@@ -230,7 +231,7 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   return { workbook: wb, summary };
 }
 
-function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName = SHEET_NAME) {
+function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName = SHEET_NAME, dataRowCount = null) {
   const templateZip = new AdmZip(templatePath);
   const generatedZip = new AdmZip(generatedPath);
 
@@ -246,7 +247,7 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   const generatedSheet = parseXml(generatedSheetXml);
   const templateRows = getRowsArray(templateSheet);
   const generatedRows = getRowsArray(generatedSheet);
-  const payloadBeforeMerge = capturePayloadSnapshot(generatedRows, 11);
+  const payloadBeforeMerge = capturePayloadSnapshot(generatedRows, 16);
 
   const templateRowMap = new Map();
   const generatedCellMap = new Map();
@@ -332,7 +333,7 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   }
 
   templateRows.sort((a, b) => Number(a?.["@_r"] || 0) - Number(b?.["@_r"] || 0));
-  const payloadAfterMerge = capturePayloadSnapshot(templateRows, 11);
+  const payloadAfterMerge = capturePayloadSnapshot(templateRows, 16);
 
   if (
     payloadBeforeMerge.rows !== payloadAfterMerge.rows
@@ -354,6 +355,41 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   const generatedSharedStrings = generatedZip.getEntry("xl/sharedStrings.xml");
   if (generatedSharedStrings) {
     templateZip.updateFile("xl/sharedStrings.xml", generatedSharedStrings.getData());
+  }
+
+  if (Number.isFinite(dataRowCount)) {
+    const endRow = Math.max(2, Number(dataRowCount) + 1);
+    const lastCol = columnNumberToName(EXPECTED_HEADERS.length);
+    const ref = `A1:${lastCol}${endRow}`;
+
+    const cachePath = "xl/pivotCache/pivotCacheDefinition1.xml";
+    const cacheXmlText = readZipText(templateZip, cachePath);
+    if (cacheXmlText) {
+      const cacheObj = parseXml(cacheXmlText);
+      if (cacheObj.pivotCacheDefinition?.cacheSource?.worksheetSource) {
+        cacheObj.pivotCacheDefinition.cacheSource.worksheetSource["@_ref"] = ref;
+        cacheObj.pivotCacheDefinition.cacheSource.worksheetSource["@_sheet"] = sheetName;
+      }
+      if (cacheObj.pivotCacheDefinition) {
+        cacheObj.pivotCacheDefinition["@_recordCount"] = String(Math.max(0, Number(dataRowCount)));
+        cacheObj.pivotCacheDefinition["@_refreshOnLoad"] = "1";
+      }
+      updateZipText(templateZip, cachePath, cacheObj);
+    }
+
+    const pivotPath = "xl/pivotTables/pivotTable1.xml";
+    const pivotXmlText = readZipText(templateZip, pivotPath);
+    if (pivotXmlText) {
+      const pivotObj = parseXml(pivotXmlText);
+      if (pivotObj.pivotTableDefinition) {
+        pivotObj.pivotTableDefinition["@_refreshOnLoad"] = "1";
+      }
+      updateZipText(templateZip, pivotPath, pivotObj);
+    }
+
+    if (templateSheet?.worksheet?.autoFilter?.["@_ref"]) {
+      templateSheet.worksheet.autoFilter["@_ref"] = ref;
+    }
   }
 
   stripCalcChain(templateZip);

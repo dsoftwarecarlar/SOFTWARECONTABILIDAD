@@ -36,8 +36,13 @@ declare(strict_types=1);
             --shadow: 0 20px 48px rgba(16, 27, 36, 0.10);
         }
         * { box-sizing: border-box; }
-        body {
+        html, body {
             margin: 0;
+            width: 100%;
+            min-height: 100%;
+            overflow-x: hidden;
+        }
+        body {
             color: var(--ink);
             background:
                 radial-gradient(circle at 12% 12%, rgba(191, 117, 52, 0.22), transparent 23%),
@@ -45,7 +50,7 @@ declare(strict_types=1);
                 linear-gradient(180deg, var(--bg-1) 0%, var(--bg-2) 100%);
             font-family: "Trebuchet MS", "Lucida Sans Unicode", sans-serif;
         }
-        .page { max-width: 1280px; margin: 0 auto; padding: 28px 18px 44px; }
+        .page { max-width: 1280px; margin: 0 auto; padding: 28px 18px 44px; width: 100%; }
         .topbar { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 14px; margin-bottom: 16px; }
         .topbar > div { min-width: 0; flex: 1 1 420px; }
         .chip { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: rgba(15,111,103,.1); color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

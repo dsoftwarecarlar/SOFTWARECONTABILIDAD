@@ -27,6 +27,17 @@ function app_join_path(string ...$parts): string
     return implode(DIRECTORY_SEPARATOR, array_filter($clean, static fn($part) => $part !== ''));
 }
 
+function app_first_existing_path(string ...$candidates): string
+{
+    foreach ($candidates as $candidate) {
+        if ($candidate !== '' && file_exists($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return $candidates[0] ?? '';
+}
+
 function app_storage_path(string $relative = ''): string
 {
     $base = app_join_path(app_root(), 'storage');
@@ -263,7 +274,7 @@ function app_workspaces(): array
                     'slug' => 'facturacion_repuestos_tytserv',
                     'title' => 'Facturacion Repuestos TYTSERV',
                     'summary' => 'Ventana operativa para cargar las 4 bases RepLibroVentasGeneral del mes y obtener el reporte final segun la plantilla manual.',
-                    'route_note' => 'Ruta de salida: storage/outputs. Descarga publica: archivo .xlsx. Base operativa: outputs/EJEMPLOAMANOTAREA3.',
+                    'route_note' => 'Ruta de salida: storage/outputs. Descarga publica: archivo .xlsx. Base operativa: resources/cxp/repuestos_tytserv/templates.',
                     'url' => app_public_url('areas/cxp/facturacion-repuestos-tytserv.php'),
                     'modules' => [
                         $cxpModulesBySlug['cxp_repuestos_tytserv'],
@@ -323,6 +334,88 @@ function app_workspace_window(string $workspaceSlug, string $windowSlug): ?array
     return null;
 }
 
+function app_action_export_config_path(): string
+{
+    return app_join_path(app_root(), 'config', 'cxp', 'action_exports.json');
+}
+
+function app_action_export_definitions(): array
+{
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $path = app_action_export_config_path();
+    if (!is_file($path)) {
+        throw new RuntimeException('No existe config/cxp/action_exports.json en el proyecto.');
+    }
+
+    try {
+        $decoded = json_decode((string)file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable $exception) {
+        throw new RuntimeException('No se pudo leer config/cxp/action_exports.json: ' . $exception->getMessage(), 0, $exception);
+    }
+
+    if (!is_array($decoded)) {
+        throw new RuntimeException('config/cxp/action_exports.json no contiene una lista valida de acciones.');
+    }
+
+    $definitions = [];
+    foreach ($decoded as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $key = trim((string)($item['key'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+
+        $bundleExtensions = array_values(array_filter(
+            array_map(
+                static fn($extension): string => strtolower(ltrim(trim((string)$extension), '.')),
+                is_array($item['bundle_extensions'] ?? null) ? $item['bundle_extensions'] : []
+            ),
+            static fn(string $extension): bool => $extension !== ''
+        ));
+
+        $definitions[$key] = [
+            'key' => $key,
+            'label' => (string)($item['label'] ?? $key),
+            'sheet_name' => (string)($item['sheet_name'] ?? strtoupper($key)),
+            'module_path' => trim((string)($item['module_path'] ?? ''), '/'),
+            'bundle_extensions' => $bundleExtensions,
+            'file_match' => is_array($item['file_match'] ?? null) ? $item['file_match'] : [],
+        ];
+    }
+
+    $cache = $definitions;
+    return $cache;
+}
+
+function app_output_matches_export_definition(string $fileName, array $definition): bool
+{
+    $rule = is_array($definition['file_match'] ?? null) ? $definition['file_match'] : [];
+    $type = strtolower(trim((string)($rule['type'] ?? '')));
+    $value = (string)($rule['value'] ?? '');
+
+    if ($type === 'contains') {
+        return $value !== '' && stripos($fileName, $value) !== false;
+    }
+
+    if ($type === 'regex') {
+        if ($value === '') {
+            return false;
+        }
+        $flags = preg_replace('/[^imsxuADSUXJu]/', '', (string)($rule['flags'] ?? '')) ?: '';
+        $pattern = '~' . str_replace('~', '\\~', $value) . '~' . $flags;
+        return preg_match($pattern, $fileName) === 1;
+    }
+
+    return false;
+}
+
 function app_output_matches_action(string $fileName, string $actionKey): bool
 {
     $name = strtolower(trim($fileName));
@@ -330,11 +423,12 @@ function app_output_matches_action(string $fileName, string $actionKey): bool
         return false;
     }
 
+    $actionDefinitions = app_action_export_definitions();
+    if (isset($actionDefinitions[$actionKey])) {
+        return app_output_matches_export_definition($name, $actionDefinitions[$actionKey]);
+    }
+
     return match ($actionKey) {
-        'accion1' => str_contains($name, '_resultado'),
-        'accion2' => preg_match('/_\d{8}_\d{6}_accion2(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i', $name) === 1,
-        'accion3' => preg_match('/_\d{8}_\d{6}_accion3(?:_nuevo(?:_\d+)?)?\.(xlsx|xls)$/i', $name) === 1,
-        'accion4' => str_contains($name, 'accion4'),
         'bundle' => str_contains($name, 'acciones_resumen'),
         'servicios' => str_starts_with($name, 'servicios_'),
         'repuestos_tytserv' => str_starts_with($name, 'repuestos_tytserv_'),
@@ -416,32 +510,15 @@ function app_cleanup_output_files_for_action(string $actionKey, int $keep = APP_
 
 function app_latest_action_exports(): array
 {
-    $actions = [
-        'accion1' => [
-            'label' => 'Libro Compras Proveedores',
-            'sheet_name' => 'ACCION 1 LIBRO COMPRAS',
-            'module_url' => app_url('modules/cxp_pdf/index.php'),
-        ],
-        'accion2' => [
-            'label' => 'Retenciones Proveedores',
-            'sheet_name' => 'ACCION 2 RET PROV',
-            'module_url' => app_url('modules/cxp_txt/index.php'),
-        ],
-        'accion3' => [
-            'label' => 'Mayor Retenciones',
-            'sheet_name' => 'ACCION 3 MAYOR RET',
-            'module_url' => app_url('modules/cxp_accion3/index.php'),
-        ],
-        'accion4' => [
-            'label' => 'Mayor IVA',
-            'sheet_name' => 'ACCION 4 MAYOR IVA',
-            'module_url' => app_url('modules/cxp_accion4/index.php'),
-        ],
-    ];
-
-    foreach ($actions as $key => $meta) {
-        $actions[$key]['key'] = $key;
-        $actions[$key]['latest'] = app_find_latest_output_file($key);
+    $actions = [];
+    foreach (app_action_export_definitions() as $key => $meta) {
+        $actions[$key] = [
+            'key' => $key,
+            'label' => (string)$meta['label'],
+            'sheet_name' => (string)$meta['sheet_name'],
+            'module_url' => app_url((string)$meta['module_path']),
+            'latest' => app_find_latest_output_file($key),
+        ];
     }
 
     return $actions;

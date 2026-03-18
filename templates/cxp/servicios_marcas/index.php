@@ -95,7 +95,40 @@ declare(strict_types=1);
                 <div class="form-grid">
                     <form method="post" enctype="multipart/form-data" data-job-form>
                         <input type="hidden" name="action" value="process">
-                        <input type="file" name="excel_file" accept=".xls,.xlsx" required>
+                        <div class="field">
+                            <label>Marca (opcional)</label>
+                            <select name="brand_key">
+                                <option value="">Todas las marcas</option>
+                                <?php foreach ($brands as $brandItem): ?>
+                                    <option value="<?= htmlspecialchars((string)($brandItem['key'] ?? '')) ?>"><?= htmlspecialchars((string)($brandItem['label'] ?? $brandItem['key'])) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="meta">Si no seleccionas una marca, se generan todas.</div>
+                        </div>
+                        <div class="field">
+                            <label>REP FACTURACIÓN (SERREP_FACTURAS_NAF_REPFACT.txt)</label>
+                            <input type="file" name="factura_file" accept=".txt" required>
+                        </div>
+                        <div class="field">
+                            <label>NOTA DE CRÉDITO (SERREP_NOTACRED_NAF.txt)</label>
+                            <input type="file" name="nota_file" accept=".txt" required>
+                        </div>
+                        <div class="field">
+                            <label>PX (detalle-vtas-xliquidar.xlsx)</label>
+                            <input type="file" name="px_file" accept=".xls,.xlsx" required>
+                        </div>
+                        <div class="field">
+                            <label>REP VENTAS / Consolidado (RepFacturacionServContabilidad.xls)</label>
+                            <input type="file" name="repventas_file" accept=".xls,.xlsx" required>
+                        </div>
+                        <div class="field">
+                            <label>VENTAS (txt) opcional</label>
+                            <input type="file" name="ventas_file" accept=".txt">
+                        </div>
+                        <div class="field riobamba-field" data-riobamba-field style="display:none;">
+                            <label>REP FACTURACIÓN Suzuki Riobamba (solo CHANGAN) opcional</label>
+                            <input type="file" name="riobamba_file" accept=".txt,.xls,.xlsx">
+                        </div>
                         <button type="submit" data-submit-button data-processing-label="<?= htmlspecialchars((string)($pageConfig['upload_panel']['processing_label'] ?? 'Procesando...')) ?>">
                             <?= htmlspecialchars((string)($pageConfig['upload_panel']['button_label'] ?? 'Procesar')) ?>
                         </button>

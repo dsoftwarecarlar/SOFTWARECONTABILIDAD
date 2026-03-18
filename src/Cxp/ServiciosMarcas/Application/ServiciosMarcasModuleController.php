@@ -141,43 +141,88 @@ final class ServiciosMarcasModuleController
                     throw new \RuntimeException('No existe la carpeta base de plantillas mensuales.');
                 }
 
-                if (!isset($files['excel_file'])) {
-                    throw new \RuntimeException('No se recibio el archivo Excel.');
+                $brandKey = trim((string)($post['brand_key'] ?? ''));
+                if ($brandKey !== '') {
+                    $allowedBrands = array_map(
+                        static fn(array $item): string => (string)($item['key'] ?? ''),
+                        $this->config['brands'] ?? []
+                    );
+                    $allowedBrands = array_values(array_filter($allowedBrands, static fn(string $key): bool => $key !== ''));
+                    if ($allowedBrands !== [] && !in_array($brandKey, $allowedBrands, true)) {
+                        throw new \RuntimeException('La marca seleccionada no es valida.');
+                    }
                 }
 
-                $file = $files['excel_file'];
-                if (!is_array($file) || (int)($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                    throw new \RuntimeException('Error al subir el archivo Excel.');
+                $requiredFiles = [
+                    'factura_file' => ['label' => 'REP FACTURACIÓN', 'accept' => ['txt']],
+                    'nota_file' => ['label' => 'NOTA DE CRÉDITO', 'accept' => ['txt']],
+                    'px_file' => ['label' => 'PX', 'accept' => ['xls', 'xlsx']],
+                    'repventas_file' => ['label' => 'REP VENTAS', 'accept' => ['xls', 'xlsx']],
+                ];
+                $optionalFiles = [
+                    'ventas_file' => ['label' => 'VENTAS', 'accept' => ['txt']],
+                    'riobamba_file' => ['label' => 'Suzuki Riobamba', 'accept' => ['txt', 'xls', 'xlsx']],
+                ];
+
+                $storedFiles = [];
+                $storeUpload = static function (array $file, string $label, array $acceptedExtensions, string $uploadsDir): string {
+                    if (!is_array($file) || (int)($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                        throw new \RuntimeException('Error al subir el archivo de ' . $label . '.');
+                    }
+                    $originalName = trim((string)($file['name'] ?? 'archivo'));
+                    $tmpPath = (string)($file['tmp_name'] ?? '');
+                    $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+                    if (!in_array($extension, $acceptedExtensions, true)) {
+                        throw new \RuntimeException('El archivo de ' . $label . ' debe ser .' . implode(' o .', $acceptedExtensions) . '.');
+                    }
+                    $safeBase = preg_replace('/[^A-Za-z0-9_-]+/', '_', pathinfo($originalName, PATHINFO_FILENAME));
+                    $safeBase = trim((string)$safeBase, '_');
+                    if ($safeBase === '') {
+                        $safeBase = $label;
+                    }
+                    $timestamp = date('Ymd_His');
+                    $inputFileName = sprintf('%s_%s.%s', $safeBase, $timestamp, $extension);
+                    $inputPath = \app_join_path($uploadsDir, $inputFileName);
+                    if (!move_uploaded_file($tmpPath, $inputPath)) {
+                        throw new \RuntimeException('No se pudo guardar el archivo de ' . $label . '.');
+                    }
+                    return $inputPath;
+                };
+
+                foreach ($requiredFiles as $field => $meta) {
+                    if (!isset($files[$field])) {
+                        throw new \RuntimeException('Falta el archivo de ' . $meta['label'] . '.');
+                    }
+                    $storedFiles[$field] = $storeUpload(
+                        $files[$field],
+                        $meta['label'],
+                        $meta['accept'],
+                        $paths['uploads_dir']
+                    );
                 }
 
-                $originalName = trim((string)($file['name'] ?? 'reporte.xls'));
-                $tmpPath = (string)($file['tmp_name'] ?? '');
-                $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-                $acceptedExtensions = $this->acceptedExtensions();
-                if (!in_array($extension, $acceptedExtensions, true)) {
-                    throw new \RuntimeException('Solo se permiten archivos Excel .' . implode(' o .', $acceptedExtensions) . '.');
+                foreach ($optionalFiles as $field => $meta) {
+                    if (!isset($files[$field]) || (int)($files[$field]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                        continue;
+                    }
+                    $storedFiles[$field] = $storeUpload(
+                        $files[$field],
+                        $meta['label'],
+                        $meta['accept'],
+                        $paths['uploads_dir']
+                    );
                 }
 
-                $safeBase = preg_replace('/[^A-Za-z0-9_-]+/', '_', pathinfo($originalName, PATHINFO_FILENAME));
-                $safeBase = trim((string)$safeBase, '_');
-                if ($safeBase === '') {
-                    $safeBase = 'reporte_servicios';
-                }
-
-                $timestamp = date('Ymd_His');
-                $inputFileName = sprintf('%s_%s.%s', $safeBase, $timestamp, $extension);
-                $inputPath = \app_join_path($paths['uploads_dir'], $inputFileName);
-
-                if (!move_uploaded_file($tmpPath, $inputPath)) {
-                    throw new \RuntimeException('No se pudo guardar el Excel subido.');
-                }
+                $inputPath = $storedFiles['repventas_file'];
 
                 $activeJobId = 'servicios_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4));
                 $createdAt = date('Y-m-d H:i:s');
                 $this->jobs->write($activeJobId, [
                     'job_id' => $activeJobId,
                     'status' => 'queued',
-                    'source_name' => $originalName,
+                    'source_name' => basename($inputPath),
+                    'brand_key' => $brandKey,
+                    'uploads' => $storedFiles,
                     'message' => 'Proceso en cola. La pagina se actualizara automaticamente.',
                     'created_at' => $createdAt,
                 ]);
@@ -188,9 +233,11 @@ final class ServiciosMarcasModuleController
                     $this->jobs->write($activeJobId, [
                         'job_id' => $activeJobId,
                         'status' => 'error',
-                        'source_name' => $originalName,
+                        'source_name' => basename($inputPath),
                         'message' => 'No se pudo iniciar el proceso en segundo plano.',
                         'error' => $dispatchException->getMessage(),
+                        'uploads' => $storedFiles,
+                        'brand_key' => $brandKey,
                         'created_at' => $createdAt,
                         'updated_at' => date('Y-m-d H:i:s'),
                         'completed_at' => date('Y-m-d H:i:s'),

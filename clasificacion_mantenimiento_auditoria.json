@@ -1,7 +1,7 @@
 {
-  "fecha_proceso": "2026-03-06T14:39:13.787Z",
-  "input_pdf": "C:\\xampp\\htdocs\\BOT1ANDREA\\CXPREP_docproveedor.pdf",
-  "output_xlsx": "C:\\xampp\\htdocs\\BOT1ANDREA\\clasificacion_mantenimiento.xlsx",
+  "fecha_proceso": "2026-03-17T16:39:56.443Z",
+  "input_pdf": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\CXPREP_docproveedor.pdf",
+  "output_xlsx": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\clasificacion_mantenimiento.xlsx",
   "hoja_salida": "LIBRO COMPRAS",
   "filas_extraidas": 531,
   "filas_ajustadas_plantilla": 531,

@@ -1,8 +1,14 @@
 const path = require("path");
+const fs = require("fs");
 
 const DEFAULT_INPUT_SOURCE = "CON_MAYORGEN2IVAACCION4.txt";
 const DEFAULT_OUTPUT_XLSX = "mayor_iva_accion4.xlsx";
-const DEFAULT_TEMPLATE_XLSX = path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO", "MAYORIVAACCION4.xlsx");
+const TEMPLATE_CANDIDATES = [
+  path.resolve(__dirname, "..", "..", "..", "resources", "cxp", "acciones", "templates", "MAYORIVAACCION4.xlsx"),
+  path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO", "MAYORIVAACCION4.xlsx"),
+  path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO1", "MAYORIVAACCION4.xlsx"),
+];
+const DEFAULT_TEMPLATE_XLSX = TEMPLATE_CANDIDATES.find((candidate) => fs.existsSync(candidate)) || TEMPLATE_CANDIDATES[0];
 const SHEET_NAME = "MAYOR IVA";
 
 const EXPECTED_HEADERS = [

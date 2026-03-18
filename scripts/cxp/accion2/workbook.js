@@ -21,6 +21,7 @@ const {
   getCellsArray,
   setCellsArray,
   parseCellRef,
+  columnNumberToName,
   cellRef,
   copyCellPayload,
   clearCellPayload,
@@ -278,7 +279,33 @@ function capturePayloadSnapshot(rows, maxColumn) {
   };
 }
 
-function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName = SHEET_NAME) {
+function normalizeSummaryLabel(label) {
+  return sanitizeText(label).replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function readTemplateSummaryLayout(ws) {
+  const layout = [];
+  for (let row = 2; row <= 200; row += 1) {
+    const label = sanitizeText(ws.getCell(row, 12).value);
+    if (!label) {
+      if (layout.length > 0) {
+        break;
+      }
+      continue;
+    }
+    const normalized = normalizeSummaryLabel(label);
+    let kind = "detail";
+    if (normalized === "TOTAL GENERAL") {
+      kind = "total";
+    } else if (!/^[0-9.]+$/.test(normalized)) {
+      kind = "type";
+    }
+    layout.push({ row, label, kind });
+  }
+  return layout;
+}
+
+function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName = SHEET_NAME, dataRowCount = null) {
   const templateZip = new AdmZip(templatePath);
   const generatedZip = new AdmZip(generatedPath);
 
@@ -295,7 +322,7 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
 
   const templateRows = getRowsArray(templateSheet);
   const generatedRows = getRowsArray(generatedSheet);
-  const payloadBeforeMerge = capturePayloadSnapshot(generatedRows, 10);
+  const payloadBeforeMerge = capturePayloadSnapshot(generatedRows, 16);
 
   const templateRowMap = new Map();
   const templateStyleByCol = new Map();
@@ -420,7 +447,7 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   }
 
   templateRows.sort((a, b) => Number(a?.["@_r"] || 0) - Number(b?.["@_r"] || 0));
-  const payloadAfterMerge = capturePayloadSnapshot(templateRows, 10);
+  const payloadAfterMerge = capturePayloadSnapshot(templateRows, 16);
 
   if (
     payloadBeforeMerge.rows !== payloadAfterMerge.rows
@@ -442,6 +469,41 @@ function preserveTemplateVisualWorkbook(templatePath, generatedPath, sheetName =
   const generatedSharedStrings = generatedZip.getEntry("xl/sharedStrings.xml");
   if (generatedSharedStrings) {
     templateZip.updateFile("xl/sharedStrings.xml", generatedSharedStrings.getData());
+  }
+
+  if (Number.isFinite(dataRowCount)) {
+    const endRow = Math.max(2, Number(dataRowCount) + 1);
+    const lastCol = columnNumberToName(EXPECTED_COLUMNS.length);
+    const ref = `A1:${lastCol}${endRow}`;
+
+    const cachePath = "xl/pivotCache/pivotCacheDefinition1.xml";
+    const cacheXmlText = readZipText(templateZip, cachePath);
+    if (cacheXmlText) {
+      const cacheObj = parseXml(cacheXmlText);
+      if (cacheObj.pivotCacheDefinition?.cacheSource?.worksheetSource) {
+        cacheObj.pivotCacheDefinition.cacheSource.worksheetSource["@_ref"] = ref;
+        cacheObj.pivotCacheDefinition.cacheSource.worksheetSource["@_sheet"] = sheetName;
+      }
+      if (cacheObj.pivotCacheDefinition) {
+        cacheObj.pivotCacheDefinition["@_recordCount"] = String(Math.max(0, Number(dataRowCount)));
+        cacheObj.pivotCacheDefinition["@_refreshOnLoad"] = "1";
+      }
+      updateZipText(templateZip, cachePath, cacheObj);
+    }
+
+    const pivotPath = "xl/pivotTables/pivotTable1.xml";
+    const pivotXmlText = readZipText(templateZip, pivotPath);
+    if (pivotXmlText) {
+      const pivotObj = parseXml(pivotXmlText);
+      if (pivotObj.pivotTableDefinition) {
+        pivotObj.pivotTableDefinition["@_refreshOnLoad"] = "1";
+      }
+      updateZipText(templateZip, pivotPath, pivotObj);
+    }
+
+    if (templateSheet?.worksheet?.autoFilter?.["@_ref"]) {
+      templateSheet.worksheet.autoFilter["@_ref"] = ref;
+    }
   }
 
   stripCalcChain(templateZip);
@@ -576,24 +638,6 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   }
 
   clearRangeValues(ws, 2, maxRows, 1, 11);
-  clearRangeValues(ws, 1, maxRows, 12, 16);
-
-  const summaryHeaderStyles = [];
-  for (let col = 12; col <= 16; col += 1) {
-    summaryHeaderStyles.push(deepClone(ws.getCell(1, col).style));
-  }
-  const summaryTypeStyles = [];
-  for (let col = 12; col <= 16; col += 1) {
-    summaryTypeStyles.push(deepClone(ws.getCell(2, col).style));
-  }
-  const summaryDetailStyles = [];
-  for (let col = 12; col <= 16; col += 1) {
-    summaryDetailStyles.push(deepClone(ws.getCell(3, col).style));
-  }
-  const summaryTotalStyles = [];
-  for (let col = 12; col <= 16; col += 1) {
-    summaryTotalStyles.push(deepClone(ws.getCell(16, col).style));
-  }
 
   for (let i = 0; i < rows.length; i += 1) {
     const rowNum = i + 2;
@@ -616,34 +660,28 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
     }
   }
 
-  ws.getCell("L1").value = "Etiquetas de fila";
-  ws.getCell("M1").value = "Suma de BASE";
-  ws.getCell("N1").value = "Suma de RETENCION";
-  ws.getCell("O1").value = "";
-  ws.getCell("P1").value = "";
+  const templateSummaryLayout = readTemplateSummaryLayout(ws);
+  const computedSummary = buildSummary(rows);
+  const summaryLookup = new Map(
+    computedSummary.map((item) => [normalizeSummaryLabel(item.label), item]),
+  );
+  const summary = [];
+  for (const slot of templateSummaryLayout) {
+    const match = summaryLookup.get(normalizeSummaryLabel(slot.label));
+    const base = match ? match.base : 0;
+    const ret = match ? match.ret : 0;
 
-  const summary = buildSummary(rows);
-  for (let i = 0; i < summary.length; i += 1) {
-    const rowNum = i + 2;
-    const item = summary[i];
-    ws.getCell(`L${rowNum}`).value = item.label;
-    ws.getCell(`M${rowNum}`).value = item.base;
-    ws.getCell(`N${rowNum}`).value = item.ret;
-    ws.getCell(`O${rowNum}`).value = item.calc == null ? null : item.calc;
-    ws.getCell(`P${rowNum}`).value = item.diff == null ? null : item.diff;
+    ws.getCell(slot.row, 13).value = base;
+    ws.getCell(slot.row, 14).value = ret;
 
-    if (rowNum > templateRowCount) {
-      applyFallbackStylesForExtendedSummaryRow(
-        ws,
-        rowNum,
-        item.kind,
-        summaryHeaderStyles,
-        summaryTypeStyles,
-        summaryDetailStyles,
-        summaryTotalStyles,
-      );
-      ws.getRow(rowNum).height = ws.getRow(3).height;
-    }
+    summary.push({
+      kind: slot.kind,
+      label: slot.label,
+      base,
+      ret,
+      calc: match?.calc ?? null,
+      diff: match?.diff ?? null,
+    });
   }
 
   return { workbook: wb, summary };

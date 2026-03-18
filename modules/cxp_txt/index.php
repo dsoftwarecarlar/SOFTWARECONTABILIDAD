@@ -61,10 +61,10 @@ $pageConfig = [
     'back_label' => 'Volver a Accion 1',
     'hero_chip' => 'Flujo TXT en produccion',
     'hero_title' => 'TXT desordenado a Excel RET PROV con formato exacto del ejemplo manual.',
-    'hero_lead' => 'Este modulo toma un TXT de retenciones, normaliza filas y columnas, y genera un Excel final en hoja RET PROV siguiendo el formato de ACCION2.xlsx dentro de EJEMPLOSAMANO.',
+    'hero_lead' => 'Este modulo toma un TXT de retenciones, normaliza filas y columnas, y genera un Excel final en hoja RET PROV siguiendo el formato de la plantilla manual ACCION2.xlsx.',
     'hero_note' => 'Salida de usuario: descarga de archivo .xlsx.',
     'hero_card_label' => 'Plantilla base',
-    'hero_card_value' => 'outputs/EJEMPLOSAMANO/ACCION2.xlsx',
+    'hero_card_value' => 'resources/cxp/acciones/templates/ACCION2.xlsx',
     'show_logo' => true,
     'sidebar_panels' => array_values(array_filter([
         [

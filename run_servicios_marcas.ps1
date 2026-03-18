@@ -13,12 +13,34 @@ param(
     [string]$RunStamp = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$CancelPath = ''
+    [string]$CancelPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$BrandKey = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$FacturaPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$NotaPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$PxPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$RepVtasPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$VentasPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$RiobambaPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $script:CancelFilePath = $CancelPath
-$script:StrictValidationEnabled = ([string]$env:SERVICIOS_MARCAS_STRICT_VALIDATE -eq '1')
+$script:StrictValidationEnabled = ([string]$env:SERVICIOS_MARCAS_STRICT_VALIDATE -ne '0')
+$script:AllowTemplateDataFallback = ([string]$env:SERVICIOS_MARCAS_ALLOW_TEMPLATE_FALLBACK -eq '1')
 
 function Test-CancelRequested {
     if ([string]::IsNullOrWhiteSpace($script:CancelFilePath)) {
@@ -63,6 +85,238 @@ function Resolve-RequiredPath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Get-TemplateKey-FromAgency {
+    param([string]$Agency)
+
+    $agencyText = (Normalize-Text $Agency).ToUpper()
+    switch ($agencyText) {
+        'CHANGAN' { return 'changan' }
+        'PEUGEOT' { return 'peug' }
+        'MATRIZ' { return 'tyt' }
+        'SUZUKI AMBATO' { return 'szk' }
+        'SUZUKI RIOBAMBA' { return 'szk' }
+        default { return '' }
+    }
+}
+
+function Parse-TabFile {
+    param(
+        [string]$Path,
+        [string]$Kind = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return @()
+    }
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+
+    try {
+        $rows = Import-Csv -LiteralPath $Path -Delimiter "`t" -Encoding UTF8
+        # Filtrar filas sin agencia ni documento.
+        $filtered = @($rows | Where-Object { (Normalize-Text $_.'Agencia') -ne '' -or (Normalize-Text $_.'Agencia :') -ne '' -or (Normalize-Text $_.'Factura') -ne '' -or (Normalize-Text $_.'Nota Cred.') -ne '' })
+        if ($filtered.Count -gt 0) {
+            return $filtered
+        }
+    } catch {
+    }
+
+    $fallbackRows = New-Object System.Collections.Generic.List[object]
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        $columns = @($line -split "`t")
+        if ($columns.Count -eq 0) {
+            continue
+        }
+
+        if ($Kind -eq 'factura') {
+            if ($columns.Count -lt 36) {
+                continue
+            }
+
+            if ((Normalize-Text $columns[0]).ToUpperInvariant() -ne 'AGENCIA :' -or (Normalize-Text $columns[2]).ToUpperInvariant() -ne 'SERIE') {
+                continue
+            }
+
+            $fallbackRows.Add([pscustomobject]@{
+                'Agencia :' = Normalize-Text $columns[1]
+                'Serie' = Normalize-Text $columns[19]
+                'Factura' = Normalize-Text $columns[20]
+                'Fecha' = Normalize-Text $columns[21]
+                'Orden' = Normalize-Text $columns[22]
+                'C.I.' = Normalize-Text $columns[23]
+                'Cliente' = Normalize-Text $columns[24]
+                'Sub total' = Normalize-Text $columns[25]
+                'Des-cuento' = Normalize-Text $columns[26]
+                'Iva 12%' = Normalize-Text $columns[29]
+                'Iva 15%' = Normalize-Text $columns[30]
+                'Total' = Normalize-Text $columns[32]
+                'Asiento' = Normalize-Text $columns[33]
+                'Gar.Ext.' = Normalize-Text $columns[34]
+                'T.V.' = Normalize-Text $columns[35]
+            }) | Out-Null
+            continue
+        }
+
+        if ($Kind -eq 'nota') {
+            if ($columns.Count -lt 40) {
+                continue
+            }
+
+            if ((Normalize-Text $columns[0]).ToUpperInvariant() -ne 'AGENCIA :' -or (Normalize-Text $columns[2]).ToUpperInvariant() -ne 'NOTA CRED.') {
+                continue
+            }
+
+            $fallbackRows.Add([pscustomobject]@{
+                'Agencia :' = Normalize-Text $columns[1]
+                'Nota Cred.' = Normalize-Text $columns[20]
+                'Fecha' = Normalize-Text $columns[21]
+                'Tipo' = Normalize-Text $columns[22]
+                'Serie' = Normalize-Text $columns[23]
+                'Factura' = Normalize-Text $columns[24]
+                'Orden' = Normalize-Text $columns[25]
+                'Cedula' = Normalize-Text $columns[26]
+                'Cliente' = Normalize-Text $columns[27]
+                'Sub total' = Normalize-Text $columns[28]
+                'Des-cuento' = Normalize-Text $columns[29]
+                'Iva 15%' = Normalize-Text $columns[32]
+                'Iva 12 %' = Normalize-Text $columns[33]
+                'Total' = Normalize-Text $columns[35]
+                'Anticipo' = Normalize-Text $columns[36]
+                'NETO' = Normalize-Text $columns[37]
+                'Asiento' = Normalize-Text $columns[38]
+                'Gar.Ext.' = Normalize-Text $columns[39]
+            }) | Out-Null
+        }
+    }
+
+    return $fallbackRows.ToArray()
+}
+
+function Build-SourceRows-FromInputs {
+    param(
+        [string]$FacturaPath,
+        [string]$NotaPath,
+        [string]$RiobambaPath,
+        [string]$BrandKey = ''
+    )
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    $appendRows = {
+        param($items, [string]$docType, [string]$templateOverride = '')
+        $index = $rows.Count + 1
+        foreach ($item in $items) {
+            $agencyRaw = $item.'Agencia :'
+            if (-not $agencyRaw) { $agencyRaw = $item.'Agencia' }
+            $agency = Normalize-Text $agencyRaw
+            if ($agency -eq '') { continue }
+            $templateKey = if (-not [string]::IsNullOrWhiteSpace($templateOverride)) { $templateOverride } else { Get-TemplateKey-FromAgency $agency }
+            if ($templateKey -eq '') { continue }
+
+            $serie = Normalize-Text ($item.'Serie')
+            $documentRaw = if ($docType -eq 'DC') { $item.'Nota Cred.' } else { $item.'Factura' }
+            if (-not $documentRaw) { $documentRaw = $item.'Factura' }
+            if (-not $documentRaw) { $documentRaw = $item.'Nota Cred.' }
+            $document = Normalize-Text $documentRaw
+            $order = Normalize-Text ($item.'Orden')
+            $cedulaRaw = $item.'Cedula'
+            if (-not $cedulaRaw) { $cedulaRaw = $item.'C.I.' }
+            $cedula = Normalize-Text $cedulaRaw
+            $customer = Normalize-Text ($item.'Cliente')
+            $affectedDocumentRaw = ''
+            if ($docType -eq 'DC') {
+                $affectedDocumentRaw = Normalize-Text ($item.'Factura')
+            }
+            $fechaText = Normalize-Text ($item.'Fecha')
+            $dateFactValue = $null
+            $dateNoteValue = $null
+            if ($fechaText -ne '') {
+                $parsed = Get-Date -Date $fechaText -ErrorAction SilentlyContinue
+                if ($parsed) {
+                    if ($docType -eq 'DC') {
+                        $dateNoteValue = $parsed.ToOADate()
+                    } else {
+                        $dateFactValue = $parsed.ToOADate()
+                    }
+                }
+            }
+            $subtotal = [double]([decimal]($item.'Sub total'))
+            $discount = [double]([decimal]($item.'Des-cuento'))
+            $iva12 = [double]([decimal]($item.'Iva 12%'))
+            if (-not $iva12) { $iva12 = [double]([decimal]($item.'Iva 12 %')) }
+            $iva15 = [double]([decimal]($item.'Iva 15%'))
+            $iva = [double]([decimal]($iva12 + $iva15))
+            $total = [double]([decimal]($item.'Total'))
+            $garExt = Normalize-Text ($item.'Gar.Ext.')
+            $asiento = Normalize-Text ($item.'Asiento')
+            $tv = Normalize-Text ($item.'T.V.')
+            if (-not $subtotal) { $subtotal = 0.0 }
+            if (-not $discount) { $discount = 0.0 }
+            if (-not $iva12) { $iva12 = 0.0 }
+            if (-not $iva15) { $iva15 = 0.0 }
+            if (-not $total) { $total = 0.0 }
+
+            $rows.Add([pscustomobject]@{
+                RowIndex = $index
+                TemplateKey = $templateKey
+                Agency = $agency
+                Center = ''
+                Order = $order
+                Advisor = ''
+                Line = ''
+                DocType = $docType
+                Cedula = $cedula
+                Customer = $customer
+                DocumentRaw = $document
+                DocumentTrim = $document
+                Series = $serie
+                FormaPago = $tv
+                Authorization = ''
+                DateFactValue = $dateFactValue
+                DateNoteValue = $dateNoteValue
+                NoteCredit = if ($docType -eq 'DC') { $total } else { $discount }
+                TotalManoObra = $subtotal
+                TotalSubcontratos = 0.0
+                TotalInsumos = 0.0
+                TotalServicio = 0.0
+                TotalAccesorios = 0.0
+                TotalRepuestos = 0.0
+                Interes = 0.0
+                Iva = $iva
+                Iva12 = $iva12
+                Iva15 = $iva15
+                Total = $total
+                Costo = 0.0
+                CostoLubricantes = 0.0
+                CostoAccesorios = 0.0
+                CostoRepuestos = 0.0
+                CostoPintura = 0.0
+                CostoSubconNc = 0.0
+                GarExt = $garExt
+                AffectedDocumentTrim = Normalize-Text $affectedDocumentRaw
+                AffectedDocumentRaw = $affectedDocumentRaw
+                MotivoNc = ''
+                ObservacionNc = ''
+            }) | Out-Null
+            $index++
+        }
+    }
+
+    $facturas = Parse-TabFile -Path $FacturaPath -Kind 'factura'
+    $notas = Parse-TabFile -Path $NotaPath -Kind 'nota'
+    $riobamba = Parse-TabFile -Path $RiobambaPath -Kind 'factura'
+
+    & $appendRows $facturas 'FA'
+    & $appendRows $notas 'DC'
+    $riobambaTemplate = $BrandKey
+    if ([string]::IsNullOrWhiteSpace($riobambaTemplate)) {
+        $riobambaTemplate = 'changan'
+    }
+    & $appendRows $riobamba 'FA' $riobambaTemplate
+
+    return $rows.ToArray()
+}
 function Copy-File-WithRetry {
     param(
         [string]$SourcePath,
@@ -166,6 +420,63 @@ function Read-SourceRows-FromFile {
 
     Write-Output ("INFO|source_read|rows={0}" -f $rows.Count)
     return $rows
+}
+
+function Read-PxRows {
+    param(
+        [string]$PxPath,
+        [string]$BrandKey,
+        [string]$WorkingDirectory
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PxPath) -or -not (Test-Path -LiteralPath $PxPath)) {
+        return @()
+    }
+
+    $nodeBinary = Resolve-NodeBinary
+    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'scripts\cxp\servicios_marcas\read_px.js') -Label 'read_px.js'
+    $jsonPath = Join-Path $WorkingDirectory 'px_rows.json'
+    if (Test-Path -LiteralPath $jsonPath) {
+        Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $nodeOutput = & $nodeBinary $readerScript '--input' $PxPath '--brand' $BrandKey '--output-json' $jsonPath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        if ($detail -eq '') { $detail = 'Node termino sin detalle.' }
+        throw ("No se pudo leer el archivo PX. Detalle: {0}" -f $detail)
+    }
+
+    if (-not (Test-Path -LiteralPath $jsonPath)) {
+        return @()
+    }
+
+    $payloadText = Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($payloadText)) {
+        return @()
+    }
+
+    $payload = $payloadText | ConvertFrom-Json
+    if ($null -eq $payload -or $null -eq $payload.rows) {
+        return @()
+    }
+
+    return @($payload.rows)
+}
+
+function Read-TabRows {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        $rows.Add(($line -split "`t")) | Out-Null
+    }
+
+    return $rows.ToArray()
 }
 
 function Open-Workbook-WithRetry {
@@ -1305,6 +1616,8 @@ function Normalize-SourceRows {
             'TotalAccesorios',
             'TotalRepuestos',
             'Interes',
+            'Iva12',
+            'Iva15',
             'Iva',
             'Total',
             'Costo',
@@ -1360,6 +1673,8 @@ function Normalize-SourceRows {
                 TotalAccesorios = $sumValues['TotalAccesorios']
                 TotalRepuestos = $sumValues['TotalRepuestos']
                 Interes = $sumValues['Interes']
+                Iva12 = $sumValues['Iva12']
+                Iva15 = $sumValues['Iva15']
                 Iva = $sumValues['Iva']
                 Total = $sumValues['Total']
                 Costo = $sumValues['Costo']
@@ -1407,6 +1722,63 @@ function Clear-OutputSheet {
         # Si no hay constantes en el rango, no hay nada que limpiar.
     }
     [void][Runtime.Interopservices.Marshal]::ReleaseComObject($range)
+}
+
+function Clear-Worksheet-UsedRange {
+    param([object]$Worksheet)
+
+    try {
+        $Worksheet.UsedRange.ClearContents() | Out-Null
+    } catch {
+    }
+}
+
+function Write-Rows-ToWorksheet {
+    param(
+        [object]$Worksheet,
+        [object[]]$Rows,
+        [int]$StartRow = 1,
+        [int]$StartColumn = 1
+    )
+
+    if ($null -eq $Rows -or $Rows.Count -eq 0) {
+        return
+    }
+
+    $maxColumns = 0
+    foreach ($row in $Rows) {
+        $count = if ($row -is [System.Collections.ICollection]) { $row.Count } else { 0 }
+        if ($count -gt $maxColumns) {
+            $maxColumns = $count
+        }
+    }
+    if ($maxColumns -le 0) { return }
+
+    $rowCount = [int]$Rows.Count
+    $colCount = [int]$maxColumns
+    for ($r = 0; $r -lt $rowCount; $r++) {
+        $row = $Rows[$r]
+        for ($c = 0; $c -lt $colCount; $c++) {
+            $value = $null
+            if ($row -is [System.Collections.ICollection] -and $c -lt $row.Count) {
+                $value = $row[$c]
+            }
+            $Worksheet.Cells.Item($StartRow + $r, $StartColumn + $c).Value2 = $value
+        }
+    }
+}
+
+function Recalculate-WorksheetSafe {
+    param(
+        [object]$Worksheet,
+        [string]$Label
+    )
+
+    try {
+        $Worksheet.Calculate() | Out-Null
+    } catch {
+        Write-Output ("WARN|recalc_failed|{0}|{1}" -f $Label, $_.Exception.Message)
+    }
 }
 
 function Get-Display-Cedula {
@@ -1497,6 +1869,10 @@ function Get-PreferredSourceText {
         return $SourceNormalized
     }
 
+    if (-not $script:AllowTemplateDataFallback) {
+        return $SourceNormalized
+    }
+
     $lookupText = Normalize-Text $LookupValue
     if ($lookupText -ne '') {
         return $LookupValue
@@ -1528,6 +1904,10 @@ function Get-PreferredSourceDate {
         return $SourceValue
     }
 
+    if (-not $script:AllowTemplateDataFallback) {
+        return $null
+    }
+
     return $LookupValue
 }
 
@@ -1537,6 +1917,10 @@ function Get-LookupDefaultText {
         [string]$Section,
         [string]$Field
     )
+
+    if (-not $script:AllowTemplateDataFallback) {
+        return ''
+    }
 
     if ($null -eq $Lookups -or -not $Lookups.ContainsKey('Defaults')) {
         return ''
@@ -1564,6 +1948,10 @@ function Resolve-TemplateGarExt {
     )
 
     $sourceValue = Get-PreferredSourceText -SourceRaw $SourceRaw -SourceNormalized $SourceNormalized
+    if (-not $script:AllowTemplateDataFallback) {
+        return $sourceValue
+    }
+
     $sourceText = (Normalize-Text $sourceValue).ToUpperInvariant()
     $defaultText = Normalize-Text $TemplateDefault
 
@@ -1686,53 +2074,106 @@ function Set-NumericCellSafe {
     }
 }
 
+function Get-IvaBuckets {
+    param(
+        [pscustomobject]$Row,
+        [double]$NetBase
+    )
+
+    $ivaTotal = Round-Amount ([Math]::Abs((To-Number $Row.Iva)))
+    $iva12 = [double]0
+    $iva15 = [double]0
+
+    $hasIva12 = $Row.PSObject.Properties.Name -contains 'Iva12'
+    $hasIva15 = $Row.PSObject.Properties.Name -contains 'Iva15'
+    if ($hasIva12) {
+        $iva12 = Round-Amount ([Math]::Abs((To-Number $Row.Iva12)))
+    }
+    if ($hasIva15) {
+        $iva15 = Round-Amount ([Math]::Abs((To-Number $Row.Iva15)))
+    }
+
+    if (($iva12 + $iva15) -gt 0) {
+        if ($ivaTotal -eq 0) {
+            $ivaTotal = Round-Amount ($iva12 + $iva15)
+        }
+    } elseif ($NetBase -gt 0 -and $ivaTotal -gt 0) {
+        $rate = [double]($ivaTotal / $NetBase)
+        if ($rate -ge 0.14) {
+            $iva15 = $ivaTotal
+        } elseif ($rate -ge 0.105) {
+            $iva12 = $ivaTotal
+        } else {
+            $iva12 = $ivaTotal
+        }
+    }
+
+    if (($iva12 + $iva15) -eq 0 -and $ivaTotal -gt 0) {
+        $iva12 = $ivaTotal
+    }
+
+    return [pscustomobject]@{
+        Total = [double]$ivaTotal
+        Iva12 = [double]$iva12
+        Iva15 = [double]$iva15
+    }
+}
+
 function Get-Invoice-SourceAmounts {
     param([pscustomobject]$Row)
 
-    $totalAmount = Round-Amount ([Math]::Abs($Row.Total))
-    $ivaAmount = Round-Amount ([Math]::Abs($Row.Iva))
+    $subtotalRaw = [Math]::Abs($Row.TotalManoObra) + [Math]::Abs($Row.TotalSubcontratos) + [Math]::Abs($Row.TotalInsumos) + [Math]::Abs($Row.TotalAccesorios) + [Math]::Abs($Row.TotalRepuestos)
+    $subtotal = Round-Amount $subtotalRaw
+    $discount = Round-Amount ([Math]::Abs($Row.NoteCredit))
+    $netoConIva = Round-Amount ($subtotal - $discount)
+    $ivaBuckets = Get-IvaBuckets -Row $Row -NetBase $netoConIva
+    $ivaAmount = [double]$ivaBuckets.Total
     $interestAmount = Round-Amount ([Math]::Abs($Row.Interes))
-    $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
-    $discount = 0.0
-    $subtotal = Round-Amount ($netoConIva + $discount)
+    $totalAmount = Round-Amount ($netoConIva + $ivaAmount + $interestAmount)
     $netoIva0Value = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0.0 }
-    $iva12Value = 0.0
+    $iva12Value = [double]$ivaBuckets.Iva12
+    $iva15Value = [double]$ivaBuckets.Iva15
 
     return [pscustomobject]@{
         Total = [double]$totalAmount
         Iva = [double]$ivaAmount
+        Iva12 = [double]$iva12Value
+        Iva15 = [double]$iva15Value
         Interest = [double]$interestAmount
         NetoConIva = [double]$netoConIva
         Discount = [double]$discount
         Subtotal = [double]$subtotal
         NetoIva0 = [double]$netoIva0Value
-        Iva12 = [double]$iva12Value
     }
 }
 
 function Get-Note-SourceAmounts {
     param([pscustomobject]$Row)
 
-    $totalAmount = Round-Amount ([Math]::Abs($Row.Total))
-    $ivaAmount = Round-Amount ([Math]::Abs($Row.Iva))
+    $subtotalRaw = [Math]::Abs($Row.TotalManoObra) + [Math]::Abs($Row.TotalSubcontratos) + [Math]::Abs($Row.TotalInsumos) + [Math]::Abs($Row.TotalAccesorios) + [Math]::Abs($Row.TotalRepuestos)
+    $subtotal = Round-Amount $subtotalRaw
+    $discount = Round-Amount ([Math]::Abs($Row.NoteCredit))
+    $netoConIva = Round-Amount ($subtotal - $discount)
+    $ivaBuckets = Get-IvaBuckets -Row $Row -NetBase $netoConIva
+    $ivaAmount = [double]$ivaBuckets.Total
     $interestAmount = Round-Amount ([Math]::Abs($Row.Interes))
-    $netoConIva = Round-Amount ($totalAmount - $ivaAmount - $interestAmount)
-    $discount = 0.0
-    $subtotal = Round-Amount ($netoConIva + $discount)
+    $totalAmount = Round-Amount ($netoConIva + $ivaAmount + $interestAmount)
     $netoSinIva = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0.0 }
-    $iva12Value = 0.0
+    $iva12Value = [double]$ivaBuckets.Iva12
+    $iva15Value = [double]$ivaBuckets.Iva15
     $anticipo = 0.0
     $neto = Round-Amount ($totalAmount - $anticipo)
 
     return [pscustomobject]@{
         Total = [double]$totalAmount
         Iva = [double]$ivaAmount
+        Iva12 = [double]$iva12Value
+        Iva15 = [double]$iva15Value
         Interest = [double]$interestAmount
         NetoConIva = [double]$netoConIva
         Discount = [double]$discount
         Subtotal = [double]$subtotal
         NetoSinIva = [double]$netoSinIva
-        Iva12 = [double]$iva12Value
         Anticipo = [double]$anticipo
         Neto = [double]$neto
     }
@@ -1926,6 +2367,8 @@ function Fill-Invoices {
             $sourceAmounts = Get-Invoice-SourceAmounts -Row $row
             $totalAmount = [double]$sourceAmounts.Total
             $ivaAmount = [double]$sourceAmounts.Iva
+            $iva12Amount = [double]$sourceAmounts.Iva12
+            $iva15Amount = [double]$sourceAmounts.Iva15
             $interestAmount = [double]$sourceAmounts.Interest
             $netoConIva = [double]$sourceAmounts.NetoConIva
             $discount = [double]$sourceAmounts.Discount
@@ -1936,17 +2379,11 @@ function Fill-Invoices {
             $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
             $netoIva0Value = [double]$sourceAmounts.NetoIva0
-            $iva12Value = [double]$sourceAmounts.Iva12
             $asientoValue = Get-PreferredSourceText -SourceRaw (Get-Invoice-Asiento -Row $row) -LookupValue $(if ($null -ne $lookup) { $lookup.Asiento } else { '' })
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
-            $tvValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Tv } else { '' }) -SourceRaw $row.LineRaw -SourceNormalized $row.Line
+            $tvValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Tv } else { '' }) -SourceRaw $row.FormaPago -SourceNormalized $row.FormaPago
             $markerValue = 'N'
 
-            $ivaCellValue = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) {
-                $null
-            } else {
-                [double]$ivaAmount
-            }
             $rowNumber = $targetRow
 
             $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
@@ -1961,12 +2398,8 @@ function Fill-Invoices {
             $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = [double]$discount
             $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = [double]$netoConIva
             $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$netoIva0Value
-            $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$iva12Value
-            if ($null -eq $ivaCellValue) {
-                $null = $Worksheet.Cells.Item($targetRow, 13).ClearContents()
-            } else {
-                $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$ivaAmount
-            }
+            $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$iva15Amount
+            $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$iva12Amount
             $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$interestAmount
             $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$totalAmount
             $null = $Worksheet.Cells.Item($targetRow, 16).Value2 = $asientoValue
@@ -1988,8 +2421,8 @@ function Fill-Invoices {
                     9 = [double]$discount
                     10 = [double]$netoConIva
                     11 = [double]$netoIva0Value
-                    12 = [double]$iva12Value
-                    13 = $ivaCellValue
+                    12 = [double]$iva15Amount
+                    13 = [double]$iva12Amount
                     14 = [double]$interestAmount
                     15 = [double]$totalAmount
                     16 = $asientoValue
@@ -2049,6 +2482,8 @@ function Fill-Notes {
             $sourceAmounts = Get-Note-SourceAmounts -Row $row
             $totalAmount = [double]$sourceAmounts.Total
             $ivaAmount = [double]$sourceAmounts.Iva
+            $iva12Amount = [double]$sourceAmounts.Iva12
+            $iva15Amount = [double]$sourceAmounts.Iva15
             $interestAmount = [double]$sourceAmounts.Interest
             $netoConIva = [double]$sourceAmounts.NetoConIva
             $netoSinIva = [double]$sourceAmounts.NetoSinIva
@@ -2067,7 +2502,6 @@ function Fill-Notes {
             $orderValue = Get-PreferredSourceText -SourceRaw ([string]$row.OrderRaw) -SourceNormalized $(if ($orderKey -ne '') { $orderKey } else { Normalize-Text $row.Order }) -LookupValue $(if ($null -ne $lookup) { $lookup.Order } else { '' })
             $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
-            $iva12Value = [double]$sourceAmounts.Iva12
             $asientoValue = ''
             $garExtValue = Resolve-TemplateGarExt -LookupValue $(if ($null -ne $lookup) { $lookup.GarExt } else { '' }) -SourceRaw $row.GarExtRaw -SourceNormalized $row.GarExt -TemplateDefault $garExtDefault
 
@@ -2087,8 +2521,8 @@ function Fill-Notes {
             $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$discount
             $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$netoSinIva
             $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$netoConIva
-            $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$ivaAmount
-            $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$iva12Value
+            $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$iva15Amount
+            $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$iva12Amount
             $null = $Worksheet.Cells.Item($targetRow, 16).Value2 = [double]$interestAmount
             $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = [double]$totalAmount
             $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = [double]$anticipo
@@ -2112,8 +2546,8 @@ function Fill-Notes {
                     11 = [double]$discount
                     12 = [double]$netoSinIva
                     13 = [double]$netoConIva
-                    14 = [double]$ivaAmount
-                    15 = [double]$iva12Value
+                    14 = [double]$iva15Amount
+                    15 = [double]$iva12Amount
                     16 = [double]$interestAmount
                     17 = [double]$totalAmount
                     18 = [double]$anticipo
@@ -2225,7 +2659,8 @@ function Validate-Services-BrandOutput {
     }
 }
 
-$resolvedInputPath = Resolve-RequiredPath -Path $InputPath -Label 'InputPath'
+$primaryInput = if (-not [string]::IsNullOrWhiteSpace($RepVtasPath)) { $RepVtasPath } else { $InputPath }
+$resolvedInputPath = Resolve-RequiredPath -Path $primaryInput -Label 'InputPath'
 if (-not (Test-Path -LiteralPath $OutputDir)) {
     $null = New-Item -ItemType Directory -Path $OutputDir -Force
 }
@@ -2241,9 +2676,28 @@ $null = New-Item -ItemType Directory -Path $stagingDirectory -Force
 $stagedInputPath = Join-Path $stagingDirectory ("input_source{0}" -f ([System.IO.Path]::GetExtension($resolvedInputPath)))
 Copy-File-WithRetry -SourcePath $resolvedInputPath -DestinationPath $stagedInputPath
 try {
+$customSource = @()
+$customRequested = (-not [string]::IsNullOrWhiteSpace($FacturaPath)) -or (-not [string]::IsNullOrWhiteSpace($NotaPath)) -or (-not [string]::IsNullOrWhiteSpace($RiobambaPath))
+if ($customRequested) {
+    $customSource = Build-SourceRows-FromInputs -FacturaPath $FacturaPath -NotaPath $NotaPath -RiobambaPath $RiobambaPath -BrandKey $BrandKey
+    if ($customSource.Count -gt 0) {
+        Write-Output ("INFO|custom_source|rows={0}" -f $customSource.Count)
+        $sourceRows = $customSource
+    } else {
+        Write-Output 'WARN|custom_source_empty|falling_back_to_excel'
+    }
+}
+
+if ($sourceRows.Count -eq 0) {
     $sourceRows = Read-SourceRows-FromFile -InputPath $stagedInputPath -WorkingDirectory $stagingDirectory
-    $repVtasRows = Normalize-SourceRows -Rows $sourceRows
-    $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
+}
+
+if ($sourceRows.Count -eq 0) {
+    throw 'Los archivos de entrada no contienen filas válidas para procesar (custom y fallback vacíos).'
+}
+
+$repVtasRows = Normalize-SourceRows -Rows $sourceRows
+$postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
     if ($repVtasRows.Count -eq 0 -and $postingRows.Count -eq 0) {
         throw 'El archivo fuente no contiene filas validas para generar plantillas.'
     }
@@ -2314,7 +2768,12 @@ try {
         $RunStamp
     }
 
-    foreach ($templateKey in @('changan', 'peug', 'szk', 'tyt')) {
+    $brandOrder = @('changan', 'peug', 'szk', 'tyt')
+    if (-not [string]::IsNullOrWhiteSpace($BrandKey)) {
+        $brandOrder = @($brandOrder | Where-Object { $_ -eq $BrandKey })
+    }
+
+    foreach ($templateKey in $brandOrder) {
         Assert-NotCancelled 'marcas'
         $rowsRepVtas = @($repVtasRows | Where-Object { $_.TemplateKey -eq $templateKey })
         if ($rowsRepVtas.Count -eq 0) {
@@ -2348,6 +2807,42 @@ try {
             $invoiceResult = Fill-Invoices -Worksheet $repSheet -Rows $rowsPosting -Lookups $lookups
             $noteResult = Fill-Notes -Worksheet $noteSheet -Rows $rowsPosting -Lookups $lookups
             $repVtasResult = Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
+
+            $pxSheet = $null
+            try { $pxSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PX') } catch {}
+            if ($null -ne $pxSheet) {
+                Clear-Worksheet-UsedRange -Worksheet $pxSheet
+                $pxRows = Read-PxRows -PxPath $PxPath -BrandKey $templateKey -WorkingDirectory $stagingDirectory
+                Write-Rows-ToWorksheet -Worksheet $pxSheet -Rows $pxRows -StartRow 1 -StartColumn 1
+            }
+
+            $ventasSheet = $null
+            try { $ventasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('VENTAS') } catch {}
+            if ($null -ne $ventasSheet) {
+                Clear-Worksheet-UsedRange -Worksheet $ventasSheet
+                $ventasRows = Read-TabRows -Path $VentasPath
+                Write-Rows-ToWorksheet -Worksheet $ventasSheet -Rows $ventasRows -StartRow 1 -StartColumn 1
+            }
+
+            foreach ($preSheetName in @('PRECONTABILIZACION VENTAS', 'PRECONTABILIZACION COSTOS', 'PRECONTABILIZACIÓN VENTAS', 'PRECONTABILIZACIÓN COSTOS')) {
+                $preSheet = $null
+                try { $preSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @($preSheetName) } catch {}
+                if ($null -ne $preSheet) {
+                    Clear-Worksheet-UsedRange -Worksheet $preSheet
+                }
+            }
+
+            # Recalcular formulas de la plantilla despues de escribir datos
+            Recalculate-WorksheetSafe -Worksheet $repSheet -Label 'REP FACTURACION'
+            Recalculate-WorksheetSafe -Worksheet $noteSheet -Label 'NOTA DE CREDITO'
+            Recalculate-WorksheetSafe -Worksheet $repVtasSheet -Label 'REP VTAS'
+            try {
+                $outputWorkbook.ForceFullCalculation = $true
+                $outputWorkbook.FullCalculationOnLoad = $true
+                $outputWorkbook.Application.CalculateFullRebuild() | Out-Null
+            } catch {
+                Write-Output ("WARN|recalc_full_failed|{0}" -f $_.Exception.Message)
+            }
 
             if ($script:StrictValidationEnabled) {
                 Validate-Services-BrandOutput `

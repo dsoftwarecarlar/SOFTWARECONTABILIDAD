@@ -4,6 +4,7 @@ const fs = require("fs");
 const DEFAULT_INPUT_SOURCE = "CON_MAYORGEN2ACCION3.txt";
 const DEFAULT_OUTPUT_XLSX = "mayor_ret_accion3.xlsx";
 const TEMPLATE_CANDIDATES = [
+  path.resolve(__dirname, "..", "..", "..", "resources", "cxp", "acciones", "templates", "MAYOR RET_ACCION3.xlsx"),
   path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO", "MAYOR RET_ACCION3.xlsx"),
   path.resolve(__dirname, "..", "..", "..", "outputs", "EJEMPLOSAMANO1", "MAYOR RET_ACCION3.xlsx"),
 ];
