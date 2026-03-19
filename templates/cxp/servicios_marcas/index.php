@@ -19,6 +19,45 @@ declare(strict_types=1);
 /** @var array<int, array<string, string>> $brands */
 /** @var array<int, string> $stylesheets */
 /** @var array<int, string> $scripts */
+
+$brandUploadSections = [
+    'changan' => [
+        'label' => 'CHANGAN',
+        'description' => 'Carga el TXT de facturas, el TXT de notas y el mayor que alimenta `VENTAS`.',
+        'fields' => [
+            ['name' => 'factura_changan_file', 'label' => 'REP FACTURACION', 'file' => 'SERREP_FACTURAS_NAFCHAN.TXT'],
+            ['name' => 'nota_changan_file', 'label' => 'NOTA DE CREDITO', 'file' => 'SERREP_NOTACRED_NAFCHAN.TXT'],
+            ['name' => 'mayor_changan_file', 'label' => 'MAYOR', 'file' => 'CON_MAYORGEN2CHAN.TXT'],
+        ],
+    ],
+    'peug' => [
+        'label' => 'PEUGEOT',
+        'description' => 'Carga el TXT de facturas, el TXT de notas y el mayor que alimenta `VENTAS`.',
+        'fields' => [
+            ['name' => 'factura_peug_file', 'label' => 'REP FACTURACION', 'file' => 'SERREP_FACTURAS_NAFPEU.TXT'],
+            ['name' => 'nota_peug_file', 'label' => 'NOTA DE CREDITO', 'file' => 'SERREP_NOTACRED_NAFPEU.TXT'],
+            ['name' => 'mayor_peug_file', 'label' => 'MAYOR', 'file' => 'CON_MAYORGEN2PEU.TXT'],
+        ],
+    ],
+    'szk' => [
+        'label' => 'SUZUKI',
+        'description' => 'Carga el TXT combinado Ambato/Riobamba y el mayor que alimenta `VENTAS`.',
+        'fields' => [
+            ['name' => 'factura_szk_file', 'label' => 'REP FACTURACION', 'file' => 'SERREP_FACTURAS_NAFSUZAMBYRIO.TXT'],
+            ['name' => 'nota_szk_file', 'label' => 'NOTA DE CREDITO', 'file' => 'SERREP_NOTACRED_NAFSUZAMBYRI.TXT'],
+            ['name' => 'mayor_szk_file', 'label' => 'MAYOR', 'file' => 'CON_MAYORGEN2SUZ.TXT'],
+        ],
+    ],
+    'tyt' => [
+        'label' => 'MATRIZ',
+        'description' => 'Carga el TXT de facturas, el TXT de notas y el mayor que alimenta `MAY VTAS`.',
+        'fields' => [
+            ['name' => 'factura_tyt_file', 'label' => 'REP FACTURACION', 'file' => 'SERREP_FACTURAS_NAFTOY.TXT'],
+            ['name' => 'nota_tyt_file', 'label' => 'NOTA DE CREDITO', 'file' => 'SERREP_NOTACRED_NAFTOY.TXT'],
+            ['name' => 'mayor_tyt_file', 'label' => 'MAYOR', 'file' => 'CON_MAYORGEN2TOY.TXT'],
+        ],
+    ],
+];
 ?>
 <!doctype html>
 <html lang="es">
@@ -103,48 +142,42 @@ declare(strict_types=1);
                                     <option value="<?= htmlspecialchars((string)($brandItem['key'] ?? '')) ?>"><?= htmlspecialchars((string)($brandItem['label'] ?? $brandItem['key'])) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <div class="meta">Si no seleccionas una marca, se generan todas.</div>
+                            <div class="meta">Si no seleccionas una marca, se validan y procesan las 4 marcas.</div>
                         </div>
+                        <article class="box">
+                            <span class="tag">Inputs comunes</span>
+                            <strong>Excel compartidos por todas las marcas</strong>
+                            <p>Estos 2 Excel siempre son obligatorios porque alimentan `PX`, costos, cruces y precontabilizacion.</p>
+                            <div class="field">
+                                <label>PX (`detalle-vtas-xliquidar (2).xlsx`)</label>
+                                <input type="file" name="px_file" accept=".xls,.xlsx" required>
+                            </div>
+                            <div class="field">
+                                <label>REP VENTAS / Consolidado (`RepFacturacionServContabilidad (3).xls`)</label>
+                                <input type="file" name="repventas_file" accept=".xls,.xlsx" required>
+                            </div>
+                        </article>
+                        <?php foreach ($brandUploadSections as $uploadBrandKey => $section): ?>
+                            <article class="box" data-brand-section="<?= htmlspecialchars($uploadBrandKey) ?>">
+                                <span class="tag">Inputs <?= htmlspecialchars((string)$section['label']) ?></span>
+                                <strong><?= htmlspecialchars((string)$section['label']) ?></strong>
+                                <p><?= htmlspecialchars((string)$section['description']) ?></p>
+                                <?php foreach ($section['fields'] as $field): ?>
+                                    <div class="field">
+                                        <label><?= htmlspecialchars((string)$field['label']) ?> (`<?= htmlspecialchars((string)$field['file']) ?>`)</label>
+                                        <input
+                                            type="file"
+                                            name="<?= htmlspecialchars((string)$field['name']) ?>"
+                                            accept=".txt"
+                                            data-brand-input="<?= htmlspecialchars($uploadBrandKey) ?>"
+                                        >
+                                    </div>
+                                <?php endforeach; ?>
+                            </article>
+                        <?php endforeach; ?>
                         <div class="field">
-                            <label>REP FACTURACIÓN (SERREP_FACTURAS_NAF_REPFACT.txt)</label>
-                            <input type="file" name="factura_file" accept=".txt" required>
-                        </div>
-                        <div class="field">
-                            <label>NOTA DE CRÉDITO (SERREP_NOTACRED_NAF.txt)</label>
-                            <input type="file" name="nota_file" accept=".txt" required>
-                        </div>
-                        <div class="field">
-                            <label>PX (detalle-vtas-xliquidar.xlsx)</label>
-                            <input type="file" name="px_file" accept=".xls,.xlsx" required>
-                        </div>
-                        <div class="field">
-                            <label>REP VENTAS / Consolidado (RepFacturacionServContabilidad.xls)</label>
-                            <input type="file" name="repventas_file" accept=".xls,.xlsx" required>
-                        </div>
-                        <div class="field">
-                            <label>Mayor CHANGAN (CON_MAYORGEN2CHAN.TXT) opcional</label>
-                            <input type="file" name="mayor_changan_file" accept=".txt">
-                        </div>
-                        <div class="field">
-                            <label>Mayor PEUGEOT (CON_MAYORGEN2PEU.TXT) opcional</label>
-                            <input type="file" name="mayor_peug_file" accept=".txt">
-                        </div>
-                        <div class="field">
-                            <label>Mayor SUZUKI (CON_MAYORGEN2SUZ.TXT) opcional</label>
-                            <input type="file" name="mayor_szk_file" accept=".txt">
-                        </div>
-                        <div class="field">
-                            <label>Mayor MATRIZ (CON_MAYORGEN2TOY.TXT) opcional</label>
-                            <input type="file" name="mayor_tyt_file" accept=".txt">
-                        </div>
-                        <div class="field">
-                            <label>Mayor general legacy (VENTAS.txt) opcional</label>
-                            <input type="file" name="ventas_file" accept=".txt">
-                            <div class="meta">Solo como respaldo si no usas los TXT separados por marca.</div>
-                        </div>
-                        <div class="field riobamba-field" data-riobamba-field style="display:none;">
-                            <label>REP FACTURACION Suzuki Riobamba (legacy) opcional</label>
-                            <input type="file" name="riobamba_file" accept=".txt,.xls,.xlsx">
+                            <label>Regla de validacion</label>
+                            <div class="meta">Si eliges una sola marca, solo sus 3 TXT quedan obligatorios. Si procesas todas, se exigen los 12 TXT.</div>
                         </div>
                         <button type="submit" data-submit-button data-processing-label="<?= htmlspecialchars((string)($pageConfig['upload_panel']['processing_label'] ?? 'Procesando...')) ?>">
                             <?= htmlspecialchars((string)($pageConfig['upload_panel']['button_label'] ?? 'Procesar')) ?>

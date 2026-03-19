@@ -12,10 +12,17 @@ return [
         'history_limit' => 4,
         'history_scan_limit' => 20,
         'accepted_extensions' => ['xls', 'xlsx'],
+        'jobs' => [
+            'worker_timeout_seconds' => 2700,
+            'stale_max_age_seconds' => 3600,
+            'queued_timeout_seconds' => 300,
+            'cancel_grace_seconds' => 120,
+            'dispatch_boot_timeout_seconds' => 20,
+        ],
         'module_note' => 'Modulo operativo para conciliar servicios por marca',
         'hero' => [
             'chip' => 'Flujo productivo activo',
-            'lead' => 'Sube los 4 archivos base del mes y, si quieres cuadrar mayores, agrega los CON_MAYORGEN2 por marca. El sistema separa por marca y genera una plantilla final descargable.',
+            'lead' => 'Sube los 2 Excel comunes del mes y los 3 TXT reales de cada marca. El sistema arma la salida .xls por marca respetando la plantilla base.',
             'note' => 'Salida de usuario: un .xls por marca con sus hojas operativas.',
         ],
         'template_panel' => [
@@ -27,7 +34,7 @@ return [
         ],
         'upload_panel' => [
             'title' => 'Cargar archivos',
-            'description' => 'Sube REP FACTURACION (txt), NOTA DE CREDITO (txt), PX (xlsx), REP VENTAS (xls/xlsx) y, de forma opcional, los CON_MAYORGEN2 por marca.',
+            'description' => 'Los 2 Excel son comunes y los TXT ahora se cargan por marca. Cada marca usa REP FACTURACION, NOTA DE CREDITO y MAYOR propios.',
             'button_label' => 'Procesar y generar plantillas',
             'processing_label' => 'Procesando en segundo plano...',
             'retention_tag' => 'Retencion',

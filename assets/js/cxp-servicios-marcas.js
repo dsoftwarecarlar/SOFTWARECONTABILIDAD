@@ -24,21 +24,28 @@
     }
 
     const brandSelect = document.querySelector('select[name="brand_key"]');
-    const riobambaField = document.querySelector('[data-riobamba-field]');
-    if (brandSelect && riobambaField) {
-        const toggleRiobamba = () => {
-            if (brandSelect.value === 'changan' || brandSelect.value === '') {
-                riobambaField.style.display = '';
-            } else {
-                riobambaField.style.display = 'none';
-                const input = riobambaField.querySelector('input[type="file"]');
-                if (input) {
-                    input.value = '';
-                }
-            }
+    const brandInputs = Array.from(document.querySelectorAll('[data-brand-input]'));
+    const brandSections = Array.from(document.querySelectorAll('[data-brand-section]'));
+    if (brandSelect && brandInputs.length > 0) {
+        const syncBrandRequirements = () => {
+            const selectedBrand = brandSelect.value;
+            const requireAll = selectedBrand === '';
+
+            brandInputs.forEach((input) => {
+                const inputBrand = input.getAttribute('data-brand-input') || '';
+                const isRequired = requireAll || inputBrand === selectedBrand;
+                input.required = isRequired;
+            });
+
+            brandSections.forEach((section) => {
+                const sectionBrand = section.getAttribute('data-brand-section') || '';
+                const isActive = requireAll || sectionBrand === selectedBrand;
+                section.style.opacity = isActive ? '1' : '0.65';
+            });
         };
-        brandSelect.addEventListener('change', toggleRiobamba);
-        toggleRiobamba();
+
+        brandSelect.addEventListener('change', syncBrandRequirements);
+        syncBrandRequirements();
     }
 
     const jobBox = document.querySelector('[data-job-box]');

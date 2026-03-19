@@ -21,7 +21,7 @@ const REP_TEXT_COLUMNS = new Set([
   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
   37, 38, 39, 40, 41,
 ]);
-const NC_TOTAL_COLUMNS = [22, 23, 24, 25, 26, 27, 28, 30, 32, 33, 34, 36, 37, 39, 40];
+const NC_TOTAL_COLUMNS = [22, 23, 24, 25, 26, 27, 28, 30, 33, 34, 36, 37, 39, 40];
 
 const SHEET_CONFIGS = [
   {
@@ -923,6 +923,66 @@ function copyRepSourceToTarget(sourceSheet, targetSheet) {
       }
 
       targetCell.value = convertSourceCellValue(getSourceCell(sourceSheet, rowNumber, column), column);
+    }
+  }
+}
+
+function convertNcSourceCellValue(cell) {
+  if (!cell) {
+    return null;
+  }
+
+  if (
+    cell.w != null
+    && String(cell.w).trim() !== ""
+    && (
+      (typeof cell.v === "number" && Number.isFinite(cell.v))
+      || (cell.v instanceof Date && !Number.isNaN(cell.v.getTime()))
+    )
+    && /[/:]/.test(String(cell.w))
+  ) {
+    return {
+      richText: [
+        {
+          text: String(cell.w),
+        },
+      ],
+    };
+  }
+
+  if (cell.f) {
+    return {
+      formula: cell.f,
+      result: cell.v == null ? undefined : cell.v,
+    };
+  }
+
+  if (cell.v == null) {
+    return null;
+  }
+
+  if (typeof cell.v === "string") {
+    const text = sourceLiteralText(cell);
+    return text === "" ? null : text;
+  }
+
+  return cell.v;
+}
+
+function copyNcSourceHeaderRows(sourceSheet, targetWorksheet, startRow = 1, endRow = 7) {
+  if (!sourceSheet || !targetWorksheet) {
+    return;
+  }
+
+  for (let rowNumber = startRow; rowNumber <= endRow; rowNumber += 1) {
+    clearWorksheetRange(targetWorksheet, rowNumber, rowNumber, 1, NC_MAX_COLUMN);
+    const row = targetWorksheet.getRow(rowNumber);
+    for (let column = 1; column <= NC_MAX_COLUMN; column += 1) {
+      if (isMergedSlave(row.getCell(column))) {
+        continue;
+      }
+
+      row.getCell(column).value = convertNcSourceCellValue(getSourceCell(sourceSheet, rowNumber, column));
     }
   }
 }
@@ -2088,7 +2148,13 @@ function applyNcSheetFromNcSource(workbook, templateWorkbook, key, ncSourceData,
   }
 
   const resolvedRows = buildNcRowsFromSourceSheet(ncSourceData?.sheet || null, key);
-  const sourceRange = ncSourceData?.dateRange || dateRange || {};
+  copyNcSourceHeaderRows(ncSourceData?.sheet || null, worksheet, 1, 7);
+  const sourceRange = (
+    (ncSourceData?.dateRange?.minDate instanceof Date && !Number.isNaN(ncSourceData.dateRange.minDate.getTime()))
+    || (ncSourceData?.dateRange?.maxDate instanceof Date && !Number.isNaN(ncSourceData.dateRange.maxDate.getTime()))
+  )
+    ? ncSourceData.dateRange
+    : (dateRange || {});
   const minDate = getMonthStartDate(sourceRange.minDate) || sourceRange.minDate || null;
   const maxDate = sourceRange.maxDate || null;
   if (minDate instanceof Date && !Number.isNaN(minDate.getTime()) && maxDate instanceof Date && !Number.isNaN(maxDate.getTime())) {
@@ -3647,7 +3713,7 @@ async function main() {
         templateWorkbook,
         config.key,
         ncSourceData,
-        ncSourceData.dateRange || sourceData.dateRange || globalSourceRange,
+        sourceData.dateRange || globalSourceRange,
       );
     } else if (useTemplateCarryover) {
       applyNcSheetFromTemplateRows(workbook, templateWorkbook, config.key, ncResult.rows || [], sourceData.dateRange || globalSourceRange);

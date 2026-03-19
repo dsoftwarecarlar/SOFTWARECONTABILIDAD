@@ -19,10 +19,10 @@ param(
     [string]$BrandKey = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$FacturaPath = '',
+    [string]$FacturaChanganPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$NotaPath = '',
+    [string]$NotaChanganPath = '',
 
     [Parameter(Mandatory = $false)]
     [string]$PxPath = '',
@@ -34,19 +34,31 @@ param(
     [string]$MayorChanganPath = '',
 
     [Parameter(Mandatory = $false)]
+    [string]$FacturaPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$NotaPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
     [string]$MayorPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$FacturaSzkPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$NotaSzkPath = '',
 
     [Parameter(Mandatory = $false)]
     [string]$MayorSzkPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$MayorTytPath = '',
+    [string]$FacturaTytPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$VentasPath = '',
+    [string]$NotaTytPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$RiobambaPath = ''
+    [string]$MayorTytPath = ''
 )
 
 $legacyScript = Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) 'run_servicios_marcas.ps1'
@@ -61,15 +73,19 @@ if (-not (Test-Path -LiteralPath $legacyScript)) {
     -RunStamp $RunStamp `
     -CancelPath $CancelPath `
     -BrandKey $BrandKey `
-    -FacturaPath $FacturaPath `
-    -NotaPath $NotaPath `
+    -FacturaChanganPath $FacturaChanganPath `
+    -NotaChanganPath $NotaChanganPath `
     -PxPath $PxPath `
     -RepVtasPath $RepVtasPath `
     -MayorChanganPath $MayorChanganPath `
+    -FacturaPeugPath $FacturaPeugPath `
+    -NotaPeugPath $NotaPeugPath `
     -MayorPeugPath $MayorPeugPath `
+    -FacturaSzkPath $FacturaSzkPath `
+    -NotaSzkPath $NotaSzkPath `
     -MayorSzkPath $MayorSzkPath `
-    -MayorTytPath $MayorTytPath `
-    -VentasPath $VentasPath `
-    -RiobambaPath $RiobambaPath
+    -FacturaTytPath $FacturaTytPath `
+    -NotaTytPath $NotaTytPath `
+    -MayorTytPath $MayorTytPath
 
 exit $LASTEXITCODE

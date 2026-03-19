@@ -29,11 +29,41 @@ function firstExistingPath(candidates) {
   return candidates[0];
 }
 
-function serviciosFixturePath(fileName) {
-  return firstExistingPath([
-    path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", fileName),
-    path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", fileName),
-  ]);
+function serviciosFixturePath(fileKey) {
+  const candidatesByKey = {
+    px: [
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "detalle-vtas-xliquidar (2).xlsx"),
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "detalle-vtas-xliquidar.xlsx"),
+      path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", "detalle-vtas-xliquidar.xlsx"),
+    ],
+    repventas: [
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "RepFacturacionServContabilidad (3).xls"),
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "RepFacturacionServContabilidad.xls"),
+      path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", "RepFacturacionServContabilidad.xls"),
+    ],
+    factura_tyt: [
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "archivosasubirtoy", "SERREP_FACTURAS_NAFTOY.TXT"),
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "SERREP_FACTURAS_NAF_REPFACT.txt"),
+      path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", "SERREP_FACTURAS_NAF_REPFACT.txt"),
+    ],
+    nota_tyt: [
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "archivosasubirtoy", "SERREP_NOTACRED_NAFTOY.TXT"),
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "SERREP_NOTACRED_NAF.txt"),
+      path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", "SERREP_NOTACRED_NAF.txt"),
+    ],
+    mayor_tyt: [
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "archivosasubirtoy", "CON_MAYORGEN2TOY.TXT"),
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", "CON_MAYORGEN2TOY.TXT"),
+      path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", "CON_MAYORGEN2TOY.TXT"),
+    ],
+  };
+
+  const candidates = candidatesByKey[fileKey] || [
+    path.join(ROOT, "resources", "cxp", "servicios_marcas", "fixtures", fileKey),
+    path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA2", fileKey),
+  ];
+
+  return firstExistingPath(candidates);
 }
 
 function sleep(ms) {
@@ -167,7 +197,7 @@ function setSheetTextCell(sheet, rowIndex, columnIndex, value) {
 }
 
 function createFacturaCanaryFile() {
-  const sourcePath = serviciosFixturePath("SERREP_FACTURAS_NAF_REPFACT.txt");
+  const sourcePath = serviciosFixturePath("factura_tyt");
   const lines = fs.readFileSync(sourcePath, "utf8").split(/\r?\n/);
 
   let targetLine = -1;
@@ -197,7 +227,7 @@ function createFacturaCanaryFile() {
 }
 
 function createPxCanaryFile() {
-  const sourcePath = serviciosFixturePath("detalle-vtas-xliquidar.xlsx");
+  const sourcePath = serviciosFixturePath("px");
   const workbook = XLSX.readFile(sourcePath, { cellFormula: false, cellNF: true, cellText: true });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
@@ -218,7 +248,10 @@ function createPxCanaryFile() {
       continue;
     }
 
-    if (normalizeText(row[3]) !== "" && normalizeText(row[15]) !== "") {
+    const agencia = normalizeText(row[1]);
+    const factura = normalizeText(row[4]);
+    const item = normalizeText(row[15]);
+    if (/^\d+$/.test(agencia) && factura !== "" && item !== "" && item !== "ITEM") {
       targetRow = index;
       break;
     }
@@ -350,13 +383,13 @@ async function runServiciosContract() {
   try {
     const files = [
       {
-        field: "factura_file",
+        field: "factura_tyt_file",
         path: facturaCanary.filePath,
         contentType: "text/plain",
       },
       {
-        field: "nota_file",
-        path: serviciosFixturePath("SERREP_NOTACRED_NAF.txt"),
+        field: "nota_tyt_file",
+        path: serviciosFixturePath("nota_tyt"),
         contentType: "text/plain",
       },
       {
@@ -366,8 +399,13 @@ async function runServiciosContract() {
       },
       {
         field: "repventas_file",
-        path: serviciosFixturePath("RepFacturacionServContabilidad.xls"),
+        path: serviciosFixturePath("repventas"),
         contentType: "application/vnd.ms-excel",
+      },
+      {
+        field: "mayor_tyt_file",
+        path: serviciosFixturePath("mayor_tyt"),
+        contentType: "text/plain",
       },
     ];
 

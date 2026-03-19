@@ -130,6 +130,10 @@ final class RepuestosTytservScriptGateway
             '-inputpeug' => '--input-peug',
             '-inputchgn' => '--input-chgn',
             '-inputszk' => '--input-szk',
+            '-inputnctyt' => '--input-nc-tyt',
+            '-inputncpeug' => '--input-nc-peug',
+            '-inputncchgn' => '--input-nc-chgn',
+            '-inputncszk' => '--input-nc-szk',
             default => trim($flag),
         };
     }

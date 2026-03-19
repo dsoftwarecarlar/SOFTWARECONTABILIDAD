@@ -19,10 +19,10 @@ param(
     [string]$BrandKey = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$FacturaPath = '',
+    [string]$FacturaChanganPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$NotaPath = '',
+    [string]$NotaChanganPath = '',
 
     [Parameter(Mandatory = $false)]
     [string]$PxPath = '',
@@ -34,19 +34,31 @@ param(
     [string]$MayorChanganPath = '',
 
     [Parameter(Mandatory = $false)]
+    [string]$FacturaPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$NotaPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
     [string]$MayorPeugPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$FacturaSzkPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$NotaSzkPath = '',
 
     [Parameter(Mandatory = $false)]
     [string]$MayorSzkPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$MayorTytPath = '',
+    [string]$FacturaTytPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$VentasPath = '',
+    [string]$NotaTytPath = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$RiobambaPath = ''
+    [string]$MayorTytPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -206,99 +218,142 @@ function Parse-TabFile {
     return $fallbackRows.ToArray()
 }
 
-function Build-SourceRows-FromInputs {
+function Build-SourceRows-FromBrandInputs {
     param(
-        [string]$FacturaPath,
-        [string]$NotaPath,
-        [string]$RiobambaPath,
+        [hashtable]$BrandFileMap,
         [string]$BrandKey = ''
     )
 
     $rows = New-Object System.Collections.Generic.List[object]
+    $brandOrder = @('changan', 'peug', 'szk', 'tyt')
+    if (-not [string]::IsNullOrWhiteSpace($BrandKey)) {
+        $brandOrder = @($brandOrder | Where-Object { $_ -eq $BrandKey })
+    }
+
     $appendRows = {
-        param($items, [string]$docType, [string]$templateOverride = '')
+        param(
+            [object[]]$Items,
+            [string]$DocType,
+            [string]$TemplateKey
+        )
+
         $index = $rows.Count + 1
-        foreach ($item in $items) {
+        foreach ($item in $Items) {
             $agencyRaw = $item.'Agencia :'
             if (-not $agencyRaw) { $agencyRaw = $item.'Agencia' }
             $agency = Normalize-Text $agencyRaw
-            if ($agency -eq '') { continue }
-            $templateKey = if (-not [string]::IsNullOrWhiteSpace($templateOverride)) { $templateOverride } else { Get-TemplateKey-FromAgency $agency }
-            if ($templateKey -eq '') { continue }
+            if ($agency -eq '' -or [string]::IsNullOrWhiteSpace($TemplateKey)) {
+                continue
+            }
 
-            $serie = Normalize-Text ($item.'Serie')
-            $documentRaw = if ($docType -eq 'DC') { $item.'Nota Cred.' } else { $item.'Factura' }
+            $seriesRaw = Normalize-Text ($item.'Serie')
+            $documentRaw = if ($DocType -eq 'DC') { $item.'Nota Cred.' } else { $item.'Factura' }
             if (-not $documentRaw) { $documentRaw = $item.'Factura' }
             if (-not $documentRaw) { $documentRaw = $item.'Nota Cred.' }
             $document = Normalize-Text $documentRaw
-            $order = Normalize-Text ($item.'Orden')
+            if ($document -eq '') { continue }
+
+            $orderRaw = Normalize-Text ($item.'Orden')
             $cedulaRaw = $item.'Cedula'
             if (-not $cedulaRaw) { $cedulaRaw = $item.'C.I.' }
             $cedula = Normalize-Text $cedulaRaw
-            $customer = Normalize-Text ($item.'Cliente')
+            $customerRaw = Normalize-Text ($item.'Cliente')
             $affectedDocumentRaw = ''
-            if ($docType -eq 'DC') {
+            if ($DocType -eq 'DC') {
                 $affectedDocumentRaw = Normalize-Text ($item.'Factura')
             }
+
             $fechaText = Normalize-Text ($item.'Fecha')
             $dateFactValue = $null
             $dateNoteValue = $null
             if ($fechaText -ne '') {
                 $parsed = Get-Date -Date $fechaText -ErrorAction SilentlyContinue
                 if ($parsed) {
-                    if ($docType -eq 'DC') {
+                    if ($DocType -eq 'DC') {
                         $dateNoteValue = $parsed.ToOADate()
                     } else {
                         $dateFactValue = $parsed.ToOADate()
                     }
                 }
             }
+
             $subtotal = [double]([decimal]($item.'Sub total'))
             $discount = [double]([decimal]($item.'Des-cuento'))
             $iva12 = [double]([decimal]($item.'Iva 12%'))
             if (-not $iva12) { $iva12 = [double]([decimal]($item.'Iva 12 %')) }
             $iva15 = [double]([decimal]($item.'Iva 15%'))
             $iva = [double]([decimal]($iva12 + $iva15))
+            $interest = [double]([decimal]($item.'Interes'))
             $total = [double]([decimal]($item.'Total'))
             $garExt = Normalize-Text ($item.'Gar.Ext.')
-            $asiento = Normalize-Text ($item.'Asiento')
             $tv = Normalize-Text ($item.'T.V.')
+            $anticipo = [double]([decimal]($item.'Anticipo'))
+            $neto = [double]([decimal]($item.'NETO'))
+            $netoConIva = [double]([decimal]($item.'Netocon Iva'))
+            $netoSinIva = [double]([decimal]($item.'Netosin Iva'))
+            $netoIva0 = [double]([decimal]($item.'Neto Iva 0'))
+
+            $noteCredit = $discount
+            $manoObra = $subtotal
+            if (-not $manoObra) {
+                if ($DocType -eq 'DC') {
+                    $manoObra = $netoConIva + $netoSinIva + $discount
+                } else {
+                    $manoObra = $netoConIva + $netoIva0 + $discount
+                }
+            }
+
             if (-not $subtotal) { $subtotal = 0.0 }
-            if (-not $discount) { $discount = 0.0 }
+            if (-not $noteCredit) { $noteCredit = 0.0 }
             if (-not $iva12) { $iva12 = 0.0 }
             if (-not $iva15) { $iva15 = 0.0 }
+            if (-not $iva) { $iva = 0.0 }
+            if (-not $interest) { $interest = 0.0 }
             if (-not $total) { $total = 0.0 }
+            if (-not $anticipo) { $anticipo = 0.0 }
+            if (-not $neto) { $neto = 0.0 }
+            if (-not $manoObra) { $manoObra = $subtotal }
 
             $rows.Add([pscustomobject]@{
                 RowIndex = $index
-                TemplateKey = $templateKey
+                TemplateKey = $TemplateKey
                 Agency = $agency
+                AgencyRaw = $agencyRaw
                 Center = ''
-                Order = $order
+                CenterRaw = ''
+                Order = $orderRaw
+                OrderRaw = $orderRaw
                 Advisor = ''
+                AdvisorRaw = ''
                 Line = ''
-                DocType = $docType
+                LineRaw = ''
+                DocType = $DocType
                 Cedula = $cedula
-                Customer = $customer
+                CedulaRaw = $cedulaRaw
+                Customer = $customerRaw
+                CustomerRaw = $customerRaw
                 DocumentRaw = $document
-                DocumentTrim = $document
-                Series = $serie
+                DocumentTrim = (Trim-Document $document)
+                Series = $seriesRaw
+                SeriesRaw = $seriesRaw
                 FormaPago = $tv
                 Authorization = ''
                 DateFactValue = $dateFactValue
                 DateNoteValue = $dateNoteValue
-                NoteCredit = if ($docType -eq 'DC') { $total } else { $discount }
-                TotalManoObra = $subtotal
+                NoteCredit = $noteCredit
+                TotalManoObra = $manoObra
                 TotalSubcontratos = 0.0
                 TotalInsumos = 0.0
                 TotalServicio = 0.0
                 TotalAccesorios = 0.0
                 TotalRepuestos = 0.0
-                Interes = 0.0
+                Interes = $interest
                 Iva = $iva
                 Iva12 = $iva12
                 Iva15 = $iva15
                 Total = $total
+                Anticipo = $anticipo
+                Neto = $neto
                 Costo = 0.0
                 CostoLubricantes = 0.0
                 CostoAccesorios = 0.0
@@ -306,7 +361,8 @@ function Build-SourceRows-FromInputs {
                 CostoPintura = 0.0
                 CostoSubconNc = 0.0
                 GarExt = $garExt
-                AffectedDocumentTrim = Normalize-Text $affectedDocumentRaw
+                GarExtRaw = $garExt
+                AffectedDocumentTrim = (Trim-Document $affectedDocumentRaw)
                 AffectedDocumentRaw = $affectedDocumentRaw
                 MotivoNc = ''
                 ObservacionNc = ''
@@ -315,17 +371,18 @@ function Build-SourceRows-FromInputs {
         }
     }
 
-    $facturas = Parse-TabFile -Path $FacturaPath -Kind 'factura'
-    $notas = Parse-TabFile -Path $NotaPath -Kind 'nota'
-    $riobamba = Parse-TabFile -Path $RiobambaPath -Kind 'factura'
+    foreach ($targetBrand in $brandOrder) {
+        if (-not $BrandFileMap.ContainsKey($targetBrand)) {
+            continue
+        }
 
-    & $appendRows $facturas 'FA'
-    & $appendRows $notas 'DC'
-    $riobambaTemplate = $BrandKey
-    if ([string]::IsNullOrWhiteSpace($riobambaTemplate)) {
-        $riobambaTemplate = 'changan'
+        $paths = $BrandFileMap[$targetBrand]
+        $facturas = Parse-TabFile -Path (Normalize-Text $paths.FacturaPath) -Kind 'factura'
+        $notas = Parse-TabFile -Path (Normalize-Text $paths.NotaPath) -Kind 'nota'
+
+        & $appendRows $facturas 'FA' $targetBrand
+        & $appendRows $notas 'DC' $targetBrand
     }
-    & $appendRows $riobamba 'FA' $riobambaTemplate
 
     return $rows.ToArray()
 }
@@ -474,6 +531,178 @@ function Read-PxRows {
     }
 
     return @($payload.rows)
+}
+
+function Get-BrandDisplayLabel {
+    param([string]$BrandKey)
+
+    switch ((Normalize-Text $BrandKey).ToLowerInvariant()) {
+        'changan' { return 'CHANGAN' }
+        'peug' { return 'PEUGEOT' }
+        'szk' { return 'SUZUKI' }
+        'tyt' { return 'TOYOTA' }
+        default { return (Normalize-Text $BrandKey).ToUpperInvariant() }
+    }
+}
+
+function Get-IndexedRowValue {
+    param(
+        [object]$Row,
+        [int]$Index
+    )
+
+    if ($null -eq $Row) {
+        return ''
+    }
+
+    if ($Row -is [System.Collections.IList] -and $Index -lt $Row.Count) {
+        return Normalize-Text $Row[$Index]
+    }
+
+    return ''
+}
+
+function Convert-PxRowsToDetailRows {
+    param([object[]]$Rows)
+
+    $detailRows = New-Object System.Collections.Generic.List[object]
+    foreach ($row in @($Rows)) {
+        $ag = Get-IndexedRowValue -Row $row -Index 1
+        $factura = Get-IndexedRowValue -Row $row -Index 4
+        $item = Get-IndexedRowValue -Row $row -Index 15
+
+        if ($ag -eq '' -or $factura -eq '' -or $item -eq '') {
+            continue
+        }
+
+        if ($ag -notmatch '^\d+$') {
+            continue
+        }
+
+        $detailRows.Add([pscustomobject]@{
+            Agencia = $ag
+            Estado = Get-IndexedRowValue -Row $row -Index 2
+            Orden = Get-IndexedRowValue -Row $row -Index 3
+            Factura = $factura
+            Fecha = Get-IndexedRowValue -Row $row -Index 6
+            PxNo = Get-IndexedRowValue -Row $row -Index 8
+            Cuenta = Get-IndexedRowValue -Row $row -Index 9
+            Fr = Get-IndexedRowValue -Row $row -Index 11
+            Codigo = Get-IndexedRowValue -Row $row -Index 13
+            Item = $item
+            PvpBruto = To-Number (Get-IndexedRowValue -Row $row -Index 19)
+            DescPct = To-Number (Get-IndexedRowValue -Row $row -Index 21)
+            DescValor = To-Number (Get-IndexedRowValue -Row $row -Index 22)
+            PvpNeto = To-Number (Get-IndexedRowValue -Row $row -Index 23)
+            Costo = To-Number (Get-IndexedRowValue -Row $row -Index 24)
+            Origen = Get-IndexedRowValue -Row $row -Index 25
+        }) | Out-Null
+    }
+
+    return $detailRows.ToArray()
+}
+
+function Get-PxDetailRanges {
+    param([object]$Worksheet)
+
+    $ranges = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    $usedRange = $null
+    try {
+        $usedRange = $Worksheet.UsedRange
+        $lastRow = [int]($usedRange.Row + $usedRange.Rows.Count - 1)
+        for ($row = 1; $row -le $lastRow; $row++) {
+            $formulaText = Normalize-Text $Worksheet.Cells.Item($row, 12).Formula
+            if ($formulaText -eq '') {
+                continue
+            }
+
+            $normalizedFormula = $formulaText.ToUpperInvariant().Replace('$', '')
+            if ($normalizedFormula -notmatch 'SUBTOTAL\(9,L(\d+):L(\d+)\)') {
+                continue
+            }
+
+            $startRow = [int]$Matches[1]
+            $endRow = [int]$Matches[2]
+            $key = '{0}:{1}' -f $startRow, $endRow
+            if ($seen.ContainsKey($key)) {
+                continue
+            }
+
+            $seen[$key] = $true
+            $ranges.Add([pscustomobject]@{
+                StartRow = $startRow
+                EndRow = $endRow
+            }) | Out-Null
+        }
+    } finally {
+        if ($null -ne $usedRange) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($usedRange)
+        }
+    }
+
+    return @($ranges.ToArray() | Sort-Object @{ Expression = { [int]$_.StartRow } })
+}
+
+function Write-PxRows-ToWorksheet {
+    param(
+        [object]$Worksheet,
+        [object[]]$Rows,
+        [string]$BrandKey = ''
+    )
+
+    $ranges = @(Get-PxDetailRanges -Worksheet $Worksheet)
+    if ($ranges.Count -lt 2) {
+        throw "La hoja PX no contiene los bloques esperados para notas de credito y ventas por liquidar."
+    }
+
+    $topRange = $ranges[0]
+    $bottomRange = $ranges[1]
+
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow $topRange.StartRow -EndColumn 'Q' -EndRow $topRange.EndRow
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow $bottomRange.StartRow -EndColumn 'Q' -EndRow $bottomRange.EndRow
+
+    $detailRows = @(Convert-PxRowsToDetailRows -Rows $Rows)
+    $capacity = [int]($bottomRange.EndRow - $bottomRange.StartRow + 1)
+    if ($detailRows.Count -gt $capacity) {
+        throw ("Las filas PX de {0} exceden la capacidad de la plantilla. Capacidad={1}, filas={2}" -f $BrandKey, $capacity, $detailRows.Count)
+    }
+
+    $targetRow = [int]$bottomRange.StartRow
+    foreach ($row in $detailRows) {
+        $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $row.Agencia)
+        $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $row.Estado)
+        $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $row.Orden)
+        $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $row.Factura)
+        $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $row.Fecha)
+        $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $row.PxNo)
+        $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = (Get-Excel-TextLiteral $row.Cuenta)
+        $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = (Get-Excel-TextLiteral $row.Fr)
+        $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = (Get-Excel-TextLiteral $row.Codigo)
+        $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = (Get-Excel-TextLiteral $row.Item)
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 12 -Value $row.PvpBruto -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 13 -Value $row.DescPct -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 14 -Value $row.DescValor -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 15 -Value $row.PvpNeto -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 16 -Value $row.Costo -BlankIfZero
+        $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = (Get-Excel-TextLiteral $row.Origen)
+        $targetRow++
+    }
+
+    $processCell = $Worksheet.Cells.Item(3, 4)
+    try {
+        $null = $processCell.Value2 = (Get-Excel-TextLiteral ((Get-Date).ToString('dd/MM/yyyy HH.mm.ss')))
+    } finally {
+        [void][Runtime.Interopservices.Marshal]::ReleaseComObject($processCell)
+    }
+
+    $null = $Worksheet.Cells.Item(5, 4).Value2 = (Get-Excel-TextLiteral (Get-BrandDisplayLabel -BrandKey $BrandKey))
+
+    return [pscustomobject]@{
+        RowCount = $detailRows.Count
+        TopCapacity = [int]($topRange.EndRow - $topRange.StartRow + 1)
+        BottomCapacity = $capacity
+    }
 }
 
 function Read-MayorRows {
@@ -1009,8 +1238,16 @@ function Normalize-ExcelLogicalText {
     param([object]$Value)
 
     $text = Normalize-Text $Value
+    if ($text -ne '') {
+        $text = ($text -replace '\s+', ' ').Trim()
+    }
+
     if ($text.Length -gt 1 -and $text.StartsWith("'")) {
-        return $text.Substring(1)
+        $text = $text.Substring(1)
+    }
+
+    if ($text -ne '') {
+        $text = ($text -replace '\s+', ' ').Trim()
     }
 
     return $text
@@ -1602,6 +1839,8 @@ function Normalize-SourceRows {
                 (Round-Amount $row.Total),
                 (Round-Amount $row.Iva),
                 (Round-Amount $row.Interes),
+                (Round-Amount $row.Anticipo),
+                (Round-Amount $row.Neto),
                 $row.AffectedDocumentTrim,
                 $row.MotivoNc,
                 $row.ObservacionNc
@@ -1848,8 +2087,7 @@ function Write-Rows-ToWorksheet {
 function Resolve-MayorPathForBrand {
     param(
         [string]$BrandKey,
-        [hashtable]$MayorPaths,
-        [string]$LegacyPath = ''
+        [hashtable]$MayorPaths
     )
 
     $key = (Normalize-Text $BrandKey).ToLowerInvariant()
@@ -1860,7 +2098,7 @@ function Resolve-MayorPathForBrand {
         }
     }
 
-    return (Normalize-Text $LegacyPath)
+    return ''
 }
 
 function Get-MayorSheetSectionLayouts {
@@ -2006,7 +2244,10 @@ function Write-MayorRows-ToWorksheet {
     foreach ($layout in $layouts) {
         $knownAccounts[$layout.Account] = $true
         Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'A' -StartRow $layout.StartRow -EndColumn 'M' -EndRow $layout.EndRow
-        $accountRows = if ($rowsByAccount.ContainsKey($layout.Account)) { @($rowsByAccount[$layout.Account]) } else { @() }
+        $accountRows = @()
+        if ($rowsByAccount.ContainsKey($layout.Account)) {
+            $accountRows = $rowsByAccount[$layout.Account].ToArray()
+        }
         $capacity = [int]($layout.EndRow - $layout.StartRow + 1)
         if ($accountRows.Count -gt $capacity) {
             throw ("El mayor para {0} excede la capacidad de la seccion {1} en {2}. Capacidad={3}, filas={4}" -f $BrandKey, $layout.Account, $Worksheet.Name, $capacity, $accountRows.Count)
@@ -2029,6 +2270,580 @@ function Write-MayorRows-ToWorksheet {
     return [pscustomobject]@{
         RowCount = $writtenCount
         SectionCount = $layouts.Count
+    }
+}
+
+function Get-CompactAccountCode {
+    param([object]$Value)
+
+    $text = Normalize-Text $Value
+    if ($text -eq '') {
+        return ''
+    }
+
+    return ($text -replace '[^0-9]', '')
+}
+
+function Get-NormalizedCenterCode {
+    param([object]$Value)
+
+    $text = Normalize-Text $Value
+    if ($text -eq '') {
+        return ''
+    }
+
+    if ($text -match '^\d+$') {
+        return $text.PadLeft(2, '0')
+    }
+
+    return $text
+}
+
+function Get-Brand-PeriodDateValue {
+    param(
+        [object[]]$Rows,
+        [object[]]$MayorRows
+    )
+
+    $maxDate = $null
+
+    foreach ($row in @($Rows)) {
+        foreach ($candidate in @($row.DateFactValue, $row.DateNoteValue)) {
+            if ($null -eq $candidate -or $candidate -eq '') {
+                continue
+            }
+
+            $candidateValue = [double]$candidate
+            if ($null -eq $maxDate -or $candidateValue -gt [double]$maxDate) {
+                $maxDate = $candidateValue
+            }
+        }
+    }
+
+    foreach ($row in @($MayorRows)) {
+        $candidate = $row.date_value
+        if ($null -eq $candidate -or $candidate -eq '') {
+            continue
+        }
+
+        $candidateValue = [double]$candidate
+        if ($null -eq $maxDate -or $candidateValue -gt [double]$maxDate) {
+            $maxDate = $candidateValue
+        }
+    }
+
+    if ($null -eq $maxDate) {
+        return (Get-Date).ToOADate()
+    }
+
+    return [double]$maxDate
+}
+
+function Add-GeneratedTemplateRow {
+    param(
+        [System.Collections.Generic.List[object]]$Target,
+        [pscustomobject]$Prototype,
+        [double]$Debit = 0.0,
+        [double]$Credit = 0.0
+    )
+
+    if ($null -eq $Prototype) {
+        return
+    }
+
+    $Target.Add([pscustomobject]@{
+        Ag = Normalize-Text $Prototype.Ag
+        Doc = Normalize-Text $Prototype.Doc
+        Line = Normalize-Text $Prototype.Line
+        Account = Normalize-Text $Prototype.Account
+        Description = Normalize-Text $Prototype.Description
+        CostCenter = Normalize-Text $Prototype.CostCenter
+        Debit = [double](Round-Amount $Debit)
+        Credit = [double](Round-Amount $Credit)
+        Asiento = Normalize-Text $Prototype.Asiento
+    }) | Out-Null
+}
+
+function Add-TemplateAggregateRows {
+    param(
+        [System.Collections.Generic.List[object]]$Target,
+        [object[]]$Prototypes,
+        [hashtable]$TotalsByCenter,
+        [string]$AmountSide = 'Debit',
+        [switch]$EnsureAtLeastOneRow
+    )
+
+    $orderedPrototypes = @($Prototypes)
+    if ($orderedPrototypes.Count -eq 0) {
+        return
+    }
+
+    $written = $false
+    foreach ($center in @($TotalsByCenter.Keys | Sort-Object)) {
+        $prototype = @($orderedPrototypes | Where-Object { (Normalize-Text $_.Ag) -eq $center } | Select-Object -First 1)[0]
+        if ($null -eq $prototype) {
+            $prototype = $orderedPrototypes[0]
+        }
+
+        $amount = [double](Round-Amount ([double]$TotalsByCenter[$center]))
+        if ($AmountSide -eq 'Credit') {
+            Add-GeneratedTemplateRow -Target $Target -Prototype $prototype -Debit 0.0 -Credit $amount
+        } else {
+            Add-GeneratedTemplateRow -Target $Target -Prototype $prototype -Debit $amount -Credit 0.0
+        }
+
+        $written = $true
+    }
+
+    if (-not $written -and $EnsureAtLeastOneRow) {
+        if ($AmountSide -eq 'Credit') {
+            Add-GeneratedTemplateRow -Target $Target -Prototype $orderedPrototypes[0] -Debit 0.0 -Credit 0.0
+        } else {
+            Add-GeneratedTemplateRow -Target $Target -Prototype $orderedPrototypes[0] -Debit 0.0 -Credit 0.0
+        }
+    }
+}
+
+function Add-TemplateSequentialRowsFromMayor {
+    param(
+        [System.Collections.Generic.List[object]]$Target,
+        [object[]]$Prototypes,
+        [object[]]$MayorRows,
+        [switch]$EnsureAtLeastOneRow
+    )
+
+    $orderedPrototypes = @($Prototypes)
+    if ($orderedPrototypes.Count -eq 0) {
+        return
+    }
+
+    $items = @($MayorRows)
+    if ($items.Count -eq 0 -and $EnsureAtLeastOneRow) {
+        Add-GeneratedTemplateRow -Target $Target -Prototype $orderedPrototypes[0] -Debit 0.0 -Credit 0.0
+        return
+    }
+
+    for ($index = 0; $index -lt $items.Count; $index++) {
+        $prototype = if ($index -lt $orderedPrototypes.Count) { $orderedPrototypes[$index] } else { $orderedPrototypes[$orderedPrototypes.Count - 1] }
+        $item = $items[$index]
+        Add-GeneratedTemplateRow -Target $Target -Prototype $prototype -Debit (To-Number $item.debit) -Credit (To-Number $item.credit)
+    }
+}
+
+function Read-PrecontVentasPrototypes {
+    param([object]$Worksheet)
+
+    $prototypes = New-Object System.Collections.Generic.List[object]
+    $usedRange = $null
+    try {
+        $usedRange = $Worksheet.UsedRange
+        $lastRow = [int]($usedRange.Row + $usedRange.Rows.Count - 1)
+        for ($row = 2; $row -le $lastRow; $row++) {
+            $account = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
+            $doc = Normalize-Text $Worksheet.Cells.Item($row, 3).Text
+            if ($account -eq '' -or $doc -eq '') {
+                continue
+            }
+
+            $prototypes.Add([pscustomobject]@{
+                TemplateRow = $row
+                Ag = Normalize-Text $Worksheet.Cells.Item($row, 2).Text
+                Doc = $doc
+                Line = Normalize-Text $Worksheet.Cells.Item($row, 4).Text
+                Account = $account
+                Description = Normalize-Text $Worksheet.Cells.Item($row, 6).Text
+                CostCenter = Normalize-Text $Worksheet.Cells.Item($row, 7).Text
+                Asiento = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
+            }) | Out-Null
+        }
+    } finally {
+        if ($null -ne $usedRange) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($usedRange)
+        }
+    }
+
+    return $prototypes.ToArray()
+}
+
+function Read-PrecontCostos2Prototypes {
+    param([object]$Worksheet)
+
+    $prototypes = New-Object System.Collections.Generic.List[object]
+    $usedRange = $null
+    try {
+        $usedRange = $Worksheet.UsedRange
+        $lastRow = [int]($usedRange.Row + $usedRange.Rows.Count - 1)
+        for ($row = 2; $row -le $lastRow; $row++) {
+            $account = Normalize-Text $Worksheet.Cells.Item($row, 4).Text
+            if ($account -eq '') {
+                continue
+            }
+
+            $prototypes.Add([pscustomobject]@{
+                TemplateRow = $row
+                Ag = Normalize-Text $Worksheet.Cells.Item($row, 2).Text
+                Line = Normalize-Text $Worksheet.Cells.Item($row, 3).Text
+                Account = $account
+                Number = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
+                Description = Normalize-Text $Worksheet.Cells.Item($row, 6).Text
+                CostCenter = Normalize-Text $Worksheet.Cells.Item($row, 7).Text
+                Asiento = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
+            }) | Out-Null
+        }
+    } finally {
+        if ($null -ne $usedRange) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($usedRange)
+        }
+    }
+
+    return $prototypes.ToArray()
+}
+
+function New-PrecontVentasGeneratedRows {
+    param(
+        [object[]]$Prototypes,
+        [object[]]$RowsPosting,
+        [object[]]$MayorRows
+    )
+
+    $generated = New-Object System.Collections.Generic.List[object]
+
+    $invoiceTotalsByDocCenter = @{
+        'FA' = @{}
+        'FC' = @{}
+    }
+    $ivaTotalsByDocCenter = @{
+        'FA' = @{}
+        'FC' = @{}
+    }
+    $cashNotesByCenter = @{}
+    $invoiceDocTypeByDocument = @{}
+
+    foreach ($row in @($RowsPosting | Where-Object { $_.DocType -in @('FA', 'FC') })) {
+        $docType = (Normalize-Text $row.DocType).ToUpperInvariant()
+        $center = Get-NormalizedCenterCode $row.Center
+        if ($center -eq '') {
+            $center = '00'
+        }
+
+        $amounts = Get-Invoice-SourceAmounts -Row $row
+        if (-not $invoiceTotalsByDocCenter[$docType].ContainsKey($center)) {
+            $invoiceTotalsByDocCenter[$docType][$center] = [double]0
+        }
+        if (-not $ivaTotalsByDocCenter[$docType].ContainsKey($center)) {
+            $ivaTotalsByDocCenter[$docType][$center] = [double]0
+        }
+
+        $invoiceTotalsByDocCenter[$docType][$center] = [double]$invoiceTotalsByDocCenter[$docType][$center] + [double]$amounts.Total
+        $ivaTotalsByDocCenter[$docType][$center] = [double]$ivaTotalsByDocCenter[$docType][$center] + [double]$amounts.Iva
+
+        $documentKey = Trim-Document $row.DocumentTrim
+        if ($documentKey -ne '' -and -not $invoiceDocTypeByDocument.ContainsKey($documentKey)) {
+            $invoiceDocTypeByDocument[$documentKey] = $docType
+        }
+    }
+
+    foreach ($row in @($RowsPosting | Where-Object { $_.DocType -in @('DC', 'DE') })) {
+        $center = Get-NormalizedCenterCode $row.Center
+        if ($center -eq '') {
+            $center = '00'
+        }
+
+        $affectedKey = Trim-Document $row.AffectedDocumentTrim
+        if ($affectedKey -eq '' -or -not $invoiceDocTypeByDocument.ContainsKey($affectedKey)) {
+            continue
+        }
+
+        if ($invoiceDocTypeByDocument[$affectedKey] -ne 'FA') {
+            continue
+        }
+
+        $amounts = Get-Note-SourceAmounts -Row $row
+        if (-not $cashNotesByCenter.ContainsKey($center)) {
+            $cashNotesByCenter[$center] = [double]0
+        }
+
+        $cashNotesByCenter[$center] = [double]$cashNotesByCenter[$center] + [double]$amounts.Total
+    }
+
+    $salesMayorByAccount = @{}
+    foreach ($mayorRow in @($MayorRows)) {
+        $account = Get-CompactAccountCode $mayorRow.account
+        if ($account -eq '') {
+            continue
+        }
+
+        if (-not $salesMayorByAccount.ContainsKey($account)) {
+            $salesMayorByAccount[$account] = New-Object System.Collections.Generic.List[object]
+        }
+
+        $salesMayorByAccount[$account].Add($mayorRow) | Out-Null
+    }
+
+    $clientFaPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'FA' -and $_.Description -match '^CLIENTES SERV' })
+    $clientFcPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'FC' -and $_.Description -match '^CLIENTES SERV' })
+    $clientCaPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'CA' -and $_.Description -match '^CLIENTES SERV' })
+    $ivaFaPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'FA' -and $_.Description -match 'IVA' })
+    $ivaFcPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'FC' -and $_.Description -match 'IVA' })
+    $reserveCaPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'CA' -and $_.Description -match 'RESERVA' })
+
+    Add-TemplateAggregateRows -Target $generated -Prototypes $clientFaPrototypes -TotalsByCenter $invoiceTotalsByDocCenter['FA'] -AmountSide 'Debit'
+    Add-TemplateAggregateRows -Target $generated -Prototypes $ivaFaPrototypes -TotalsByCenter $ivaTotalsByDocCenter['FA'] -AmountSide 'Credit'
+    Add-TemplateAggregateRows -Target $generated -Prototypes $clientFcPrototypes -TotalsByCenter $invoiceTotalsByDocCenter['FC'] -AmountSide 'Debit'
+    Add-TemplateAggregateRows -Target $generated -Prototypes $ivaFcPrototypes -TotalsByCenter $ivaTotalsByDocCenter['FC'] -AmountSide 'Credit'
+    Add-TemplateAggregateRows -Target $generated -Prototypes $clientCaPrototypes -TotalsByCenter $cashNotesByCenter -AmountSide 'Credit'
+    Add-TemplateAggregateRows -Target $generated -Prototypes $reserveCaPrototypes -TotalsByCenter $cashNotesByCenter -AmountSide 'Debit'
+
+    $criticalAccounts = @(
+        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0001$' } | Select-Object -ExpandProperty Account -Unique),
+        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0003$' } | Select-Object -ExpandProperty Account -Unique),
+        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0010$' } | Select-Object -ExpandProperty Account -Unique),
+        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0012$' } | Select-Object -ExpandProperty Account -Unique),
+        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0014$' } | Select-Object -ExpandProperty Account -Unique)
+    ) | Where-Object { $_ -and $_ -ne '' } | Select-Object -Unique
+
+    foreach ($account in $criticalAccounts) {
+        $accountPrototypes = @($Prototypes | Where-Object { $_.Account -eq $account } | Sort-Object @{ Expression = { [int]$_.TemplateRow } })
+        $mayorGroup = if ($salesMayorByAccount.ContainsKey($account)) { @($salesMayorByAccount[$account]) } else { @() }
+        Add-TemplateSequentialRowsFromMayor -Target $generated -Prototypes $accountPrototypes -MayorRows $mayorGroup -EnsureAtLeastOneRow
+    }
+
+    return $generated.ToArray()
+}
+
+function Write-PrecontVentasGeneratedRows {
+    param(
+        [object]$Worksheet,
+        [object[]]$Rows
+    )
+
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow 2 -EndColumn 'J' -EndRow 1412
+    $targetRow = 2
+    foreach ($row in @($Rows)) {
+        $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $row.Ag)
+        $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $row.Doc)
+        $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $row.Line)
+        $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $row.Account)
+        $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $row.Description)
+        $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $row.CostCenter)
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 8 -Value $row.Debit -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 9 -Value $row.Credit -BlankIfZero
+        $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = (Get-Excel-TextLiteral $row.Asiento)
+        $targetRow++
+    }
+
+    return [int]($targetRow - 2)
+}
+
+function Get-BrandCostMetrics {
+    param([object[]]$Rows)
+
+    $metrics = @{
+        Costo = [double]0
+        CostoLubricantes = [double]0
+        CostoAccesorios = [double]0
+        CostoRepuestos = [double]0
+        CostoPintura = [double]0
+        CostoSubconNc = [double]0
+    }
+
+    foreach ($row in @($Rows)) {
+        $metrics.Costo = [double]$metrics.Costo + [double](To-Number $row.Costo)
+        $metrics.CostoLubricantes = [double]$metrics.CostoLubricantes + [double](To-Number $row.CostoLubricantes)
+        $metrics.CostoAccesorios = [double]$metrics.CostoAccesorios + [double](To-Number $row.CostoAccesorios)
+        $metrics.CostoRepuestos = [double]$metrics.CostoRepuestos + [double](To-Number $row.CostoRepuestos)
+        $metrics.CostoPintura = [double]$metrics.CostoPintura + [double](To-Number $row.CostoPintura)
+        $metrics.CostoSubconNc = [double]$metrics.CostoSubconNc + [double](To-Number $row.CostoSubconNc)
+    }
+
+    foreach ($key in @($metrics.Keys)) {
+        $metrics[$key] = [double](Round-Amount $metrics[$key])
+    }
+
+    return $metrics
+}
+
+function Write-PrecontCostos2GeneratedRows {
+    param(
+        [object]$Worksheet,
+        [object[]]$Prototypes,
+        [hashtable]$Metrics
+    )
+
+    $rowDefinitions = @(
+        @{ Account = '050201010001'; Amount = [double]$Metrics.CostoRepuestos },
+        @{ Account = '050201010002'; Amount = [double]$Metrics.CostoLubricantes },
+        @{ Account = '050201010003'; Amount = [double]([double]$Metrics.Costo + [double]$Metrics.CostoSubconNc) },
+        @{ Account = '050201010004'; Amount = [double]$Metrics.CostoPintura },
+        @{ Account = '050201010005'; Amount = [double]0 },
+        @{ Account = '050201010008'; Amount = [double]$Metrics.CostoAccesorios }
+    )
+
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow 2 -EndColumn 'J' -EndRow 51
+    $targetRow = 2
+    foreach ($definition in $rowDefinitions) {
+        $prototype = @($Prototypes | Where-Object { $_.Account -eq $definition.Account } | Select-Object -First 1)[0]
+        if ($null -eq $prototype) {
+            continue
+        }
+
+        $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $prototype.Ag)
+        $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $prototype.Line)
+        $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $prototype.Account)
+        $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $prototype.Number)
+        $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $prototype.Description)
+        $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $prototype.CostCenter)
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 8 -Value $definition.Amount -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 9 -Value 0 -BlankIfZero
+        $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = (Get-Excel-TextLiteral $prototype.Asiento)
+        $targetRow++
+    }
+
+    return [int]($targetRow - 2)
+}
+
+function Read-EstadisticasSeedRows {
+    param(
+        [object]$Worksheet,
+        [int[]]$RowNumbers
+    )
+
+    $seedRows = @{}
+    foreach ($rowIndex in @($RowNumbers)) {
+        $seedRows[$rowIndex] = [pscustomobject]@{
+            Account = Normalize-Text $Worksheet.Cells.Item($rowIndex, 1).Text
+            Description = Normalize-Text $Worksheet.Cells.Item($rowIndex, 2).Text
+            Mod = Normalize-Text $Worksheet.Cells.Item($rowIndex, 5).Text
+            Asiento = Normalize-Text $Worksheet.Cells.Item($rowIndex, 6).Text
+            Detalle = Normalize-Text $Worksheet.Cells.Item($rowIndex, 8).Text
+        }
+    }
+
+    return $seedRows
+}
+
+function Write-EstadisticasGeneratedRows {
+    param(
+        [object]$Worksheet,
+        [hashtable]$Metrics,
+        [double]$PeriodDateValue
+    )
+
+    $rowNumbers = @(6, 131, 222, 290, 365)
+    $seedRows = Read-EstadisticasSeedRows -Worksheet $Worksheet -RowNumbers $rowNumbers
+
+    $clearRanges = @(
+        @{ StartRow = 6; EndRow = 128; EndColumn = 'J' },
+        @{ StartRow = 131; EndRow = 218; EndColumn = 'J' },
+        @{ StartRow = 222; EndRow = 287; EndColumn = 'J' },
+        @{ StartRow = 290; EndRow = 359; EndColumn = 'J' },
+        @{ StartRow = 365; EndRow = 442; EndColumn = 'J' },
+        @{ StartRow = 446; EndRow = 586; EndColumn = 'K' }
+    )
+    foreach ($range in $clearRanges) {
+        Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'A' -StartRow $range.StartRow -EndColumn $range.EndColumn -EndRow $range.EndRow
+    }
+
+    $blockRows = @(
+        @{ Row = 6; Amount = [double]$Metrics.CostoRepuestos },
+        @{ Row = 131; Amount = [double]$Metrics.CostoLubricantes },
+        @{ Row = 222; Amount = [double]([double]$Metrics.Costo + [double]$Metrics.CostoSubconNc) },
+        @{ Row = 290; Amount = [double]$Metrics.CostoPintura },
+        @{ Row = 365; Amount = [double]$Metrics.CostoAccesorios }
+    )
+
+    foreach ($definition in $blockRows) {
+        $rowIndex = [int]$definition.Row
+        $seed = $seedRows[$rowIndex]
+        $account = ''
+        $description = ''
+        $mod = ''
+        $asiento = ''
+        $detalle = ''
+        if ($null -ne $seed) {
+            $account = $seed.Account
+            $description = $seed.Description
+            $mod = $seed.Mod
+            $asiento = $seed.Asiento
+            $detalle = $seed.Detalle
+        }
+
+        $null = $Worksheet.Cells.Item($rowIndex, 1).Value2 = (Get-Excel-TextLiteral $account)
+        $null = $Worksheet.Cells.Item($rowIndex, 2).Value2 = (Get-Excel-TextLiteral $description)
+        $null = $Worksheet.Cells.Item($rowIndex, 3).Value2 = 'N'
+        Set-DateCellValue -Worksheet $Worksheet -Row $rowIndex -Column 4 -Value $PeriodDateValue -Context 'ESTADISTICAS_FECHA'
+        $null = $Worksheet.Cells.Item($rowIndex, 5).Value2 = (Get-Excel-TextLiteral $(if ($mod -eq '') { 'COSSE' } else { $mod }))
+        $null = $Worksheet.Cells.Item($rowIndex, 6).Value2 = (Get-Excel-TextLiteral $asiento)
+        $null = $Worksheet.Cells.Item($rowIndex, 8).Value2 = (Get-Excel-TextLiteral $detalle)
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 9 -Value $definition.Amount -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 10 -Value 0 -BlankIfZero
+    }
+}
+
+function Write-CostoGeneratedRows {
+    param(
+        [object]$Worksheet,
+        [hashtable]$Metrics,
+        [double]$PeriodDateValue
+    )
+
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'A' -StartRow 6 -EndColumn 'J' -EndRow 141
+
+    $rows = @(
+        @{ Row = 6; Detail = 'REPUESTOS'; Amount = [double]$Metrics.CostoRepuestos },
+        @{ Row = 7; Detail = 'INSUMOS Y LUBRICANTES'; Amount = [double]$Metrics.CostoLubricantes },
+        @{ Row = 8; Detail = 'SUBCONTRATOS'; Amount = [double]([double]$Metrics.Costo + [double]$Metrics.CostoSubconNc) },
+        @{ Row = 9; Detail = 'ACCESORIOS'; Amount = [double]$Metrics.CostoAccesorios }
+    )
+
+    foreach ($definition in $rows) {
+        $rowIndex = [int]$definition.Row
+        $null = $Worksheet.Cells.Item($rowIndex, 1).Value2 = '05.01.01.01.0005'
+        $null = $Worksheet.Cells.Item($rowIndex, 2).Value2 = 'COSTO DE VENTAS-SERVICIO'
+        Set-DateCellValue -Worksheet $Worksheet -Row $rowIndex -Column 3 -Value $PeriodDateValue -Context 'COSTO_FECHA'
+        $null = $Worksheet.Cells.Item($rowIndex, 4).Value2 = 'COSSE'
+        $null = $Worksheet.Cells.Item($rowIndex, 5).Value2 = (Get-Excel-TextLiteral ([string]($rowIndex - 5)))
+        $null = $Worksheet.Cells.Item($rowIndex, 7).Value2 = (Get-Excel-TextLiteral $definition.Detail)
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 8 -Value $definition.Amount -BlankIfZero
+        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 9 -Value 0 -BlankIfZero
+    }
+}
+
+function Clear-PrecontCostosWorksheet {
+    param([object]$Worksheet)
+
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow 2 -EndColumn 'J' -EndRow 922
+    Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'P' -StartRow 1 -EndColumn 'T' -EndRow 25
+}
+
+function Refresh-WorksheetPivotTablesSafe {
+    param(
+        [object]$Worksheet,
+        [string]$Label
+    )
+
+    try {
+        $pivotTables = $Worksheet.PivotTables()
+        $count = [int]$pivotTables.Count
+        for ($index = 1; $index -le $count; $index++) {
+            $pivotTable = $pivotTables.Item($index)
+            try {
+                $sourceData = Normalize-Text $pivotTable.SourceData
+                if ($sourceData -match '^https?://' -or $sourceData -match 'sharepoint\.com') {
+                    Write-Output ("WARN|pivot_refresh_skipped_external|{0}|{1}" -f $Label, $pivotTable.Name)
+                    continue
+                }
+
+                $null = $pivotTable.RefreshTable()
+            } finally {
+                if ($null -ne $pivotTable) {
+                    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($pivotTable)
+                }
+            }
+        }
+        [void][Runtime.Interopservices.Marshal]::ReleaseComObject($pivotTables)
+    } catch {
+        throw "No se pudo refrescar la tabla dinamica de ${Label}: $($_.Exception.Message)"
     }
 }
 
@@ -2260,6 +3075,10 @@ function Get-Excel-TextLiteral {
         return "'" + $text
     }
 
+    if ($text -match '^\d+$') {
+        return "'" + $text
+    }
+
     return $text
 }
 
@@ -2425,8 +3244,11 @@ function Get-Note-SourceAmounts {
     $netoSinIva = if ((Round-Amount ([Math]::Abs($ivaAmount))) -eq 0) { $netoConIva } else { 0.0 }
     $iva12Value = [double]$ivaBuckets.Iva12
     $iva15Value = [double]$ivaBuckets.Iva15
-    $anticipo = 0.0
-    $neto = Round-Amount ($totalAmount - $anticipo)
+    $anticipo = Round-Amount ([Math]::Abs((To-Number $Row.Anticipo)))
+    $neto = Round-Amount ([Math]::Abs((To-Number $Row.Neto)))
+    if ($neto -eq 0.0) {
+        $neto = Round-Amount ($totalAmount - $anticipo)
+    }
 
     return [pscustomobject]@{
         Total = [double]$totalAmount
@@ -2762,7 +3584,7 @@ function Fill-Notes {
                 Get-PreferredSourceText -SourceRaw 'CRE' -LookupValue $(if ($null -ne $lookup) { $lookup.Kind } else { '' })
             }
             $seriesValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Series } else { '' }) -SourceRaw $row.SeriesRaw -SourceNormalized $row.Series
-            $invoiceValue = Get-PreferredSourceText -SourceRaw ([string]$row.AffectedDocumentRaw) -SourceNormalized (Normalize-Text $row.AffectedDocumentTrim) -LookupValue $(if ($null -ne $lookup) { $lookup.Invoice } else { '' })
+            $invoiceValue = Get-PreferredSourceText -SourceRaw (Trim-Document $row.AffectedDocumentRaw) -SourceNormalized (Trim-Document $row.AffectedDocumentTrim) -LookupValue $(if ($null -ne $lookup) { $lookup.Invoice } else { '' })
             $orderValue = Get-PreferredSourceText -SourceRaw ([string]$row.OrderRaw) -SourceNormalized $(if ($orderKey -ne '') { $orderKey } else { Normalize-Text $row.Order }) -LookupValue $(if ($null -ne $lookup) { $lookup.Order } else { '' })
             $cedulaValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Cedula } else { '' }) -SourceRaw $row.CedulaRaw -SourceNormalized $row.Cedula
             $customerValue = Get-PreferredLookupText -LookupValue $(if ($null -ne $lookup) { $lookup.Customer } else { '' }) -SourceRaw $row.CustomerRaw -SourceNormalized $row.Customer
@@ -2940,13 +3762,38 @@ $null = New-Item -ItemType Directory -Path $stagingDirectory -Force
 $stagedInputPath = Join-Path $stagingDirectory ("input_source{0}" -f ([System.IO.Path]::GetExtension($resolvedInputPath)))
 Copy-File-WithRetry -SourcePath $resolvedInputPath -DestinationPath $stagedInputPath
 try {
-$customSource = @()
-$customRequested = (-not [string]::IsNullOrWhiteSpace($FacturaPath)) -or (-not [string]::IsNullOrWhiteSpace($NotaPath)) -or (-not [string]::IsNullOrWhiteSpace($RiobambaPath))
-if ($customRequested) {
-    $customSource = Build-SourceRows-FromInputs -FacturaPath $FacturaPath -NotaPath $NotaPath -RiobambaPath $RiobambaPath -BrandKey $BrandKey
-    if ($customSource.Count -gt 0) {
-        Write-Output ("INFO|custom_source|rows={0}" -f $customSource.Count)
-        $sourceRows = $customSource
+$displaySourceRows = @()
+$sourceRows = @()
+$brandInputPaths = @{
+    changan = @{
+        FacturaPath = $FacturaChanganPath
+        NotaPath = $NotaChanganPath
+    }
+    peug = @{
+        FacturaPath = $FacturaPeugPath
+        NotaPath = $NotaPeugPath
+    }
+    szk = @{
+        FacturaPath = $FacturaSzkPath
+        NotaPath = $NotaSzkPath
+    }
+    tyt = @{
+        FacturaPath = $FacturaTytPath
+        NotaPath = $NotaTytPath
+    }
+}
+$displayRequested = $false
+foreach ($paths in $brandInputPaths.Values) {
+    if ((Normalize-Text $paths.FacturaPath) -ne '' -or (Normalize-Text $paths.NotaPath) -ne '') {
+        $displayRequested = $true
+        break
+    }
+}
+
+if ($displayRequested) {
+    $displaySourceRows = Build-SourceRows-FromBrandInputs -BrandFileMap $brandInputPaths -BrandKey $BrandKey
+    if ($displaySourceRows.Count -gt 0) {
+        Write-Output ("INFO|custom_source|rows={0}" -f $displaySourceRows.Count)
     } else {
         Write-Output 'WARN|custom_source_empty|falling_back_to_excel'
     }
@@ -2954,15 +3801,27 @@ if ($customRequested) {
 
 if ($sourceRows.Count -eq 0) {
     $sourceRows = Read-SourceRows-FromFile -InputPath $stagedInputPath -WorkingDirectory $stagingDirectory
+    if ($sourceRows.Count -gt 0 -and $displaySourceRows.Count -gt 0) {
+        Write-Output ("INFO|source_priority|excel_primary|custom_support={0}" -f $displaySourceRows.Count)
+    }
+}
+
+if ($sourceRows.Count -eq 0 -and $displaySourceRows.Count -gt 0) {
+    $sourceRows = $displaySourceRows
 }
 
 if ($sourceRows.Count -eq 0) {
-    throw 'Los archivos de entrada no contienen filas válidas para procesar (custom y fallback vacíos).'
+    throw 'Los archivos de entrada no contienen filas validas para procesar (custom y fallback vacios).'
 }
 
+$displayRows = if ($displaySourceRows.Count -gt 0) {
+    Normalize-SourceRows -Rows $displaySourceRows -ConsolidateInvoiceDocuments
+} else {
+    Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
+}
 $repVtasRows = Normalize-SourceRows -Rows $sourceRows
 $postingRows = Normalize-SourceRows -Rows $sourceRows -ConsolidateInvoiceDocuments
-    if ($repVtasRows.Count -eq 0 -and $postingRows.Count -eq 0) {
+    if ($repVtasRows.Count -eq 0 -and $postingRows.Count -eq 0 -and $displayRows.Count -eq 0) {
         throw 'El archivo fuente no contiene filas validas para generar plantillas.'
     }
 } catch {
@@ -3046,8 +3905,9 @@ try {
 
     foreach ($templateKey in $brandOrder) {
         Assert-NotCancelled 'marcas'
+        $rowsDisplay = @($displayRows | Where-Object { $_.TemplateKey -eq $templateKey })
         $rowsRepVtas = @($repVtasRows | Where-Object { $_.TemplateKey -eq $templateKey })
-        if ($rowsRepVtas.Count -eq 0) {
+        if ($rowsRepVtas.Count -eq 0 -and $rowsDisplay.Count -eq 0) {
             continue
         }
 
@@ -3069,34 +3929,106 @@ try {
         Copy-Item -LiteralPath $templateConfigs[$templateKey].TemplatePath -Destination $outputPath -Force
 
         $outputWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $outputPath -ReadOnly $false
+        $repSheet = $null
+        $noteSheet = $null
+        $repVtasSheet = $null
+        $pxSheet = $null
+        $mayorSheet = $null
         try {
             Assert-NotCancelled 'salida_plantilla'
             $repSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('REP FACTURACION', 'REP FACTURACIÓN')
             $noteSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('NOTA DE CREDITO')
             $repVtasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('REP VTAS')
 
-            $invoiceResult = Fill-Invoices -Worksheet $repSheet -Rows $rowsPosting -Lookups $lookups
-            $noteResult = Fill-Notes -Worksheet $noteSheet -Rows $rowsPosting -Lookups $lookups
+            $invoiceResult = Fill-Invoices -Worksheet $repSheet -Rows $rowsDisplay -Lookups $lookups
+            $noteResult = Fill-Notes -Worksheet $noteSheet -Rows $rowsDisplay -Lookups $lookups
             $repVtasResult = Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
 
             $pxSheet = $null
             try { $pxSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PX') } catch {}
             if ($null -ne $pxSheet) {
                 $pxRows = Read-PxRows -PxPath $PxPath -BrandKey $templateKey -WorkingDirectory $stagingDirectory
-                Clear-Worksheet-RangeContents -Worksheet $pxSheet -StartColumn 'A' -StartRow 6 -EndColumn 'R' -EndRow 65536
-                Write-Rows-ToWorksheet -Worksheet $pxSheet -Rows $pxRows -StartRow 6 -StartColumn 1
+                $pxResult = Write-PxRows-ToWorksheet -Worksheet $pxSheet -Rows $pxRows -BrandKey $templateKey
+                Write-Output ("INFO|px|{0}|rows={1}|bottom_capacity={2}" -f $templateKey, $pxResult.RowCount, $pxResult.BottomCapacity)
             }
 
+            $mayorRows = @()
             $mayorSheet = $null
             try { $mayorSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('VENTAS', 'MAY VTAS') } catch {}
             if ($null -ne $mayorSheet) {
-                $mayorPath = Resolve-MayorPathForBrand -BrandKey $templateKey -MayorPaths $mayorPaths -LegacyPath $VentasPath
+                $mayorPath = Resolve-MayorPathForBrand -BrandKey $templateKey -MayorPaths $mayorPaths
                 if (-not [string]::IsNullOrWhiteSpace($mayorPath) -and (Test-Path -LiteralPath $mayorPath)) {
                     $mayorRows = Read-MayorRows -MayorPath $mayorPath -WorkingDirectory $stagingDirectory
-                    $mayorResult = Write-MayorRows-ToWorksheet -Worksheet $mayorSheet -Rows $mayorRows -BrandKey $templateKey
+                }
+
+                $mayorResult = Write-MayorRows-ToWorksheet -Worksheet $mayorSheet -Rows $mayorRows -BrandKey $templateKey
+                if ($mayorRows.Count -gt 0) {
                     Write-Output ("INFO|mayor|{0}|rows={1}|sections={2}" -f $templateKey, $mayorResult.RowCount, $mayorResult.SectionCount)
                 } else {
-                    Write-Output ("WARN|mayor_missing|{0}|template_sheet_preserved" -f $templateKey)
+                    Write-Output ("WARN|mayor_missing|{0}|sheet_cleared" -f $templateKey)
+                }
+            }
+
+            $costMetrics = Get-BrandCostMetrics -Rows $rowsRepVtas
+            $periodDateValue = Get-Brand-PeriodDateValue -Rows $rowsRepVtas -MayorRows $mayorRows
+
+            $precontVentasSheet = $null
+            $precontCostos2Sheet = $null
+            $precontCostosSheet = $null
+            $costoSheet = $null
+            $estadisticasSheet = $null
+            try { $precontVentasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionVentas') } catch {}
+            try { $precontCostos2Sheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionCostos (2)') } catch {}
+            try { $precontCostosSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionCostos') } catch {}
+            try { $costoSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('COSTO') } catch {}
+            try { $estadisticasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('ESTADISTICAS') } catch {}
+
+            try {
+                if ($null -ne $precontVentasSheet) {
+                    $precontVentasPrototypes = Read-PrecontVentasPrototypes -Worksheet $precontVentasSheet
+                    $precontVentasRows = New-PrecontVentasGeneratedRows -Prototypes $precontVentasPrototypes -RowsPosting $rowsPosting -MayorRows $mayorRows
+                    $precontVentasCount = Write-PrecontVentasGeneratedRows -Worksheet $precontVentasSheet -Rows $precontVentasRows
+                    Refresh-WorksheetPivotTablesSafe -Worksheet $precontVentasSheet -Label 'PrecontabilizacionVentas'
+                    Write-Output ("INFO|precont_ventas|{0}|rows={1}" -f $templateKey, $precontVentasCount)
+                }
+
+                if ($null -ne $precontCostos2Sheet) {
+                    $precontCostos2Prototypes = Read-PrecontCostos2Prototypes -Worksheet $precontCostos2Sheet
+                    $precontCostos2Count = Write-PrecontCostos2GeneratedRows -Worksheet $precontCostos2Sheet -Prototypes $precontCostos2Prototypes -Metrics $costMetrics
+                    Refresh-WorksheetPivotTablesSafe -Worksheet $precontCostos2Sheet -Label 'PrecontabilizacionCostos (2)'
+                    Write-Output ("INFO|precont_costos2|{0}|rows={1}" -f $templateKey, $precontCostos2Count)
+                }
+
+                if ($null -ne $precontCostosSheet) {
+                    Clear-PrecontCostosWorksheet -Worksheet $precontCostosSheet
+                    Write-Output ("INFO|precont_costos_cleared|{0}" -f $templateKey)
+                }
+
+                if ($null -ne $estadisticasSheet) {
+                    Write-EstadisticasGeneratedRows -Worksheet $estadisticasSheet -Metrics $costMetrics -PeriodDateValue $periodDateValue
+                    Write-Output ("INFO|estadisticas|{0}|repuestos={1}|lub={2}|subcont={3}|accesorios={4}" -f $templateKey, $costMetrics.CostoRepuestos, $costMetrics.CostoLubricantes, ([double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc), $costMetrics.CostoAccesorios)
+                }
+
+                if ($null -ne $costoSheet) {
+                    Write-CostoGeneratedRows -Worksheet $costoSheet -Metrics $costMetrics -PeriodDateValue $periodDateValue
+                    Refresh-WorksheetPivotTablesSafe -Worksheet $costoSheet -Label 'COSTO'
+                    Write-Output ("INFO|costo|{0}|total={1}" -f $templateKey, ([double]$costMetrics.CostoRepuestos + [double]$costMetrics.CostoLubricantes + [double]$costMetrics.CostoAccesorios + [double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc))
+                }
+            } finally {
+                if ($null -ne $estadisticasSheet) {
+                    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($estadisticasSheet)
+                }
+                if ($null -ne $costoSheet) {
+                    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($costoSheet)
+                }
+                if ($null -ne $precontCostosSheet) {
+                    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($precontCostosSheet)
+                }
+                if ($null -ne $precontCostos2Sheet) {
+                    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($precontCostos2Sheet)
+                }
+                if ($null -ne $precontVentasSheet) {
+                    [void][Runtime.Interopservices.Marshal]::ReleaseComObject($precontVentasSheet)
                 }
             }
 
@@ -3113,20 +4045,44 @@ try {
             }
 
             if ($script:StrictValidationEnabled) {
+                Write-Output ("INFO|validate_begin|{0}" -f $templateKey)
                 Validate-Services-BrandOutput `
                     -OutputWorkbook $outputWorkbook `
                     -TemplateWorkbook $templateWorkbook `
                     -RepVtasResult $repVtasResult `
                     -InvoiceResult $invoiceResult `
                     -NoteResult $noteResult
+                Write-Output ("INFO|validate_done|{0}" -f $templateKey)
             }
 
             Assert-NotCancelled 'guardado_plantilla'
+            Write-Output ("INFO|save_begin|{0}" -f $templateKey)
             Save-Workbook-WithRetry -Workbook $outputWorkbook -PathForError $outputPath
+            Write-Output ("INFO|save_done|{0}" -f $templateKey)
             Write-Output ("OUTPUT|{0}|{1}" -f $outputName, $templateConfigs[$templateKey].Label)
             Write-Output ("INFO|{0}|invoice_fallbacks={1}|note_fallbacks={2}" -f $templateKey, [int]$invoiceResult.FallbackCount, [int]$noteResult.FallbackCount)
         }
         finally {
+            if ($null -ne $mayorSheet) {
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($mayorSheet)
+                $mayorSheet = $null
+            }
+            if ($null -ne $pxSheet) {
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($pxSheet)
+                $pxSheet = $null
+            }
+            if ($null -ne $repVtasSheet) {
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($repVtasSheet)
+                $repVtasSheet = $null
+            }
+            if ($null -ne $noteSheet) {
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($noteSheet)
+                $noteSheet = $null
+            }
+            if ($null -ne $repSheet) {
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($repSheet)
+                $repSheet = $null
+            }
             $outputWorkbook.Close($true)
             [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputWorkbook)
             if ($null -ne $templateWorkbook) {

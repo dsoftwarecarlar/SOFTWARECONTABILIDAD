@@ -90,6 +90,60 @@ function servicios_job_output_config(): array
     ];
 }
 
+function servicios_job_runtime_config(): array
+{
+    static $config = null;
+    if (is_array($config)) {
+        return $config;
+    }
+
+    $defaults = [
+        'worker_timeout_seconds' => 2700,
+        'stale_max_age_seconds' => 3600,
+        'queued_timeout_seconds' => 300,
+        'cancel_grace_seconds' => 120,
+        'dispatch_boot_timeout_seconds' => 20,
+    ];
+
+    $path = app_join_path(app_root(), 'config', 'cxp', 'servicios_marcas.php');
+    if (!is_file($path)) {
+        $config = $defaults;
+        return $config;
+    }
+
+    $loaded = require $path;
+    $jobs = is_array($loaded['module']['jobs'] ?? null) ? $loaded['module']['jobs'] : [];
+    $config = array_merge($defaults, $jobs);
+
+    return $config;
+}
+
+function servicios_job_timeout_label(int $seconds): string
+{
+    if ($seconds <= 0) {
+        return '0 minutos';
+    }
+
+    if (($seconds % 60) === 0) {
+        $minutes = intdiv($seconds, 60);
+        return $minutes . ' minuto' . ($minutes === 1 ? '' : 's');
+    }
+
+    $minutes = intdiv($seconds, 60);
+    $remainingSeconds = $seconds % 60;
+    if ($minutes <= 0) {
+        return $remainingSeconds . ' segundo' . ($remainingSeconds === 1 ? '' : 's');
+    }
+
+    return sprintf(
+        '%d minuto%s %d segundo%s',
+        $minutes,
+        $minutes === 1 ? '' : 's',
+        $remainingSeconds,
+        $remainingSeconds === 1 ? '' : 's'
+    );
+}
+
 function servicios_job_entries(string $jobsDir): array
 {
     $files = glob(app_join_path($jobsDir, 'servicios_marcas_*.json')) ?: [];
@@ -132,12 +186,21 @@ function servicios_job_active_statuses(): array
     return ['queued', 'running', 'cancel_requested'];
 }
 
-function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 900): void
+function servicios_job_refresh_stale_jobs(string $jobsDir, ?int $maxAgeSeconds = null): void
 {
+    $runtime = servicios_job_runtime_config();
+    if ($maxAgeSeconds === null) {
+        $maxAgeSeconds = (int)($runtime['stale_max_age_seconds'] ?? 3600);
+    }
+
     if ($maxAgeSeconds <= 0) {
         return;
     }
 
+    $queuedTimeoutSeconds = max(60, (int)($runtime['queued_timeout_seconds'] ?? 300));
+    $workerTimeoutSeconds = max(60, (int)($runtime['worker_timeout_seconds'] ?? 2700));
+    $cancelGraceSeconds = max(30, (int)($runtime['cancel_grace_seconds'] ?? 120));
+    $workerTimeoutLabel = servicios_job_timeout_label($workerTimeoutSeconds);
     $now = time();
     foreach (servicios_job_entries($jobsDir) as $job) {
         $status = (string)($job['status'] ?? '');
@@ -155,14 +218,14 @@ function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 
         $cancelRequestedTs = strtotime($cancelRequestedAt);
         $shouldCloseUnstarted = $startedAt === ''
             && $createdTs !== false
-            && ($now - $createdTs) >= 300;
+            && ($now - $createdTs) >= $queuedTimeoutSeconds;
         $shouldCloseRunningTimeout = $status === 'running'
             && $startedTs !== false
-            && ($now - $startedTs) >= 600;
+            && ($now - $startedTs) >= $workerTimeoutSeconds;
         $shouldCloseCancelRequested = $status === 'cancel_requested'
             && (
-                ($cancelRequestedTs !== false && ($now - $cancelRequestedTs) >= 120)
-                || ($referenceTs !== false && ($now - $referenceTs) >= 120)
+                ($cancelRequestedTs !== false && ($now - $cancelRequestedTs) >= $cancelGraceSeconds)
+                || ($referenceTs !== false && ($now - $referenceTs) >= $cancelGraceSeconds)
             );
 
         if (
@@ -185,7 +248,7 @@ function servicios_job_refresh_stale_jobs(string $jobsDir, int $maxAgeSeconds = 
         if ($shouldCloseCancelRequested) {
             $payload['message'] = 'Proceso cancelado automaticamente tras confirmar cierre del worker.';
         } elseif ($shouldCloseRunningTimeout) {
-            $payload['message'] = 'Proceso cerrado automaticamente por exceder 10 minutos sin finalizar.';
+            $payload['message'] = 'Proceso cerrado automaticamente por exceder ' . $workerTimeoutLabel . ' sin finalizar.';
         } else {
             $payload['message'] = 'Proceso antiguo cerrado automaticamente para depurar la cola.';
         }
@@ -407,6 +470,7 @@ function servicios_job_dispatch(string $jobId, string $inputPath, string $output
     ];
 
     $jobsDir = app_ensure_dir(app_storage_path('jobs'));
+    $dispatchBootTimeoutSeconds = max(5, (int)(servicios_job_runtime_config()['dispatch_boot_timeout_seconds'] ?? 20));
 
     if (DIRECTORY_SEPARATOR === '\\') {
         $powershell = app_join_path(
@@ -445,7 +509,7 @@ function servicios_job_dispatch(string $jobId, string $inputPath, string $output
             throw new RuntimeException('No se pudo lanzar el worker de servicios en segundo plano (exit ' . $exitCode . ').');
         }
 
-        if (servicios_job_wait_until_dequeued($jobsDir, $jobId, 20)) {
+        if (servicios_job_wait_until_dequeued($jobsDir, $jobId, $dispatchBootTimeoutSeconds)) {
             return;
         }
 
@@ -467,7 +531,7 @@ function servicios_job_dispatch(string $jobId, string $inputPath, string $output
             }
         }
 
-        if (!servicios_job_wait_until_dequeued($jobsDir, $jobId, 20)) {
+        if (!servicios_job_wait_until_dequeued($jobsDir, $jobId, $dispatchBootTimeoutSeconds)) {
             throw new RuntimeException(
                 'El worker no inicio y el proceso quedo en cola. Verifica permisos de PHP/PowerShell e intenta de nuevo. ' .
                 'PHP detectado: ' . $phpBinary . '. Job: ' . $jobId . '.'
@@ -485,7 +549,7 @@ function servicios_job_dispatch(string $jobId, string $inputPath, string $output
         throw new RuntimeException('No se pudo lanzar el worker de servicios en segundo plano (exit ' . $exitCode . ').');
     }
 
-    if (!servicios_job_wait_until_dequeued($jobsDir, $jobId, 10)) {
+    if (!servicios_job_wait_until_dequeued($jobsDir, $jobId, $dispatchBootTimeoutSeconds)) {
         throw new RuntimeException(
             'El worker no inicio y el proceso quedo en cola. Intenta nuevamente. ' .
             'PHP detectado: ' . $phpBinary . '. Job: ' . $jobId . '.'
@@ -619,26 +683,34 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
             escapeshellarg($cancelPath),
             '-BrandKey',
             escapeshellarg($brandKey),
-            '-FacturaPath',
-            escapeshellarg($getUpload('factura_file')),
-            '-NotaPath',
-            escapeshellarg($getUpload('nota_file')),
             '-PxPath',
             escapeshellarg($getUpload('px_file')),
             '-RepVtasPath',
             escapeshellarg($getUpload('repventas_file')),
+            '-FacturaChanganPath',
+            escapeshellarg($getUpload('factura_changan_file')),
+            '-NotaChanganPath',
+            escapeshellarg($getUpload('nota_changan_file')),
             '-MayorChanganPath',
             escapeshellarg($getUpload('mayor_changan_file')),
+            '-FacturaPeugPath',
+            escapeshellarg($getUpload('factura_peug_file')),
+            '-NotaPeugPath',
+            escapeshellarg($getUpload('nota_peug_file')),
             '-MayorPeugPath',
             escapeshellarg($getUpload('mayor_peug_file')),
+            '-FacturaSzkPath',
+            escapeshellarg($getUpload('factura_szk_file')),
+            '-NotaSzkPath',
+            escapeshellarg($getUpload('nota_szk_file')),
             '-MayorSzkPath',
             escapeshellarg($getUpload('mayor_szk_file')),
+            '-FacturaTytPath',
+            escapeshellarg($getUpload('factura_tyt_file')),
+            '-NotaTytPath',
+            escapeshellarg($getUpload('nota_tyt_file')),
             '-MayorTytPath',
             escapeshellarg($getUpload('mayor_tyt_file')),
-            '-VentasPath',
-            escapeshellarg($getUpload('ventas_file')),
-            '-RiobambaPath',
-            escapeshellarg($getUpload('riobamba_file')),
         ]);
 
         $outputLines = [];
@@ -646,6 +718,8 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
         $startedTs = time();
         $lastHeartbeatAt = $startedTs;
         $timedOut = false;
+        $workerTimeoutSeconds = max(60, (int)(servicios_job_runtime_config()['worker_timeout_seconds'] ?? 2700));
+        $workerTimeoutLabel = servicios_job_timeout_label($workerTimeoutSeconds);
         $consoleLogPath = app_join_path($jobsDir, 'servicios_marcas_' . $jobId . '.log');
         if (is_file($consoleLogPath)) {
             @unlink($consoleLogPath);
@@ -686,7 +760,7 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
                 break;
             }
 
-            if ((time() - $startedTs) >= 600) {
+            if ((time() - $startedTs) >= $workerTimeoutSeconds) {
                 servicios_job_terminate_process_tree((int)($statusInfo['pid'] ?? 0));
                 $timedOut = true;
                 break;
@@ -712,7 +786,7 @@ function servicios_job_run(string $jobId, string $inputPath, string $outputDir, 
 
         if ($timedOut) {
             throw new RuntimeException(
-                'El worker de servicios supero el tiempo maximo permitido (10 minutos) y fue detenido para evitar bloqueos.'
+                'El worker de servicios supero el tiempo maximo permitido (' . $workerTimeoutLabel . ') y fue detenido para evitar bloqueos.'
             );
         }
 

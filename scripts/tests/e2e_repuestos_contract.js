@@ -205,11 +205,16 @@ function buildContractSources() {
     path.join(ROOT, "resources", "cxp", "repuestos_tytserv", "fixtures"),
     path.join(ROOT, "outputs", "EJEMPLOAMANOTAREA3"),
   ]);
+  const ncSourceDir = path.join(sourceDir, "archivosnc_rep");
   const files = [
     { field: "excel_tyt", path: path.join(sourceDir, "RepLibroVentasGeneral.xlsx"), sheet: "REP TYT" },
+    { field: "excel_nc_tyt", path: path.join(ncSourceDir, "RepLibroDevolucionesGeneral.xlsx") },
     { field: "excel_peug", path: path.join(sourceDir, "RepLibroVentasGeneral (1).xlsx"), sheet: "REP PEUGT" },
+    { field: "excel_nc_peug", path: path.join(ncSourceDir, "RepLibroDevolucionesGeneral (1).xlsx") },
     { field: "excel_chgn", path: path.join(sourceDir, "RepLibroVentasGeneral (2).xlsx"), sheet: "REP CHGN" },
+    { field: "excel_nc_chgn", path: path.join(ncSourceDir, "RepLibroDevolucionesGeneral (2).xlsx") },
     { field: "excel_szk", path: path.join(sourceDir, "RepLibroVentasGeneral (3).xlsx"), sheet: "REP SZK" },
+    { field: "excel_nc_szk", path: path.join(ncSourceDir, "RepLibroDevolucionesGeneral (3).xlsx") },
   ];
 
   for (const file of files) {

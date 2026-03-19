@@ -13,6 +13,20 @@ declare(strict_types=1);
 /** @var array<int, array<string, mixed>> $history */
 /** @var array<string, string> $pageConfig */
 ?>
+<?php
+$brandGroups = [];
+foreach ($fileFields as $fieldConfig) {
+    $brandKey = (string)($fieldConfig['brand_key'] ?? ($fieldConfig['field'] ?? 'general'));
+    if (!isset($brandGroups[$brandKey])) {
+        $brandGroups[$brandKey] = [
+            'label' => (string)($fieldConfig['brand_label'] ?? strtoupper($brandKey)),
+            'fields' => [],
+        ];
+    }
+
+    $brandGroups[$brandKey]['fields'][] = $fieldConfig;
+}
+?>
 <!doctype html>
 <html lang="es">
 <head>
@@ -92,6 +106,11 @@ declare(strict_types=1);
         .base-path { margin-top: 10px; font-size: 12px; color: var(--muted); word-break: break-all; }
         .form-grid { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 16px; margin-top: 14px; align-items: start; }
         form { display: grid; gap: 12px; }
+        .brand-upload-grid { display: grid; gap: 12px; }
+        .brand-upload { padding: 16px 18px; border-radius: 20px; border: 1px solid rgba(24,36,44,.1); background: rgba(255,255,255,.78); }
+        .brand-upload h3 { margin: 0 0 10px; font-family: "Franklin Gothic Medium", "Arial Narrow", sans-serif; font-size: 20px; letter-spacing: -.02em; }
+        .brand-upload-files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .field-note { display: block; font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
         input[type="file"] { width: 100%; padding: 12px; border-radius: 14px; border: 1px dashed rgba(16,111,102,.34); background: rgba(255,255,255,.75); }
         label.file-label { display: grid; gap: 6px; font-size: 13px; color: var(--deep); font-weight: 700; }
         button, .button-link { display: inline-flex; align-items: center; justify-content: center; padding: 12px 18px; border-radius: 999px; border: 0; background: linear-gradient(135deg, var(--accent) 0%, var(--deep) 100%); color: #fff; text-decoration: none; font-weight: 700; cursor: pointer; }
@@ -109,6 +128,9 @@ declare(strict_types=1);
             .history-item { flex-direction: column; align-items: flex-start; }
             .back-link { margin-left: 0; }
             .hero { padding: 22px; }
+        }
+        @media (max-width: 760px) {
+            .brand-upload-files { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -142,10 +164,11 @@ declare(strict_types=1);
     <div class="layout">
         <aside class="panel stack">
             <h2><?= htmlspecialchars((string)($pageConfig['inputs_title'] ?? 'Entradas requeridas')) ?></h2>
-            <?php foreach ($fileFields as $fieldConfig): ?>
+            <?php foreach ($brandGroups as $group): ?>
                 <article class="box">
-                    <span class="tag">Archivo</span>
-                    <strong><?= htmlspecialchars((string)($fieldConfig['label'] ?? 'Archivo')) ?></strong>
+                    <span class="tag">Marca</span>
+                    <strong><?= htmlspecialchars((string)($group['label'] ?? 'Marca')) ?></strong>
+                    <div class="meta"><?= count((array)($group['fields'] ?? [])) ?> archivos requeridos</div>
                 </article>
             <?php endforeach; ?>
             <article class="box">
@@ -163,12 +186,23 @@ declare(strict_types=1);
                 <div class="form-grid">
                     <div>
                         <form method="post" enctype="multipart/form-data">
-                            <?php foreach ($fileFields as $fieldConfig): ?>
-                                <label class="file-label">
-                                    <?= htmlspecialchars((string)($fieldConfig['label'] ?? 'Archivo')) ?>
-                                    <input type="file" name="<?= htmlspecialchars((string)($fieldConfig['field'] ?? 'archivo')) ?>" accept=".xls,.xlsx" required>
-                                </label>
+                            <div class="brand-upload-grid">
+                            <?php foreach ($brandGroups as $group): ?>
+                                <article class="brand-upload">
+                                    <span class="tag">Marca</span>
+                                    <h3><?= htmlspecialchars((string)($group['label'] ?? 'Marca')) ?></h3>
+                                    <div class="brand-upload-files">
+                                        <?php foreach ((array)($group['fields'] ?? []) as $fieldConfig): ?>
+                                            <label class="file-label">
+                                                <span class="field-note"><?= htmlspecialchars((string)($fieldConfig['source_label'] ?? 'Archivo')) ?></span>
+                                                <?= htmlspecialchars((string)($fieldConfig['label'] ?? 'Archivo')) ?>
+                                                <input type="file" name="<?= htmlspecialchars((string)($fieldConfig['field'] ?? 'archivo')) ?>" accept=".xls,.xlsx" required>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </article>
                             <?php endforeach; ?>
+                            </div>
                             <button type="submit"><?= htmlspecialchars((string)($pageConfig['button_label'] ?? 'Procesar')) ?></button>
                         </form>
 

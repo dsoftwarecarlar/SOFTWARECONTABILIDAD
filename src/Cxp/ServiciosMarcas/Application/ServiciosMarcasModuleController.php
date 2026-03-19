@@ -104,7 +104,7 @@ final class ServiciosMarcasModuleController
                         'console' => (string)($activeJob['console'] ?? ''),
                     ];
                 } elseif ($this->isExpiredActiveJob($activeJob)) {
-                    $error = 'El proceso anterior excedio 10 minutos y se considera atascado. Inicia uno nuevo.';
+                    $error = 'El proceso anterior excedio ' . $this->jobTimeoutLabel() . ' y se considera atascado. Inicia uno nuevo.';
                     $noticeConsole = (string)($activeJob['console'] ?? '');
                     $activeJobId = '';
                 } elseif (in_array($jobStatus, ['queued', 'running', 'cancel_requested'], true)) {
@@ -153,20 +153,7 @@ final class ServiciosMarcasModuleController
                     }
                 }
 
-                $requiredFiles = [
-                    'factura_file' => ['label' => 'REP FACTURACIÓN', 'accept' => ['txt']],
-                    'nota_file' => ['label' => 'NOTA DE CRÉDITO', 'accept' => ['txt']],
-                    'px_file' => ['label' => 'PX', 'accept' => ['xls', 'xlsx']],
-                    'repventas_file' => ['label' => 'REP VENTAS', 'accept' => ['xls', 'xlsx']],
-                ];
-                $optionalFiles = [
-                    'mayor_changan_file' => ['label' => 'Mayor CHANGAN', 'accept' => ['txt']],
-                    'mayor_peug_file' => ['label' => 'Mayor PEUGEOT', 'accept' => ['txt']],
-                    'mayor_szk_file' => ['label' => 'Mayor SUZUKI', 'accept' => ['txt']],
-                    'mayor_tyt_file' => ['label' => 'Mayor MATRIZ', 'accept' => ['txt']],
-                    'ventas_file' => ['label' => 'VENTAS', 'accept' => ['txt']],
-                    'riobamba_file' => ['label' => 'Suzuki Riobamba', 'accept' => ['txt', 'xls', 'xlsx']],
-                ];
+                $uploadDefinitions = $this->uploadDefinitions();
 
                 $storedFiles = [];
                 $storeUpload = static function (array $file, string $label, array $acceptedExtensions, string $uploadsDir): string {
@@ -193,26 +180,23 @@ final class ServiciosMarcasModuleController
                     return $inputPath;
                 };
 
-                foreach ($requiredFiles as $field => $meta) {
-                    if (!isset($files[$field])) {
+                foreach ($uploadDefinitions as $field => $meta) {
+                    $required = $this->isUploadRequired($meta, $brandKey);
+                    $file = $files[$field] ?? null;
+                    $errorCode = is_array($file) ? (int)($file['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+
+                    if ($required && $errorCode === UPLOAD_ERR_NO_FILE) {
                         throw new \RuntimeException('Falta el archivo de ' . $meta['label'] . '.');
                     }
-                    $storedFiles[$field] = $storeUpload(
-                        $files[$field],
-                        $meta['label'],
-                        $meta['accept'],
-                        $paths['uploads_dir']
-                    );
-                }
 
-                foreach ($optionalFiles as $field => $meta) {
-                    if (!isset($files[$field]) || (int)($files[$field]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                    if (!is_array($file) || $errorCode === UPLOAD_ERR_NO_FILE) {
                         continue;
                     }
+
                     $storedFiles[$field] = $storeUpload(
-                        $files[$field],
-                        $meta['label'],
-                        $meta['accept'],
+                        $file,
+                        (string)$meta['label'],
+                        (array)($meta['accept'] ?? []),
                         $paths['uploads_dir']
                     );
                 }
@@ -300,6 +284,119 @@ final class ServiciosMarcasModuleController
     }
 
     /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function uploadDefinitions(): array
+    {
+        return [
+            'px_file' => [
+                'label' => 'PX',
+                'accept' => ['xls', 'xlsx'],
+                'scope' => 'common',
+            ],
+            'repventas_file' => [
+                'label' => 'REP VENTAS',
+                'accept' => ['xls', 'xlsx'],
+                'scope' => 'common',
+            ],
+            'factura_changan_file' => [
+                'label' => 'REP FACTURACIÓN CHANGAN',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'changan',
+            ],
+            'nota_changan_file' => [
+                'label' => 'NOTA DE CRÉDITO CHANGAN',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'changan',
+            ],
+            'mayor_changan_file' => [
+                'label' => 'MAYOR CHANGAN',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'changan',
+            ],
+            'factura_peug_file' => [
+                'label' => 'REP FACTURACIÓN PEUGEOT',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'peug',
+            ],
+            'nota_peug_file' => [
+                'label' => 'NOTA DE CRÉDITO PEUGEOT',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'peug',
+            ],
+            'mayor_peug_file' => [
+                'label' => 'MAYOR PEUGEOT',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'peug',
+            ],
+            'factura_szk_file' => [
+                'label' => 'REP FACTURACIÓN SUZUKI',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'szk',
+            ],
+            'nota_szk_file' => [
+                'label' => 'NOTA DE CRÉDITO SUZUKI',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'szk',
+            ],
+            'mayor_szk_file' => [
+                'label' => 'MAYOR SUZUKI',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'szk',
+            ],
+            'factura_tyt_file' => [
+                'label' => 'REP FACTURACIÓN MATRIZ',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'tyt',
+            ],
+            'nota_tyt_file' => [
+                'label' => 'NOTA DE CRÉDITO MATRIZ',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'tyt',
+            ],
+            'mayor_tyt_file' => [
+                'label' => 'MAYOR MATRIZ',
+                'accept' => ['txt'],
+                'scope' => 'brand',
+                'brand' => 'tyt',
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     */
+    private function isUploadRequired(array $definition, string $brandKey): bool
+    {
+        $scope = (string)($definition['scope'] ?? 'common');
+        if ($scope !== 'brand') {
+            return true;
+        }
+
+        $definitionBrand = trim((string)($definition['brand'] ?? ''));
+        if ($definitionBrand === '') {
+            return false;
+        }
+
+        if ($brandKey === '') {
+            return true;
+        }
+
+        return $definitionBrand === $brandKey;
+    }
+
+    /**
      * @return string[]
      */
     private function acceptedExtensions(): array
@@ -361,6 +458,35 @@ final class ServiciosMarcasModuleController
             return false;
         }
 
-        return (time() - $startedTs) >= 600;
+        return (time() - $startedTs) >= $this->jobTimeoutSeconds();
+    }
+
+    private function jobTimeoutSeconds(): int
+    {
+        $seconds = (int)($this->config['module']['jobs']['worker_timeout_seconds'] ?? 2700);
+        return $seconds > 0 ? $seconds : 2700;
+    }
+
+    private function jobTimeoutLabel(): string
+    {
+        $seconds = $this->jobTimeoutSeconds();
+        if (($seconds % 60) === 0) {
+            $minutes = intdiv($seconds, 60);
+            return $minutes . ' minuto' . ($minutes === 1 ? '' : 's');
+        }
+
+        $minutes = intdiv($seconds, 60);
+        $remainingSeconds = $seconds % 60;
+        if ($minutes <= 0) {
+            return $remainingSeconds . ' segundo' . ($remainingSeconds === 1 ? '' : 's');
+        }
+
+        return sprintf(
+            '%d minuto%s %d segundo%s',
+            $minutes,
+            $minutes === 1 ? '' : 's',
+            $remainingSeconds,
+            $remainingSeconds === 1 ? '' : 's'
+        );
     }
 }
