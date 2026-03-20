@@ -83,7 +83,7 @@
             renderMeta(job);
 
             if (job.status === 'complete' || job.status === 'error' || job.status === 'cancelled') {
-                window.location.href = returnUrl;
+                window.location.href = returnUrl + '#resultado';
                 return;
             }
         } catch (_error) {

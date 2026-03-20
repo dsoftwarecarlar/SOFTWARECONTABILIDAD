@@ -263,6 +263,80 @@ function styleSignature(style) {
   return stableStringify(style || {});
 }
 
+function orderFontChildren(fontNode) {
+  if (!fontNode || typeof fontNode !== "object" || Array.isArray(fontNode)) {
+    return fontNode;
+  }
+
+  const ordered = {};
+  const preferredOrder = [
+    "b",
+    "i",
+    "u",
+    "strike",
+    "outline",
+    "shadow",
+    "condense",
+    "extend",
+    "sz",
+    "color",
+    "name",
+    "family",
+    "charset",
+    "scheme",
+    "vertAlign",
+  ];
+
+  for (const key of preferredOrder) {
+    if (Object.prototype.hasOwnProperty.call(fontNode, key)) {
+      ordered[key] = fontNode[key];
+    }
+  }
+
+  for (const key of Object.keys(fontNode)) {
+    if (!Object.prototype.hasOwnProperty.call(ordered, key)) {
+      ordered[key] = fontNode[key];
+    }
+  }
+
+  return ordered;
+}
+
+function normalizeStylesFontOrderInZip(zip) {
+  const stylesText = readZipText(zip, "xl/styles.xml");
+  if (!stylesText) {
+    return false;
+  }
+
+  const stylesXml = parseXml(stylesText);
+  const fonts = toArray(stylesXml.styleSheet?.fonts?.font);
+  if (fonts.length === 0) {
+    return false;
+  }
+
+  const normalizedFonts = fonts.map(orderFontChildren);
+  const before = fonts.map((font) => Object.keys(font || {}).join("|")).join("||");
+  const after = normalizedFonts.map((font) => Object.keys(font || {}).join("|")).join("||");
+  if (before === after) {
+    return false;
+  }
+
+  stylesXml.styleSheet.fonts.font = normalizedFonts;
+  updateZipText(zip, "xl/styles.xml", stylesXml);
+  return true;
+}
+
+function normalizeWorkbookOpenXmlCompatibility(filePath) {
+  const zip = new AdmZip(filePath);
+  const changed = normalizeStylesFontOrderInZip(zip);
+  if (!changed) {
+    return false;
+  }
+
+  zip.writeZip(filePath);
+  return true;
+}
+
 module.exports = {
   AdmZip,
   captureStyleMatrix,
@@ -290,4 +364,5 @@ module.exports = {
   stripCalcChain,
   stableStringify,
   styleSignature,
+  normalizeWorkbookOpenXmlCompatibility,
 };

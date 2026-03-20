@@ -10,6 +10,7 @@
 
 html {
     font-family: var(--font-sans);
+    overflow-y: scroll;
 }
 
 body {

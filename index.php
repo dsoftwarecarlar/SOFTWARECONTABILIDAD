@@ -19,7 +19,6 @@ foreach ($workspaces as $workspace) {
 
     $windowCount += count($workspace['windows'] ?? []);
     foreach (($workspace['windows'] ?? []) as $window) {
-        if (($window['bundle']['state'] ?? '') === 'active') {
             $bundleCount += 1;
         }
     }

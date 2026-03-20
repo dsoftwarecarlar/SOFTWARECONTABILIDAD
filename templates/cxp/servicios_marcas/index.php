@@ -236,7 +236,7 @@ $brandUploadSections = [
                 <?php endif; ?>
 
                 <?php if ($result !== null): ?>
-                    <div class="msg ok">Archivo procesado: <?= htmlspecialchars((string)$result['source_name']) ?>. Los enlaces de abajo son salidas generadas del upload actual.</div>
+                    <div id="resultado" class="msg ok">Archivo procesado: <?= htmlspecialchars((string)$result['source_name']) ?>. Los enlaces de abajo son salidas generadas del upload actual.</div>
                     <div class="result-guide">
                         <article class="box output-box">
                             <span class="tag">Entrada subida</span>

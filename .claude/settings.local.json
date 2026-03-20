@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep \"for $row\\\\|for $r \")",
+      "Bash(grep -n \"\\\\.Cells\\\\.Item\\($targetRow\\\\|\\\\.Cells\\\\.Item\\($rowIndex\\\\|\\\\.Cells\\\\.Item\\($row \" \"c:/xampp/htdocs/SOFTWARECONTABILIDAD/run_servicios_marcas.ps1\")"
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
+const { normalizeWorkbookOpenXmlCompatibility } = require("./scripts/cxp/shared/excel-template-utils");
 
 const OUTPUTS_DIR = path.join(__dirname, "storage", "outputs");
 const ACTIONS_CONFIG_PATH = path.join(__dirname, "config", "cxp", "action_exports.json");
@@ -205,6 +206,39 @@ function copyWorksheetMerges(sourceSheet, targetSheet) {
   }
 }
 
+function ensureWorkbookViews(targetWorkbook, sourceViews = []) {
+  if (Array.isArray(targetWorkbook.views) && targetWorkbook.views.length > 0) {
+    return;
+  }
+
+  const sourceView =
+    Array.isArray(sourceViews) && sourceViews.length > 0 && sourceViews[0] && typeof sourceViews[0] === "object"
+      ? sourceViews[0]
+      : null;
+  const hasSheetViews = targetWorkbook.worksheets.some(
+    (worksheet) => Array.isArray(worksheet.views) && worksheet.views.length > 0,
+  );
+
+  if (!sourceView && !hasSheetViews) {
+    return;
+  }
+
+  targetWorkbook.views = [
+    {
+      x: Number.isFinite(sourceView?.x) ? sourceView.x : 0,
+      y: Number.isFinite(sourceView?.y) ? sourceView.y : 0,
+      width: Number.isFinite(sourceView?.width) ? sourceView.width : 20000,
+      height: Number.isFinite(sourceView?.height) ? sourceView.height : 12000,
+      firstSheet: Number.isInteger(sourceView?.firstSheet) ? sourceView.firstSheet : 0,
+      activeTab: Number.isInteger(sourceView?.activeTab) ? sourceView.activeTab : 0,
+      visibility:
+        typeof sourceView?.visibility === "string" && sourceView.visibility.trim() !== ""
+          ? sourceView.visibility
+          : "visible",
+    },
+  ];
+}
+
 async function copyWorkbookSheet(targetWorkbook, sourcePath, targetSheetName) {
   const sourceWorkbook = new ExcelJS.Workbook();
   await sourceWorkbook.xlsx.readFile(sourcePath);
@@ -213,6 +247,8 @@ async function copyWorkbookSheet(targetWorkbook, sourcePath, targetSheetName) {
   if (!sourceSheet) {
     throw new Error(`El archivo ${path.basename(sourcePath)} no contiene hojas para copiar.`);
   }
+
+  ensureWorkbookViews(targetWorkbook, sourceWorkbook.views);
 
   const targetSheet = targetWorkbook.addWorksheet(targetSheetName);
   const maxRow = Math.max(sourceSheet.rowCount || 0, 1);
@@ -235,6 +271,7 @@ async function writeWorkbookWithRetries(workbook, preferredPath, maxAttempts = 2
 
     try {
       await workbook.xlsx.writeFile(candidate);
+      normalizeWorkbookOpenXmlCompatibility(candidate);
       return candidate;
     } catch (error) {
       const isLocked = error && (error.code === "EBUSY" || error.code === "EPERM");
@@ -269,6 +306,8 @@ async function main() {
   for (const item of latestFiles) {
     await copyWorkbookSheet(workbook, item.latest.path, item.sheetName);
   }
+
+  ensureWorkbookViews(workbook);
 
   const finalOutputPath = await writeWorkbookWithRetries(workbook, outputPath);
   console.log(`Excel consolidado generado: ${finalOutputPath}`);

@@ -5,6 +5,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { spawn, spawnSync } = require("child_process");
 
+const AdmZip = require("adm-zip");
 const XLSX = require("xlsx");
 
 const { parseInputSources } = require("../cxp/accion4/parser");
@@ -196,6 +197,75 @@ function fetchHistoryFromPhp(actionKey) {
   return output ? JSON.parse(output) : [];
 }
 
+function readZipEntryText(zip, entryName) {
+  const entry = zip.getEntry(entryName);
+  assertCondition(!!entry, `Consolidado: no existe ${entryName} dentro del XLSX.`);
+  return entry.getData().toString("utf8");
+}
+
+function assertWorkbookViewStructure(buffer, label) {
+  const zip = new AdmZip(buffer);
+  const workbookXml = readZipEntryText(zip, "xl/workbook.xml");
+  const worksheetEntries = zip
+    .getEntries()
+    .filter((entry) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(entry.entryName));
+  const requiresBookViews = worksheetEntries.some((entry) =>
+    /<sheetView\b[^>]*\bworkbookViewId="(\d+)"/.test(entry.getData().toString("utf8")),
+  );
+
+  if (!requiresBookViews) {
+    return;
+  }
+
+  assertCondition(
+    /<bookViews>/.test(workbookXml) && /<workbookView\b/.test(workbookXml),
+    `${label}: faltan bookViews en xl/workbook.xml aunque hay sheetViews con workbookViewId.`,
+  );
+}
+
+function assertStylesFontOrder(buffer, label) {
+  const zip = new AdmZip(buffer);
+  const stylesXml = readZipEntryText(zip, "xl/styles.xml");
+  const fontsBlock = stylesXml.match(/<fonts\b[\s\S]*?<\/fonts>/i);
+  if (!fontsBlock) {
+    return;
+  }
+
+  const fontMatches = fontsBlock[0].match(/<font>[\s\S]*?<\/font>/gi) || [];
+  const rank = new Map([
+    ["b", 1],
+    ["i", 2],
+    ["u", 3],
+    ["strike", 4],
+    ["outline", 5],
+    ["shadow", 6],
+    ["condense", 7],
+    ["extend", 8],
+    ["sz", 9],
+    ["color", 10],
+    ["name", 11],
+    ["family", 12],
+    ["charset", 13],
+    ["scheme", 14],
+    ["vertAlign", 15],
+  ]);
+
+  fontMatches.forEach((fontXml, index) => {
+    const childTags = [...fontXml.matchAll(/<([A-Za-z][A-Za-z0-9]*)\b/g)]
+      .map((match) => match[1])
+      .filter((tag) => tag !== "font");
+    let previousRank = -1;
+    for (const tag of childTags) {
+      const currentRank = rank.has(tag) ? rank.get(tag) : 1000;
+      assertCondition(
+        currentRank >= previousRank,
+        `${label}: el orden de nodos en styles.xml es invalido para la fuente ${index + 1} (${childTags.join(" -> ")}).`,
+      );
+      previousRank = currentRank;
+    }
+  });
+}
+
 function buildAction1NormalizedSignature(source) {
   const workbook = Buffer.isBuffer(source)
     ? XLSX.read(source, { type: "buffer", cellFormula: false })
@@ -297,6 +367,8 @@ async function runAction1Contract() {
     outputWorkbook.SheetNames.includes("LIBRO COMPRAS"),
     "Accion 1: no existe hoja LIBRO COMPRAS en el Excel descargado.",
   );
+  assertWorkbookViewStructure(download.buffer, "Accion 1");
+  assertStylesFontOrder(download.buffer, "Accion 1");
 
   const generatedSignature = buildAction1NormalizedSignature(download.buffer);
   const referenceSignature = buildAction1NormalizedSignature(
@@ -367,6 +439,8 @@ async function runBundleCheck() {
     workbook.SheetNames.length === 4,
     `Consolidado: se esperaban 4 hojas y llegaron ${workbook.SheetNames.length}.`,
   );
+  assertWorkbookViewStructure(response.buffer, "Consolidado");
+  assertStylesFontOrder(response.buffer, "Consolidado");
 }
 
 async function main() {

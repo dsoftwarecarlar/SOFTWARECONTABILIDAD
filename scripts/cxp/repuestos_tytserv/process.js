@@ -2945,7 +2945,14 @@ function shouldUseTemplateCarryover(templateWorkbook, sourceDataList) {
   return true;
 }
 
-function applySectionScaling(outputWorksheet, templateWorksheet, layout, section, sourceGroups) {
+function applySectionScaling(
+  outputWorksheet,
+  templateWorksheet,
+  layout,
+  section,
+  sourceGroups,
+  templateSection = section,
+) {
   const lastColumn = getSectionLastColumn(layout);
   for (let row = section.startRow; row <= section.endRow; row += 1) {
     clearWorksheetRange(outputWorksheet, row, row, 1, lastColumn);
@@ -2955,10 +2962,10 @@ function applySectionScaling(outputWorksheet, templateWorksheet, layout, section
     || Object.prototype.hasOwnProperty.call(sourceGroups, "credit"));
   const debitGroups = hasSplitGroups ? (sourceGroups.debit || {}) : (sourceGroups || {});
   const creditGroups = hasSplitGroups ? (sourceGroups.credit || {}) : {};
-  const staticTemplates = getSectionStaticTemplates(templateWorksheet, layout, section);
+  const staticTemplates = getSectionStaticTemplates(templateWorksheet, layout, templateSection);
 
   const accountOrder = new Map(
-    getTemplateAccountBlocks(templateWorksheet, section).map((block, index) => [block.account, index]),
+    getTemplateAccountBlocks(templateWorksheet, templateSection).map((block, index) => [block.account, index]),
   );
   const entries = [
     ...buildPostingEntries(debitGroups, "debit"),
@@ -3001,10 +3008,11 @@ function recalculateSectionSaldo(
   section,
   activeRows = new Set(),
   options = {},
+  templateSection = section,
 ) {
   const useTemplateOpeningBalance = options.useTemplateOpeningBalance !== false;
   const openingBalances = useTemplateOpeningBalance
-    ? getSectionOpeningBalances(templateWorksheet, layout, section)
+    ? getSectionOpeningBalances(templateWorksheet, layout, templateSection)
     : {};
   let runningBalance = 0;
   let currentAccount = "";
@@ -3052,6 +3060,36 @@ function prepareSectionTotalRow(outputWorksheet, layout, originalSection, adjust
   copyRowStyle(outputWorksheet, originalTotalRow, adjustedTotalRow, lastColumn);
   copyRowValues(outputWorksheet, originalTotalRow, adjustedTotalRow, lastColumn);
   clearWorksheetRange(outputWorksheet, originalTotalRow, originalTotalRow, 1, lastColumn);
+}
+
+function ensureMySectionCapacity(outputWorksheet, layout, section, requiredRows, offset = 0) {
+  const baseCapacity = section.endRow - section.startRow + 1;
+  const extraRows = Math.max(0, requiredRows - baseCapacity);
+  const adjustedStartRow = section.startRow + offset;
+  const adjustedEndRow = section.endRow + offset + extraRows;
+
+  if (extraRows > 0) {
+    const insertRow = section.endRow + offset + 1;
+    const styleRow = Math.max(section.startRow + offset, insertRow - 1);
+    const detailMerges = getRowMergeDefinitions(outputWorksheet, styleRow);
+    const lastColumn = getSectionLastColumn(layout);
+    outputWorksheet.insertRows(insertRow, Array.from({ length: extraRows }, () => []), "n");
+
+    for (let row = insertRow; row < insertRow + extraRows; row += 1) {
+      copyRowStyle(outputWorksheet, styleRow, row, lastColumn);
+      applyRowMergeDefinitions(outputWorksheet, row, detailMerges);
+      clearWorksheetRange(outputWorksheet, row, row, 1, lastColumn);
+    }
+  }
+
+  return {
+    section: {
+      ...section,
+      startRow: adjustedStartRow,
+      endRow: adjustedEndRow,
+    },
+    offset: offset + extraRows,
+  };
 }
 
 function updateSectionTotalResults(outputWorksheet, section) {
@@ -3163,6 +3201,78 @@ function updateMySheetFromRep(workbook, templateWorkbook, key, repGroups, ncGrou
     recalculateSectionSaldo(outputWorksheet, templateWorksheet, layout, devolSection, activeRows, options);
     updateSectionTotalResults(outputWorksheet, devolSection);
     totalRows.devol = devolSection.endRow + 1;
+  }
+
+  return totalRows;
+}
+
+function updateMySheetFromRepDynamic(workbook, templateWorkbook, key, repGroups, ncGroups, options = {}) {
+  const layout = MY_LAYOUTS[key];
+  if (!layout) {
+    throw new Error(`No existe layout MY para ${key}.`);
+  }
+
+  const outputWorksheet = workbook.getWorksheet(layout.mySheetName);
+  const templateWorksheet = templateWorkbook.getWorksheet(layout.mySheetName);
+  if (!outputWorksheet || !templateWorksheet) {
+    throw new Error(`No existe la hoja requerida en plantilla: ${layout.mySheetName}`);
+  }
+
+  const resolvedNcGroups = ncGroups || {};
+  const discountCreditGroups = resolvedNcGroups.discountCredit || {};
+  const devolGroups = resolvedNcGroups.devol || {};
+  const totalRows = {};
+  const baseDevolSection = getDevolSectionRange(templateWorksheet, layout);
+  const sectionConfigs = layout.sections.map((baseSection) => ({
+    name: baseSection.name,
+    baseSection,
+    sourceGroups: baseSection.name === "sales"
+      ? { debit: {}, credit: repGroups.sales }
+      : { debit: repGroups.discount, credit: discountCreditGroups },
+  }));
+
+  if (baseDevolSection) {
+    sectionConfigs.push({
+      name: "devol",
+      baseSection: {
+        ...baseDevolSection,
+        name: "devol",
+      },
+      sourceGroups: { debit: devolGroups, credit: {} },
+    });
+  }
+
+  let offset = 0;
+  for (const config of sectionConfigs) {
+    const requiredRows = countSectionEntries(config.sourceGroups);
+    const capacityResult = ensureMySectionCapacity(
+      outputWorksheet,
+      layout,
+      config.baseSection,
+      requiredRows,
+      offset,
+    );
+    offset = capacityResult.offset;
+
+    const activeRows = applySectionScaling(
+      outputWorksheet,
+      templateWorksheet,
+      layout,
+      capacityResult.section,
+      config.sourceGroups,
+      config.baseSection,
+    );
+    recalculateSectionSaldo(
+      outputWorksheet,
+      templateWorksheet,
+      layout,
+      capacityResult.section,
+      activeRows,
+      options,
+      config.baseSection,
+    );
+    updateSectionTotalResults(outputWorksheet, capacityResult.section);
+    totalRows[config.name] = capacityResult.section.endRow + 1;
   }
 
   return totalRows;
@@ -3375,17 +3485,19 @@ function buildMayorIvaEntries(repGroupsByKey, ncGroupsByKey) {
 function updateMayorIvaSummaryResults(worksheet, options = {}) {
   const summaryStartRow = Number.isInteger(options.summaryStartRow) ? options.summaryStartRow : 2;
   const windowStartRow = Number.isInteger(options.windowStartRow) ? options.windowStartRow : 283;
-  const debitAll = sumWorksheetColumn(worksheet, summaryStartRow, MAYOR_IVA_END_ROW, 8);
-  const creditAll = sumWorksheetColumn(worksheet, summaryStartRow, MAYOR_IVA_END_ROW, 9);
-  const debitWindow = sumWorksheetColumn(worksheet, windowStartRow, MAYOR_IVA_END_ROW, 8);
-  const creditWindow = sumWorksheetColumn(worksheet, windowStartRow, MAYOR_IVA_END_ROW, 9);
+  const detailEndRow = Number.isInteger(options.detailEndRow) ? options.detailEndRow : MAYOR_IVA_END_ROW;
+  const summaryRowStart = Number.isInteger(options.summaryRowStart) ? options.summaryRowStart : 367;
+  const debitAll = sumWorksheetColumn(worksheet, summaryStartRow, detailEndRow, 8);
+  const creditAll = sumWorksheetColumn(worksheet, summaryStartRow, detailEndRow, 9);
+  const debitWindow = sumWorksheetColumn(worksheet, windowStartRow, detailEndRow, 8);
+  const creditWindow = sumWorksheetColumn(worksheet, windowStartRow, detailEndRow, 9);
 
-  setFormulaResult(worksheet.getRow(367).getCell(8), debitAll);
-  setFormulaResult(worksheet.getRow(367).getCell(9), creditAll);
-  setFormulaResult(worksheet.getRow(368).getCell(9), roundAmount(creditAll - debitAll, 2));
-  setFormulaResult(worksheet.getRow(369).getCell(8), debitWindow);
-  setFormulaResult(worksheet.getRow(369).getCell(9), creditWindow);
-  setFormulaResult(worksheet.getRow(370).getCell(9), roundAmount(creditWindow - debitWindow, 2));
+  setFormulaResult(worksheet.getRow(summaryRowStart).getCell(8), debitAll);
+  setFormulaResult(worksheet.getRow(summaryRowStart).getCell(9), creditAll);
+  setFormulaResult(worksheet.getRow(summaryRowStart + 1).getCell(9), roundAmount(creditAll - debitAll, 2));
+  setFormulaResult(worksheet.getRow(summaryRowStart + 2).getCell(8), debitWindow);
+  setFormulaResult(worksheet.getRow(summaryRowStart + 2).getCell(9), creditWindow);
+  setFormulaResult(worksheet.getRow(summaryRowStart + 3).getCell(9), roundAmount(creditWindow - debitWindow, 2));
 }
 
 function updateMayorIvaFromRep(workbook, templateWorkbook, repGroupsByKey, ncGroupsByKey, options = {}) {
@@ -3470,6 +3582,117 @@ function updateMayorIvaFromRep(workbook, templateWorkbook, repGroupsByKey, ncGro
   }
 
   updateMayorIvaSummaryResults(outputWorksheet, { summaryStartRow, windowStartRow });
+}
+
+function ensureMayorIvaCapacity(outputWorksheet, requiredRows) {
+  const baseCapacity = MAYOR_IVA_END_ROW - MAYOR_IVA_START_ROW + 1;
+  const extraRows = Math.max(0, requiredRows - baseCapacity);
+  if (extraRows > 0) {
+    const insertRow = MAYOR_IVA_END_ROW + 1;
+    const detailMerges = getRowMergeDefinitions(outputWorksheet, MAYOR_IVA_END_ROW);
+    outputWorksheet.insertRows(insertRow, Array.from({ length: extraRows }, () => []), "n");
+
+    for (let row = insertRow; row < insertRow + extraRows; row += 1) {
+      copyRowStyle(outputWorksheet, MAYOR_IVA_END_ROW, row, MAYOR_IVA_LAST_COLUMN);
+      copyRowValues(outputWorksheet, MAYOR_IVA_END_ROW, row, MAYOR_IVA_LAST_COLUMN);
+      applyRowMergeDefinitions(outputWorksheet, row, detailMerges);
+    }
+  }
+
+  return {
+    detailEndRow: MAYOR_IVA_END_ROW + extraRows,
+    summaryRowStart: 367 + extraRows,
+  };
+}
+
+function updateMayorIvaFromRepDynamic(workbook, templateWorkbook, repGroupsByKey, ncGroupsByKey, options = {}) {
+  const outputWorksheet = workbook.getWorksheet("MAYOR IVA");
+  const templateWorksheet = templateWorkbook.getWorksheet("MAYOR IVA");
+  if (!outputWorksheet || !templateWorksheet) {
+    throw new Error("No existe la hoja requerida en plantilla: MAYOR IVA");
+  }
+
+  const useTemplateOpeningBalance = options.useTemplateOpeningBalance !== false;
+  const clearCarryoverWindow = options.clearCarryoverWindow === true;
+  const summaryStartRow = Number.isInteger(options.summaryStartRow) ? options.summaryStartRow : 2;
+  const windowStartRow = Number.isInteger(options.windowStartRow) ? options.windowStartRow : 283;
+
+  if (clearCarryoverWindow) {
+    clearWorksheetRange(outputWorksheet, 280, MAYOR_IVA_START_ROW - 1, 1, MAYOR_IVA_LAST_COLUMN);
+  }
+
+  const entries = buildMayorIvaEntries(repGroupsByKey, ncGroupsByKey);
+  const layout = ensureMayorIvaCapacity(outputWorksheet, entries.length);
+
+  for (let row = MAYOR_IVA_START_ROW; row <= layout.detailEndRow; row += 1) {
+    outputWorksheet.getRow(row).getCell(4).value = null;
+    outputWorksheet.getRow(row).getCell(6).value = null;
+    outputWorksheet.getRow(row).getCell(7).value = null;
+    outputWorksheet.getRow(row).getCell(8).value = 0;
+    outputWorksheet.getRow(row).getCell(9).value = 0;
+    outputWorksheet.getRow(row).getCell(10).value = null;
+  }
+
+  const activeRows = new Set();
+  entries.forEach((entry, index) => {
+    const rowNumber = MAYOR_IVA_START_ROW + index;
+    const row = outputWorksheet.getRow(rowNumber);
+    activeRows.add(rowNumber);
+    setDateCellValue(outputWorksheet, rowNumber, 4, entry.dateValue, entry.dateText);
+    row.getCell(6).value = entry.seat;
+    row.getCell(7).value = entry.detail;
+    row.getCell(8).value = entry.side === "debit" ? entry.amount : 0;
+    row.getCell(9).value = entry.side === "credit" ? entry.amount : 0;
+  });
+
+  for (let row = MAYOR_IVA_START_ROW; row <= layout.detailEndRow; row += 1) {
+    if (!activeRows.has(row)) {
+      clearWorksheetRange(outputWorksheet, row, row, 1, MAYOR_IVA_LAST_COLUMN);
+    }
+  }
+
+  let runningBalance = useTemplateOpeningBalance ? getMayorIvaOpeningBalance(templateWorksheet) : 0;
+  for (let row = MAYOR_IVA_START_ROW; row <= layout.detailEndRow; row += 1) {
+    const withinTemplateWindow = row <= MAYOR_IVA_END_ROW;
+    if (withinTemplateWindow) {
+      const templateType = getWorksheetCellText(templateWorksheet, row, 5);
+      const templateSeat = getWorksheetCellText(templateWorksheet, row, 6);
+      const templateDetail = getWorksheetCellText(templateWorksheet, row, 7);
+      const templateDebit = getWorksheetCellNumber(templateWorksheet, row, 8);
+      const templateCredit = getWorksheetCellNumber(templateWorksheet, row, 9);
+      const templateSaldo = getWorksheetCellNumber(templateWorksheet, row, 10);
+
+      if (
+        templateType === "" &&
+        templateSeat === "" &&
+        templateDetail === "" &&
+        Math.abs(templateDebit) < 0.0000001 &&
+        Math.abs(templateCredit) < 0.0000001 &&
+        Math.abs(templateSaldo) < 0.0000001 &&
+        !activeRows.has(row)
+      ) {
+        outputWorksheet.getRow(row).getCell(10).value = null;
+        continue;
+      }
+    }
+
+    if (!activeRows.has(row)) {
+      outputWorksheet.getRow(row).getCell(10).value = null;
+      continue;
+    }
+
+    const debit = getWorksheetCellNumber(outputWorksheet, row, 8);
+    const credit = getWorksheetCellNumber(outputWorksheet, row, 9);
+    runningBalance = roundAmount(runningBalance + debit - credit, 2);
+    outputWorksheet.getRow(row).getCell(10).value = runningBalance;
+  }
+
+  updateMayorIvaSummaryResults(outputWorksheet, {
+    summaryStartRow,
+    windowStartRow,
+    detailEndRow: layout.detailEndRow,
+    summaryRowStart: layout.summaryRowStart,
+  });
 }
 
 function updateRepMayorRows(workbook, myTotalRowsByKey) {
@@ -3720,7 +3943,7 @@ async function main() {
     } else {
       applyNcSheetFromCandidates(workbook, config.key, ncResult.candidates || [], sourceData.dateRange || globalSourceRange);
     }
-    myTotalRowsByKey[config.key] = updateMySheetFromRep(
+    myTotalRowsByKey[config.key] = updateMySheetFromRepDynamic(
       workbook,
       templateWorkbook,
       config.key,
@@ -3736,7 +3959,7 @@ async function main() {
 
   // La lógica de MAYOR IVA ha sido deshabilitada porque la plantilla no contiene fórmulas y los cálculos eran incorrectos.
   updateNcMayorRows(workbook, myTotalRowsByKey);
-  updateMayorIvaFromRep(workbook, templateWorkbook, repGroupsByKey, ncGroupsByKey, {
+  updateMayorIvaFromRepDynamic(workbook, templateWorkbook, repGroupsByKey, ncGroupsByKey, {
     useTemplateOpeningBalance: useTemplateCarryover,
     clearCarryoverWindow: !useTemplateCarryover,
     summaryStartRow: useTemplateCarryover ? 2 : MAYOR_IVA_START_ROW,

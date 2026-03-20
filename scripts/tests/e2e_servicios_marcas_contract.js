@@ -480,11 +480,13 @@ async function runServiciosContract() {
     const notaSheet = workbook.Sheets["NOTA DE CREDITO"] || workbook.Sheets["NOTA DE CRÉDITO"];
     const pxSheet = workbook.Sheets.PX;
     const repVtasSheet = workbook.Sheets["REP VTAS"];
+    const precontVentasSheet = workbook.Sheets.PrecontabilizacionVentas;
 
     assertCondition(!!repFactSheet, "Servicios: la salida no contiene la hoja REP FACTURACION.");
     assertCondition(!!notaSheet, "Servicios: la salida no contiene la hoja NOTA DE CREDITO.");
     assertCondition(!!pxSheet, "Servicios: la salida no contiene la hoja PX.");
     assertCondition(!!repVtasSheet, "Servicios: la salida no contiene la hoja REP VTAS.");
+    assertCondition(!!precontVentasSheet, "Servicios: la salida no contiene la hoja PrecontabilizacionVentas.");
 
     assertCondition(
       sheetContainsText(repFactSheet, facturaCanary.canary),
@@ -493,6 +495,10 @@ async function runServiciosContract() {
     assertCondition(
       sheetContainsText(pxSheet, pxCanary.canary),
       "Servicios: la hoja PX no contiene el item canario del upload PX.",
+    );
+    assertCondition(
+      !sheetContainsText(precontVentasSheet, "#REF!"),
+      "Servicios: PrecontabilizacionVentas contiene #REF! y rompe la conciliacion.",
     );
 
     const repFactRows = countRowsByAgency(repFactSheet, "MATRIZ");
@@ -513,6 +519,11 @@ async function runServiciosContract() {
       historyNames.includes(String(download.name || "")),
       "Servicios: el historial no incluye la salida recien generada.",
     );
+
+    const persistedOutputPath = path.join(ROOT, "storage", "outputs", String(download.name || ""));
+    if (fs.existsSync(persistedOutputPath)) {
+      cleanupPaths.push(persistedOutputPath);
+    }
   } finally {
     for (const filePath of cleanupPaths) {
       if (fs.existsSync(filePath)) {

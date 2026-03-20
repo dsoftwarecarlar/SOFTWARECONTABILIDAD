@@ -144,6 +144,7 @@ async function getTemplateVisualStyles(templatePath) {
     atsJ: deepClone(worksheet.getCell("J485").style),
     rimpeI: deepClone(worksheet.getCell("I493").style),
     columnWidths,
+    workbookViews: deepClone(workbook.views),
     sheetViews: deepClone(worksheet.views),
     pageSetup: deepClone(worksheet.pageSetup),
     headerFooter: deepClone(worksheet.headerFooter),

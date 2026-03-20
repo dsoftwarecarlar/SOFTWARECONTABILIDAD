@@ -1,0 +1,19 @@
+﻿$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+$paths = @(
+  'C:\xampp\htdocs\SOFTWARECONTABILIDAD\resources\cxp\servicios_marcas\templates\11. Concili. Servicios CHANGAN  2026.xls',
+  'C:\xampp\htdocs\SOFTWARECONTABILIDAD\resources\cxp\servicios_marcas\templates\11. Concili. Servicios PEUG  2026.xls',
+  'C:\xampp\htdocs\SOFTWARECONTABILIDAD\resources\cxp\servicios_marcas\templates\11. Concili. Servicios SZK  2026.xls',
+  'C:\xampp\htdocs\SOFTWARECONTABILIDAD\resources\cxp\servicios_marcas\templates\11. Concili. Servicios TYT 2026.xls'
+)
+foreach ($p in $paths) {
+  $wb = $excel.Workbooks.Open($p, $false, $true)
+  try {
+    $pre = $wb.Worksheets.Item('PrecontabilizacionVentas')
+    Write-Host "FILE=$p"
+    Write-Host (' PRE!V7 formula=' + [string]$pre.Range('V7').Formula)
+    Write-Host (' PRE!V10 formula=' + [string]$pre.Range('V10').Formula)
+  } finally { $wb.Close($false) }
+}
+$excel.Quit()

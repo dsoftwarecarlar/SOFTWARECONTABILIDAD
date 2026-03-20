@@ -9,6 +9,7 @@ const {
   normalizeOutputCellValue,
 } = require("./row-utils");
 const { getTemplateVisualStyles } = require("./template");
+const { normalizeWorkbookOpenXmlCompatibility } = require("../shared/excel-template-utils");
 
 function writeAoaToWorksheet(worksheet, aoa) {
   for (let rowIndex = 0; rowIndex < aoa.length; rowIndex += 1) {
@@ -46,6 +47,23 @@ async function buildStyledWorkbook(templatePath, aoa, meta) {
   workbook.calcProperties = { fullCalcOnLoad: true };
   workbook.creator = "Codex";
   workbook.created = new Date();
+
+  if (Array.isArray(styles.workbookViews) && styles.workbookViews.length > 0) {
+    workbook.views = deepClone(styles.workbookViews);
+  } else if (Array.isArray(styles.sheetViews) && styles.sheetViews.length > 0) {
+    workbook.views = [
+      {
+        x: 0,
+        y: 0,
+        width: 20000,
+        height: 12000,
+        firstSheet: 0,
+        activeTab: 0,
+        visibility: "visible",
+      },
+    ];
+  }
+
   const worksheet = workbook.addWorksheet("LIBRO COMPRAS");
 
   if (styles.sheetProperties) {
@@ -172,6 +190,7 @@ async function writeWorkbookWithRetries(workbook, preferredPath, maxAttempts = 2
 
     try {
       await workbook.xlsx.writeFile(candidate);
+      normalizeWorkbookOpenXmlCompatibility(candidate);
       return candidate;
     } catch (error) {
       const isLocked = error && (error.code === "EBUSY" || error.code === "EPERM");
