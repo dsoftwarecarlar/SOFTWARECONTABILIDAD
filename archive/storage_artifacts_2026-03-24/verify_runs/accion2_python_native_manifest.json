@@ -1,0 +1,11 @@
+{
+  "processor": "cxp_actions.accion2",
+  "input_paths": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_input.txt"
+  ],
+  "output_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_output.xlsx",
+  "template_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\templates\\ACCION2.xlsx",
+  "options": {
+    "cwd": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD"
+  }
+}

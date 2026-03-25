@@ -1,0 +1,31 @@
+{
+  "sheets": {
+    "NC REP TYT": {
+      "total_row": 9,
+      "mayor_row": 10,
+      "mayor_values": {
+        "22": "MAYOR",
+        "23": "885.86",
+        "24": "44.3"
+      }
+    },
+    "NC REP PEUG": {
+      "total_row": 9,
+      "mayor_row": 10,
+      "mayor_values": {
+        "22": "MAYOR",
+        "23": "20",
+        "24": "0"
+      }
+    },
+    "NC REP SZK": {
+      "total_row": 10,
+      "mayor_row": 11,
+      "mayor_values": {
+        "22": "MAYOR",
+        "23": "1136.77",
+        "24": "142.74"
+      }
+    }
+  }
+}

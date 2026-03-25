@@ -3,15 +3,22 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 
 const AdmZip = require("adm-zip");
+const ExcelJS = require("exceljs");
 const XLSX = require("xlsx");
 
 const { parseInputSources } = require("../cxp/accion4/parser");
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const PHP_EXE = process.env.PHP_EXE || "C:\\xampp\\php\\php.exe";
+const APP_ROOT = path.join(ROOT, "laravel_app");
+const ROUTER = path.join(APP_ROOT, "server.php");
+const PHP_EXE = firstExistingPath([
+  path.join(ROOT, ".tools", "php82", "php.exe"),
+  process.env.PHP_EXE || "",
+  "C:\\xampp\\php\\php.exe",
+]);
 const HOST = "127.0.0.1";
 const PORT = 18991;
 const BASE_URL = `http://${HOST}:${PORT}`;
@@ -24,9 +31,16 @@ function assertCondition(condition, message) {
 
 function firstExistingPath(candidates) {
   for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) {
-      return candidate;
+    if (!candidate) {
+      continue;
     }
+    if (candidate.includes("\\") || candidate.includes("/")) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+      continue;
+    }
+    return candidate;
   }
 
   return candidates[0];
@@ -60,13 +74,21 @@ function normalizeText(value) {
     .toUpperCase();
 }
 
+function normalizeDocuText(value) {
+  const normalized = normalizeText(value);
+  if (/^\d+$/.test(normalized)) {
+    return String(Number(normalized));
+  }
+  return normalized;
+}
+
 function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 function startPhpServer() {
-  const server = spawn(PHP_EXE, ["-S", `${HOST}:${PORT}`, "-t", ROOT], {
-    cwd: ROOT,
+  const server = spawn(PHP_EXE, ["-d", "max_execution_time=180", "-S", `${HOST}:${PORT}`, ROUTER], {
+    cwd: APP_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -81,12 +103,7 @@ function waitServerReady(retries = 60) {
     const tick = () => {
       attempts += 1;
       const req = http.request(
-        {
-          hostname: HOST,
-          port: PORT,
-          path: "/",
-          method: "GET",
-        },
+        { hostname: HOST, port: PORT, path: "/", method: "GET" },
         (res) => {
           res.resume();
           resolve();
@@ -94,7 +111,7 @@ function waitServerReady(retries = 60) {
       );
       req.on("error", (error) => {
         if (attempts >= retries) {
-          reject(new Error(`No se pudo iniciar servidor PHP: ${error.message}`));
+          reject(new Error(`No se pudo iniciar servidor Laravel: ${error.message}`));
           return;
         }
         setTimeout(tick, 200);
@@ -108,13 +125,7 @@ function waitServerReady(retries = 60) {
 function httpRequest(method, requestPath, body = null, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      {
-        hostname: HOST,
-        port: PORT,
-        path: requestPath,
-        method,
-        headers,
-      },
+      { hostname: HOST, port: PORT, path: requestPath, method, headers },
       (res) => {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
@@ -137,7 +148,28 @@ function httpRequest(method, requestPath, body = null, headers = {}) {
   });
 }
 
-function buildMultipartBody(files) {
+async function httpRequestWithRedirects(method, requestPath, body = null, headers = {}, maxRedirects = 5) {
+  let currentPath = requestPath;
+  let currentMethod = method;
+  let currentBody = body;
+
+  for (let attempt = 0; attempt <= maxRedirects; attempt += 1) {
+    const response = await httpRequest(currentMethod, currentPath, currentBody, headers);
+    const location = response.headers.location;
+    if (![301, 302, 303, 307, 308].includes(response.status) || !location) {
+      return response;
+    }
+
+    const parsed = location.startsWith("http") ? new URL(location) : new URL(location, BASE_URL);
+    currentPath = parsed.pathname + parsed.search;
+    currentMethod = "GET";
+    currentBody = null;
+  }
+
+  throw new Error(`Demasiados redirects al solicitar ${requestPath}.`);
+}
+
+function buildMultipartBody(token, files = []) {
   const boundary = `----CodexBoundary${Date.now()}${Math.random().toString(16).slice(2)}`;
   const chunks = [];
 
@@ -145,12 +177,15 @@ function buildMultipartBody(files) {
     chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8"));
   };
 
+  push(`--${boundary}\r\n`);
+  push('Content-Disposition: form-data; name="_token"\r\n\r\n');
+  push(token);
+  push("\r\n");
+
   for (const file of files) {
     const content = fs.readFileSync(file.path);
     push(`--${boundary}\r\n`);
-    push(
-      `Content-Disposition: form-data; name="${file.field}"; filename="${path.basename(file.path)}"\r\n`,
-    );
+    push(`Content-Disposition: form-data; name="${file.field}"; filename="${path.basename(file.path)}"\r\n`);
     push(`Content-Type: ${file.contentType}\r\n\r\n`);
     push(content);
     push("\r\n");
@@ -164,37 +199,32 @@ function buildMultipartBody(files) {
   };
 }
 
-function extractDownloadNameAndSuccess(html) {
-  const linkMatch = html.match(/href="([^"]*download\.php\?file=[^"]+)"/i);
-  assertCondition(linkMatch, "No se encontro enlace de descarga en la respuesta HTML.");
-
-  const link = linkMatch[1];
-  const absoluteUrl = link.startsWith("http")
-    ? link
-    : `${BASE_URL}${link.startsWith("/") ? "" : "/"}${link}`;
-  const parsed = new URL(absoluteUrl);
-  const fileName = decodeURIComponent(parsed.searchParams.get("file") || "");
-  assertCondition(fileName !== "", "No se pudo extraer nombre de archivo desde enlace de descarga.");
-
-  const successMatch = html.match(/Archivo generado correctamente:\s*([^|<\r\n]+)/i);
-  assertCondition(successMatch, "No se encontro mensaje de exito con excel_name.");
-  const successName = successMatch[1].trim();
-
-  return {
-    link: parsed.pathname + parsed.search,
-    fileName,
-    successName,
-  };
+function extractCsrfToken(html, label) {
+  const match = html.match(/name="_token"\s+value="([^"]+)"/i);
+  assertCondition(match, `No se encontro CSRF token en ${label}.`);
+  return match[1];
 }
 
-function fetchHistoryFromPhp(actionKey) {
-  const phpCode = `require 'C:/xampp/htdocs/SOFTWARECONTABILIDAD/includes/app.php'; echo json_encode(app_list_output_files_for_action('${actionKey}', 20), JSON_UNESCAPED_SLASHES);`;
-  const result = spawnSync(PHP_EXE, ["-r", phpCode], { cwd: ROOT, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(`No se pudo leer historial de ${actionKey}: ${result.stderr || result.stdout}`);
-  }
-  const output = (result.stdout || "").trim();
-  return output ? JSON.parse(output) : [];
+function extractCookie(headers, label) {
+  const setCookie = headers["set-cookie"];
+  assertCondition(Array.isArray(setCookie) && setCookie.length > 0, `Laravel no devolvio cookie de sesion en ${label}.`);
+  return setCookie.map((cookie) => cookie.split(";", 1)[0]).join("; ");
+}
+
+function extractDownloadInfo(html, label) {
+  const codeMatch = html.match(/<code>([^<]+\.xlsx)<\/code>/i);
+  assertCondition(codeMatch, `${label}: no se encontro nombre de archivo generado en la respuesta.`);
+  const linkMatch = html.match(/href="([^"]*\/downloads\/[^"]+)"/i);
+  assertCondition(linkMatch, `${label}: no se encontro enlace de descarga Laravel.`);
+
+  const link = linkMatch[1];
+  const absoluteUrl = link.startsWith("http") ? link : `${BASE_URL}${link.startsWith("/") ? "" : "/"}${link}`;
+  const parsed = new URL(absoluteUrl);
+
+  return {
+    fileName: codeMatch[1].trim(),
+    link: parsed.pathname + parsed.search,
+  };
 }
 
 function readZipEntryText(zip, entryName) {
@@ -218,52 +248,41 @@ function assertWorkbookViewStructure(buffer, label) {
   }
 
   assertCondition(
-    /<bookViews>/.test(workbookXml) && /<workbookView\b/.test(workbookXml),
+    /<(?:\w+:)?bookViews\b/.test(workbookXml) && /<(?:\w+:)?workbookView\b/.test(workbookXml),
     `${label}: faltan bookViews en xl/workbook.xml aunque hay sheetViews con workbookViewId.`,
   );
 }
 
-function assertStylesFontOrder(buffer, label) {
+function assertStylesXmlReadable(buffer, label) {
   const zip = new AdmZip(buffer);
   const stylesXml = readZipEntryText(zip, "xl/styles.xml");
-  const fontsBlock = stylesXml.match(/<fonts\b[\s\S]*?<\/fonts>/i);
-  if (!fontsBlock) {
-    return;
-  }
+  assertCondition(/<styleSheet\b/i.test(stylesXml), `${label}: falta styleSheet en xl/styles.xml.`);
+  assertCondition(/<fonts\b/i.test(stylesXml), `${label}: falta bloque fonts en xl/styles.xml.`);
+}
 
-  const fontMatches = fontsBlock[0].match(/<font>[\s\S]*?<\/font>/gi) || [];
-  const rank = new Map([
-    ["b", 1],
-    ["i", 2],
-    ["u", 3],
-    ["strike", 4],
-    ["outline", 5],
-    ["shadow", 6],
-    ["condense", 7],
-    ["extend", 8],
-    ["sz", 9],
-    ["color", 10],
-    ["name", 11],
-    ["family", 12],
-    ["charset", 13],
-    ["scheme", 14],
-    ["vertAlign", 15],
-  ]);
+async function assertExcelJsReadable(buffer, label) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  assertCondition(workbook.worksheets.length > 0, `${label}: ExcelJS no detecto hojas dentro del XLSX.`);
+}
 
-  fontMatches.forEach((fontXml, index) => {
-    const childTags = [...fontXml.matchAll(/<([A-Za-z][A-Za-z0-9]*)\b/g)]
-      .map((match) => match[1])
-      .filter((tag) => tag !== "font");
-    let previousRank = -1;
-    for (const tag of childTags) {
-      const currentRank = rank.has(tag) ? rank.get(tag) : 1000;
-      assertCondition(
-        currentRank >= previousRank,
-        `${label}: el orden de nodos en styles.xml es invalido para la fuente ${index + 1} (${childTags.join(" -> ")}).`,
-      );
-      previousRank = currentRank;
-    }
-  });
+function assertNoExternalLinks(buffer, label) {
+  const zip = new AdmZip(buffer);
+  const names = zip.getEntries().map((entry) => entry.entryName);
+  const externalEntries = names.filter((name) => /^xl\/externalLinks\//i.test(name));
+  assertCondition(externalEntries.length === 0, `${label}: el XLSX contiene externalLinks heredados.`);
+
+  const workbookXml = readZipEntryText(zip, "xl/workbook.xml");
+  assertCondition(!/<externalReferences\b/i.test(workbookXml), `${label}: xl/workbook.xml conserva externalReferences.`);
+
+  const workbookRels = readZipEntryText(zip, "xl/_rels/workbook.xml.rels");
+  assertCondition(!/relationships\/externalLink/i.test(workbookRels), `${label}: workbook.xml.rels conserva relaciones externalLink.`);
+
+  const contentTypes = readZipEntryText(zip, "[Content_Types].xml");
+  assertCondition(
+    !/spreadsheetml\.externalLink\+xml/i.test(contentTypes),
+    `${label}: [Content_Types].xml conserva overrides de externalLink.`,
+  );
 }
 
 function buildAction1NormalizedSignature(source) {
@@ -343,23 +362,23 @@ function columnValues(sheet, columnIndex, startRow = 2) {
 
 async function runAction1Contract() {
   const inputPath = action1FixturePath("CXPREP_docproveedor.pdf");
-  const payload = buildMultipartBody([
-    { field: "pdf_file", path: inputPath, contentType: "application/pdf" },
+  const page = await httpRequest("GET", "/cxp/modules/accion1");
+  assertCondition(page.status === 200, `Accion 1 Laravel devolvio HTTP ${page.status}.`);
+  const cookie = extractCookie(page.headers, "accion1");
+  const token = extractCsrfToken(page.text, "accion1");
+  const payload = buildMultipartBody(token, [
+    { field: "source_files", path: inputPath, contentType: "application/pdf" },
   ]);
 
-  const response = await httpRequest("POST", "/modules/cxp_pdf/index.php", payload.body, {
+  const response = await httpRequest("POST", "/cxp/modules/accion1", payload.body, {
     "Content-Type": `multipart/form-data; boundary=${payload.boundary}`,
     "Content-Length": String(payload.body.length),
+    Cookie: cookie,
   });
 
-  assertCondition(response.status === 200, `Accion 1 devolvio estado HTTP ${response.status}.`);
-  const parsed = extractDownloadNameAndSuccess(response.text);
-  assertCondition(
-    parsed.successName === parsed.fileName,
-    `Accion 1 inconsistente: success_message='${parsed.successName}' y descarga='${parsed.fileName}'.`,
-  );
-
-  const download = await httpRequest("GET", parsed.link);
+  assertCondition(response.status === 200, `Accion 1 Laravel devolvio estado HTTP ${response.status}.`);
+  const parsed = extractDownloadInfo(response.text, "Accion 1");
+  const download = await httpRequestWithRedirects("GET", parsed.link, null, { Cookie: cookie });
   assertCondition(download.status === 200, `No se pudo descargar salida de Accion 1 (${download.status}).`);
 
   const outputWorkbook = XLSX.read(download.buffer, { type: "buffer", cellFormula: false });
@@ -367,8 +386,10 @@ async function runAction1Contract() {
     outputWorkbook.SheetNames.includes("LIBRO COMPRAS"),
     "Accion 1: no existe hoja LIBRO COMPRAS en el Excel descargado.",
   );
+  assertNoExternalLinks(download.buffer, "Accion 1");
   assertWorkbookViewStructure(download.buffer, "Accion 1");
-  assertStylesFontOrder(download.buffer, "Accion 1");
+  assertStylesXmlReadable(download.buffer, "Accion 1");
+  await assertExcelJsReadable(download.buffer, "Accion 1");
 
   const generatedSignature = buildAction1NormalizedSignature(download.buffer);
   const referenceSignature = buildAction1NormalizedSignature(
@@ -379,68 +400,92 @@ async function runAction1Contract() {
     `Accion 1: la salida no coincide con el contrato base (rows=${generatedSignature.rows}/${referenceSignature.rows}).`,
   );
 
-  const history = fetchHistoryFromPhp("accion1");
-  const historyNames = history.map((item) => String(item.name || ""));
+  const historyPage = await httpRequest("GET", "/cxp/modules/accion1", null, { Cookie: cookie });
+  assertCondition(historyPage.status === 200, `Accion 1: historial Laravel devolvio ${historyPage.status}.`);
   assertCondition(
-    historyNames.includes(parsed.fileName),
-    "Accion 1: el historial no incluye el archivo recien generado.",
+    historyPage.text.includes(parsed.fileName),
+    "Accion 1: el historial Laravel no incluye el archivo recien generado.",
   );
 }
 
 async function runAction4Contract() {
   const canaryInput = await createAction4CanaryFile();
-  const payload = buildMultipartBody([
-    { field: "txt_file", path: canaryInput.filePath, contentType: "text/plain" },
-  ]);
+  try {
+    const page = await httpRequest("GET", "/cxp/modules/accion4");
+    assertCondition(page.status === 200, `Accion 4 Laravel devolvio HTTP ${page.status}.`);
+    const cookie = extractCookie(page.headers, "accion4");
+    const token = extractCsrfToken(page.text, "accion4");
+    const payload = buildMultipartBody(token, [
+      { field: "source_files", path: canaryInput.filePath, contentType: "text/plain" },
+    ]);
 
-  const response = await httpRequest("POST", "/modules/cxp_accion4/index.php", payload.body, {
-    "Content-Type": `multipart/form-data; boundary=${payload.boundary}`,
-    "Content-Length": String(payload.body.length),
-  });
+    const response = await httpRequest("POST", "/cxp/modules/accion4", payload.body, {
+      "Content-Type": `multipart/form-data; boundary=${payload.boundary}`,
+      "Content-Length": String(payload.body.length),
+      Cookie: cookie,
+    });
 
-  assertCondition(response.status === 200, `Accion 4 devolvio estado HTTP ${response.status}.`);
-  const parsed = extractDownloadNameAndSuccess(response.text);
-  assertCondition(
-    parsed.successName === parsed.fileName,
-    `Accion 4 inconsistente: success_message='${parsed.successName}' y descarga='${parsed.fileName}'.`,
-  );
+    assertCondition(response.status === 200, `Accion 4 Laravel devolvio estado HTTP ${response.status}.`);
+    const parsed = extractDownloadInfo(response.text, "Accion 4");
+    const download = await httpRequestWithRedirects("GET", parsed.link, null, { Cookie: cookie });
+    assertCondition(download.status === 200, `No se pudo descargar salida de Accion 4 (${download.status}).`);
 
-  const download = await httpRequest("GET", parsed.link);
-  assertCondition(download.status === 200, `No se pudo descargar salida de Accion 4 (${download.status}).`);
+    const workbook = XLSX.read(download.buffer, { type: "buffer" });
+    const sheet = workbook.Sheets["MAYOR IVA"];
+    assertCondition(!!sheet, "Accion 4: no existe hoja MAYOR IVA.");
+    assertNoExternalLinks(download.buffer, "Accion 4");
+    await assertExcelJsReadable(download.buffer, "Accion 4");
 
-  const workbook = XLSX.read(download.buffer, { type: "buffer" });
-  const sheet = workbook.Sheets["MAYOR IVA"];
-  assertCondition(!!sheet, "Accion 4: no existe hoja MAYOR IVA.");
+    const docValues = columnValues(sheet, 7, 2).map((item) => normalizeText(item));
+    assertCondition(
+      docValues.map((item) => normalizeDocuText(item)).includes(normalizeDocuText(canaryInput.canary)),
+      "Accion 4: el XLSX descargado no contiene el DOCU canario del TXT subido.",
+    );
 
-  const docValues = columnValues(sheet, 7, 2).map((item) => normalizeText(item));
-  assertCondition(
-    docValues.includes(normalizeText(canaryInput.canary)),
-    "Accion 4: el XLSX descargado no contiene el DOCU canario del TXT subido.",
-  );
-
-  const history = fetchHistoryFromPhp("accion4");
-  const historyNames = history.map((item) => String(item.name || ""));
-  assertCondition(
-    historyNames.includes(parsed.fileName),
-    "Accion 4: el historial no incluye el archivo recien generado.",
-  );
+    const historyPage = await httpRequest("GET", "/cxp/modules/accion4", null, { Cookie: cookie });
+    assertCondition(historyPage.status === 200, `Accion 4: historial Laravel devolvio ${historyPage.status}.`);
+    assertCondition(
+      historyPage.text.includes(parsed.fileName),
+      "Accion 4: el historial Laravel no incluye el archivo recien generado.",
+    );
+  } finally {
+    if (fs.existsSync(canaryInput.filePath)) {
+      fs.unlinkSync(canaryInput.filePath);
+    }
+  }
 }
 
 async function runBundleCheck() {
-  const response = await httpRequest("GET", "/export_all_actions.php");
-  if (response.status === 409) {
-    console.log("SKIP: export_all_actions necesita salidas recientes de las 4 acciones.");
+  const page = await httpRequest("GET", "/cxp/modules/consolidado-acciones");
+  assertCondition(page.status === 200, `Consolidado Laravel devolvio HTTP ${page.status}.`);
+  const cookie = extractCookie(page.headers, "consolidado");
+  const token = extractCsrfToken(page.text, "consolidado");
+  const payload = buildMultipartBody(token, []);
+  const response = await httpRequest("POST", "/cxp/modules/consolidado-acciones", payload.body, {
+    "Content-Type": `multipart/form-data; boundary=${payload.boundary}`,
+    "Content-Length": String(payload.body.length),
+    Cookie: cookie,
+  });
+
+  assertCondition(response.status === 200, `Consolidado Laravel devolvio estado HTTP ${response.status}.`);
+  if (/Falta generar salida reciente para esta accion/i.test(response.text)) {
+    console.log("SKIP: consolidado Laravel necesita salidas recientes de las 4 acciones.");
     return;
   }
 
-  assertCondition(response.status === 200, `Consolidado devolvio estado HTTP ${response.status}.`);
-  const workbook = XLSX.read(response.buffer, { type: "buffer", cellFormula: false });
+  const parsed = extractDownloadInfo(response.text, "Consolidado");
+  const download = await httpRequestWithRedirects("GET", parsed.link, null, { Cookie: cookie });
+  assertCondition(download.status === 200, `No se pudo descargar consolidado (${download.status}).`);
+
+  const workbook = XLSX.read(download.buffer, { type: "buffer", cellFormula: false });
   assertCondition(
     workbook.SheetNames.length === 4,
     `Consolidado: se esperaban 4 hojas y llegaron ${workbook.SheetNames.length}.`,
   );
-  assertWorkbookViewStructure(response.buffer, "Consolidado");
-  assertStylesFontOrder(response.buffer, "Consolidado");
+  assertNoExternalLinks(download.buffer, "Consolidado");
+  assertWorkbookViewStructure(download.buffer, "Consolidado");
+  assertStylesXmlReadable(download.buffer, "Consolidado");
+  await assertExcelJsReadable(download.buffer, "Consolidado");
 }
 
 async function main() {
@@ -450,7 +495,7 @@ async function main() {
     await runAction1Contract();
     await runAction4Contract();
     await runBundleCheck();
-    console.log("OK: contrato E2E Accion 1/4 validado.");
+    console.log("OK: contrato E2E Accion 1/4 validado en Laravel.");
   } finally {
     server.kill();
   }

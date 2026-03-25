@@ -1,0 +1,11 @@
+{
+  "input_paths": [
+    "C:/xampp/htdocs/SOFTWARECONTABILIDAD/resources/cxp/acciones/fixtures/CXPREP_docproveedor.pdf"
+  ],
+  "output_path": "C:/xampp/htdocs/SOFTWARECONTABILIDAD/storage/outputs/example_output.xlsx",
+  "template_path": "C:/xampp/htdocs/SOFTWARECONTABILIDAD/resources/cxp/acciones/templates/EJEMPLODECOMOQUEDARIA.xlsx",
+  "options": {
+    "module": "accion1",
+    "dry_run": true
+  }
+}

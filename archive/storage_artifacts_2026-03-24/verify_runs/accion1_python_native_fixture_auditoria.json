@@ -1,0 +1,29 @@
+{
+  "fecha_proceso": "2026-03-24T11:59:16.158904",
+  "input_pdf": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CXPREP_docproveedor.pdf",
+  "output_xlsx": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion1_python_native_fixture.xlsx",
+  "hoja_salida": "LIBRO COMPRAS",
+  "filas_extraidas": 531,
+  "filas_ajustadas_plantilla": 531,
+  "cobertura_plantilla": 1.0,
+  "validacion_pre_ajuste_problemas": 0,
+  "validacion_pre_ajuste_muestra": [],
+  "auditoria_consistencia": {
+    "habilitada": true,
+    "forzada": true,
+    "ok": true,
+    "filas_generadas": 531,
+    "filas_plantilla": 531,
+    "extras_generadas": 0,
+    "faltantes_generadas": 0,
+    "extras_muestra": [],
+    "faltantes_muestra": []
+  },
+  "totales_criticos_verificados": true,
+  "timings_ms": {
+    "parse": 6996,
+    "build": 137,
+    "write": 450,
+    "total": 7993
+  }
+}

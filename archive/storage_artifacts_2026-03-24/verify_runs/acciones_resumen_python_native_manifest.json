@@ -1,0 +1,10 @@
+﻿{
+    "processor":  "cxp_actions.export_all",
+    "input_paths":  [
+
+                    ],
+    "output_path":  "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\acciones_resumen_python_native.xlsx",
+    "options":  {
+                    "cwd":  "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD"
+                }
+}

@@ -3,12 +3,18 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 
 const XLSX = require("xlsx");
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const PHP_EXE = process.env.PHP_EXE || "C:\\xampp\\php\\php.exe";
+const APP_ROOT = path.join(ROOT, "laravel_app");
+const ROUTER = path.join(APP_ROOT, "server.php");
+const PHP_EXE = firstExistingPath([
+  path.join(ROOT, ".tools", "php82", "php.exe"),
+  process.env.PHP_EXE || "",
+  "C:\\xampp\\php\\php.exe",
+]);
 const HOST = "127.0.0.1";
 const PORT = 18994;
 const BASE_URL = `http://${HOST}:${PORT}`;
@@ -21,9 +27,18 @@ function assertCondition(condition, message) {
 
 function firstExistingPath(candidates) {
   for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) {
-      return candidate;
+    if (!candidate) {
+      continue;
     }
+
+    if (candidate.includes("\\") || candidate.includes("/")) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+      continue;
+    }
+
+    return candidate;
   }
 
   return candidates[0];
@@ -66,6 +81,16 @@ function serviciosFixturePath(fileKey) {
   return firstExistingPath(candidates);
 }
 
+function serviciosTemplatePath(brandKey) {
+  const candidatesByKey = {
+    tyt: [
+      path.join(ROOT, "resources", "cxp", "servicios_marcas", "templates", "11. Concili. Servicios TYT 2026.xls"),
+    ],
+  };
+
+  return firstExistingPath(candidatesByKey[brandKey] || []);
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -78,8 +103,8 @@ function normalizeText(value) {
 }
 
 function startPhpServer() {
-  const server = spawn(PHP_EXE, ["-S", `${HOST}:${PORT}`, "-t", ROOT], {
-    cwd: ROOT,
+  const server = spawn(PHP_EXE, ["-d", "max_execution_time=180", "-S", `${HOST}:${PORT}`, ROUTER], {
+    cwd: APP_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -107,7 +132,7 @@ function waitServerReady(retries = 60) {
       );
       req.on("error", (error) => {
         if (attempts >= retries) {
-          reject(new Error(`No se pudo iniciar servidor PHP: ${error.message}`));
+          reject(new Error(`No se pudo iniciar servidor Laravel: ${error.message}`));
           return;
         }
         setTimeout(tick, 250);
@@ -150,13 +175,40 @@ function httpRequest(method, requestPath, body = null, headers = {}) {
   });
 }
 
-function buildMultipartBody(files, fields = {}) {
+async function httpRequestWithRedirects(method, requestPath, body = null, headers = {}, maxRedirects = 5) {
+  let currentPath = requestPath;
+  let currentMethod = method;
+  let currentBody = body;
+  for (let attempt = 0; attempt <= maxRedirects; attempt += 1) {
+    const response = await httpRequest(currentMethod, currentPath, currentBody, headers);
+    const location = response.headers.location;
+    if (![301, 302, 303, 307, 308].includes(response.status) || !location) {
+      return response;
+    }
+
+    const parsed = location.startsWith("http")
+      ? new URL(location)
+      : new URL(location, BASE_URL);
+    currentPath = parsed.pathname + parsed.search;
+    currentMethod = "GET";
+    currentBody = null;
+  }
+
+  throw new Error(`Demasiados redirects al solicitar ${requestPath}.`);
+}
+
+function buildMultipartBody(files, token, fields = {}) {
   const boundary = `----CodexBoundary${Date.now()}${Math.random().toString(16).slice(2)}`;
   const chunks = [];
 
   const push = (value) => {
     chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8"));
   };
+
+  push(`--${boundary}\r\n`);
+  push('Content-Disposition: form-data; name="_token"\r\n\r\n');
+  push(token);
+  push("\r\n");
 
   for (const [field, value] of Object.entries(fields)) {
     push(`--${boundary}\r\n`);
@@ -182,6 +234,18 @@ function buildMultipartBody(files, fields = {}) {
     boundary,
     body: Buffer.concat(chunks),
   };
+}
+
+function extractCsrfToken(html) {
+  const match = html.match(/name="_token"\s+value="([^"]+)"/i);
+  assertCondition(match, "No se encontro CSRF token en el formulario Laravel de servicios.");
+  return match[1];
+}
+
+function extractCookie(headers) {
+  const setCookie = headers["set-cookie"];
+  assertCondition(Array.isArray(setCookie) && setCookie.length > 0, "Laravel no devolvio cookie de sesion.");
+  return setCookie.map((cookie) => cookie.split(";", 1)[0]).join("; ");
 }
 
 function createTempFileName(prefix, extension) {
@@ -313,7 +377,7 @@ async function ensureNoActiveServiciosJobs(timeoutMs = 120000) {
   }
 }
 
-async function pollJobUntilFinished(jobId, timeoutMs = 900000, intervalMs = 5000) {
+async function pollJobUntilFinished(jobId, cookie, timeoutMs = 900000, intervalMs = 5000) {
   const startedAt = Date.now();
   let lastDigest = "";
   let lastLogAt = 0;
@@ -321,7 +385,9 @@ async function pollJobUntilFinished(jobId, timeoutMs = 900000, intervalMs = 5000
   while (Date.now() - startedAt < timeoutMs) {
     const response = await httpRequest(
       "GET",
-      `/modules/cxp_servicios_marcas/index.php?status=${encodeURIComponent(jobId)}`,
+      `/cxp/modules/servicios-marcas/jobs/${encodeURIComponent(jobId)}`,
+      null,
+      { Cookie: cookie },
     );
     assertCondition(response.status === 200, `Servicios: status poll devolvio HTTP ${response.status}.`);
     const job = JSON.parse(response.text);
@@ -342,16 +408,6 @@ async function pollJobUntilFinished(jobId, timeoutMs = 900000, intervalMs = 5000
   throw new Error(`Servicios: timeout esperando el job ${jobId}.`);
 }
 
-function fetchHistoryFromPhp(actionKey) {
-  const phpCode = `require 'C:/xampp/htdocs/SOFTWARECONTABILIDAD/includes/app.php'; echo json_encode(app_list_output_files_for_action('${actionKey}', 20), JSON_UNESCAPED_SLASHES);`;
-  const result = spawnSync(PHP_EXE, ["-r", phpCode], { cwd: ROOT, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(`No se pudo leer historial de ${actionKey}: ${result.stderr || result.stdout}`);
-  }
-  const output = (result.stdout || "").trim();
-  return output ? JSON.parse(output) : [];
-}
-
 function sheetContainsText(sheet, expected) {
   const needle = normalizeText(expected);
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
@@ -366,11 +422,91 @@ function countRowsByAgency(sheet, agencyLabel) {
   let count = 0;
   for (const row of rows) {
     const cells = Array.isArray(row) ? row : [];
-    if (normalizeText(cells[0]) === agency && normalizeText(cells[2]) !== "") {
+    const hasPayload = cells.some((cell, index) => index > 0 && normalizeText(cell) !== "");
+    if (normalizeText(cells[0]) === agency && hasPayload) {
       count += 1;
     }
   }
   return count;
+}
+
+function cellText(sheet, row, column) {
+  const ref = XLSX.utils.encode_cell({ r: row - 1, c: column - 1 });
+  const cell = sheet?.[ref];
+  if (!cell) {
+    return "";
+  }
+
+  const value = cell.w != null && String(cell.w).trim() !== "" ? cell.w : cell.v;
+  return value == null ? "" : String(value).trim();
+}
+
+function findSheet(workbook, candidates) {
+  for (const candidate of candidates) {
+    if (workbook.Sheets[candidate]) {
+      return workbook.Sheets[candidate];
+    }
+  }
+
+  return null;
+}
+
+function assertSeedColumnsMatch(outputSheet, templateSheet, rowNumbers, columns, label) {
+  for (const rowNumber of rowNumbers) {
+    for (const column of columns) {
+      const expected = cellText(templateSheet, rowNumber, column);
+      const actual = cellText(outputSheet, rowNumber, column);
+      assertCondition(
+        normalizeText(actual) === normalizeText(expected),
+        `${label}: la fila ${rowNumber} columna ${column} no conserva el seed de plantilla.`,
+      );
+    }
+  }
+}
+
+function findPrecontCostos2Rows(sheet) {
+  const rows = [];
+  for (let row = 2; row <= 60; row += 1) {
+    const account = cellText(sheet, row, 4);
+    if (account === "") {
+      continue;
+    }
+
+    rows.push({
+      row,
+      account,
+      ag: cellText(sheet, row, 2),
+      line: cellText(sheet, row, 3),
+      number: cellText(sheet, row, 5),
+      description: cellText(sheet, row, 6),
+      costCenter: cellText(sheet, row, 7),
+      asiento: cellText(sheet, row, 10),
+    });
+  }
+
+  return rows;
+}
+
+function assertPrecontCostos2Seeds(outputSheet, templateSheet) {
+  const templateRows = findPrecontCostos2Rows(templateSheet);
+  const outputRows = findPrecontCostos2Rows(outputSheet);
+  const expectedAccounts = ["050201010001", "050201010002", "050201010003", "050201010005"];
+
+  for (const account of expectedAccounts) {
+    const expected = templateRows.find((row) => normalizeText(row.account) === account);
+    const actual = outputRows.find((row) => normalizeText(row.account) === account);
+    assertCondition(!!expected, `PrecontabilizacionCostos (2): la plantilla no contiene la cuenta esperada ${account}.`);
+    assertCondition(!!actual, `PrecontabilizacionCostos (2): la salida no contiene la cuenta esperada ${account}.`);
+    assertCondition(
+      normalizeText(actual.ag) === normalizeText(expected.ag) &&
+      normalizeText(actual.line) === normalizeText(expected.line) &&
+      normalizeText(actual.number) === normalizeText(expected.number) &&
+      normalizeText(actual.description) === normalizeText(expected.description) &&
+      normalizeText(actual.costCenter) === normalizeText(expected.costCenter) &&
+      normalizeText(actual.asiento) === normalizeText(expected.asiento),
+      `PrecontabilizacionCostos (2): la estructura seed de la cuenta ${account} no coincide con la plantilla.`,
+    );
+  }
 }
 
 async function runServiciosContract() {
@@ -381,6 +517,11 @@ async function runServiciosContract() {
   const cleanupPaths = [facturaCanary.filePath, pxCanary.filePath];
 
   try {
+    const formResponse = await httpRequest("GET", "/cxp/modules/servicios-marcas");
+    assertCondition(formResponse.status === 200, `Servicios: formulario Laravel devolvio HTTP ${formResponse.status}.`);
+    const cookie = extractCookie(formResponse.headers);
+    const token = extractCsrfToken(formResponse.text);
+
     const files = [
       {
         field: "factura_tyt_file",
@@ -409,14 +550,15 @@ async function runServiciosContract() {
       },
     ];
 
-    const payload = buildMultipartBody(files, {
+    const payload = buildMultipartBody(files, token, {
       action: "process",
       brand_key: "tyt",
     });
 
-    const processResponse = await httpRequest("POST", "/modules/cxp_servicios_marcas/index.php", payload.body, {
+    const processResponse = await httpRequest("POST", "/cxp/modules/servicios-marcas", payload.body, {
       "Content-Type": `multipart/form-data; boundary=${payload.boundary}`,
       "Content-Length": String(payload.body.length),
+      Cookie: cookie,
     });
 
     assertCondition(
@@ -429,7 +571,7 @@ async function runServiciosContract() {
     assertCondition(match, "Servicios: no se encontro el job en la cabecera Location.");
     const jobId = decodeURIComponent(match[1]);
 
-    const job = await pollJobUntilFinished(jobId);
+    const job = await pollJobUntilFinished(jobId, cookie);
     assertCondition(job.status === "complete", `Servicios: el job termino en estado ${job.status}.`);
     assertCondition(Array.isArray(job.downloads) && job.downloads.length === 1, "Servicios: se esperaba una sola salida MATRIZ para brand_key=tyt.");
     assertCondition(
@@ -459,7 +601,9 @@ async function runServiciosContract() {
 
     const pageResponse = await httpRequest(
       "GET",
-      `/modules/cxp_servicios_marcas/index.php?job=${encodeURIComponent(jobId)}`,
+      `/cxp/modules/servicios-marcas?job=${encodeURIComponent(jobId)}`,
+      null,
+      { Cookie: cookie },
     );
     assertCondition(pageResponse.status === 200, `Servicios: la pagina final del job devolvio ${pageResponse.status}.`);
     assertCondition(
@@ -467,26 +611,56 @@ async function runServiciosContract() {
       "Servicios: la pagina final no publico el enlace de descarga del job.",
     );
 
+    const historyPage = await httpRequest("GET", "/cxp/modules/servicios-marcas", null, { Cookie: cookie });
+    assertCondition(historyPage.status === 200, `Servicios: la pagina base devolvio ${historyPage.status}.`);
+    assertCondition(
+      historyPage.text.includes(String(download.name || "")),
+      "Servicios: el historial Laravel no incluye la salida recien generada.",
+    );
+
     const downloadUrl = String(download.download_url || "");
     const absoluteDownloadUrl = downloadUrl.startsWith("http")
       ? downloadUrl
       : `${BASE_URL}${downloadUrl.startsWith("/") ? "" : "/"}${downloadUrl}`;
     const parsedDownload = new URL(absoluteDownloadUrl);
-    const outputResponse = await httpRequest("GET", parsedDownload.pathname + parsedDownload.search);
+    const outputResponse = await httpRequestWithRedirects(
+      "GET",
+      parsedDownload.pathname + parsedDownload.search,
+      null,
+      { Cookie: cookie },
+    );
     assertCondition(outputResponse.status === 200, `Servicios: no se pudo descargar la salida (${outputResponse.status}).`);
 
     const workbook = XLSX.read(outputResponse.buffer, { type: "buffer", cellFormula: false, cellNF: true, cellText: true });
-    const repFactSheet = workbook.Sheets["REP FACTURACION"] || workbook.Sheets["REP FACTURACIÓN"];
-    const notaSheet = workbook.Sheets["NOTA DE CREDITO"] || workbook.Sheets["NOTA DE CRÉDITO"];
+    const repFactSheet =
+      workbook.Sheets["REP FACTURACION"] ||
+      workbook.Sheets["REP FACTURACIÓN"] ||
+      workbook.Sheets["REP FACTURACIÃ“N"];
+    const notaSheet = workbook.Sheets["NOTA DE CREDITO"] || workbook.Sheets["NOTA DE CRÃ‰DITO"];
     const pxSheet = workbook.Sheets.PX;
     const repVtasSheet = workbook.Sheets["REP VTAS"];
     const precontVentasSheet = workbook.Sheets.PrecontabilizacionVentas;
+    const precontCostos2Sheet = workbook.Sheets["PrecontabilizacionCostos (2)"];
+    const costoSheet = workbook.Sheets.COSTO;
+    const estadisticasSheet = workbook.Sheets.ESTADISTICAS;
 
     assertCondition(!!repFactSheet, "Servicios: la salida no contiene la hoja REP FACTURACION.");
     assertCondition(!!notaSheet, "Servicios: la salida no contiene la hoja NOTA DE CREDITO.");
     assertCondition(!!pxSheet, "Servicios: la salida no contiene la hoja PX.");
     assertCondition(!!repVtasSheet, "Servicios: la salida no contiene la hoja REP VTAS.");
     assertCondition(!!precontVentasSheet, "Servicios: la salida no contiene la hoja PrecontabilizacionVentas.");
+    assertCondition(!!precontCostos2Sheet, "Servicios: la salida no contiene la hoja PrecontabilizacionCostos (2).");
+    assertCondition(!!costoSheet, "Servicios: la salida no contiene la hoja COSTO.");
+    assertCondition(!!estadisticasSheet, "Servicios: la salida no contiene la hoja ESTADISTICAS.");
+
+    const templateWorkbook = XLSX.readFile(serviciosTemplatePath("tyt"), { cellFormula: false, cellNF: true, cellText: true });
+    const templatePrecontCostos2Sheet = findSheet(templateWorkbook, ["PrecontabilizacionCostos (2)"]);
+    const templateCostoSheet = findSheet(templateWorkbook, ["COSTO"]);
+    const templateEstadisticasSheet = findSheet(templateWorkbook, ["ESTADISTICAS"]);
+
+    assertCondition(!!templatePrecontCostos2Sheet, "Servicios: no se pudo abrir la plantilla base de PrecontabilizacionCostos (2).");
+    assertCondition(!!templateCostoSheet, "Servicios: no se pudo abrir la plantilla base de COSTO.");
+    assertCondition(!!templateEstadisticasSheet, "Servicios: no se pudo abrir la plantilla base de ESTADISTICAS.");
 
     assertCondition(
       sheetContainsText(repFactSheet, facturaCanary.canary),
@@ -513,12 +687,9 @@ async function runServiciosContract() {
       `Servicios: resumen (${job.summary[0].rows || 0}) no coincide con REP VTAS (${repVtasRows}).`,
     );
 
-    const history = fetchHistoryFromPhp("servicios");
-    const historyNames = history.map((item) => String(item.name || ""));
-    assertCondition(
-      historyNames.includes(String(download.name || "")),
-      "Servicios: el historial no incluye la salida recien generada.",
-    );
+    assertSeedColumnsMatch(costoSheet, templateCostoSheet, [6, 7, 8, 9], [1, 2, 4, 5, 7], "COSTO");
+    assertSeedColumnsMatch(estadisticasSheet, templateEstadisticasSheet, [6, 131, 222, 290, 365], [1, 2, 5, 6, 8], "ESTADISTICAS");
+    assertPrecontCostos2Seeds(precontCostos2Sheet, templatePrecontCostos2Sheet);
 
     const persistedOutputPath = path.join(ROOT, "storage", "outputs", String(download.name || ""));
     if (fs.existsSync(persistedOutputPath)) {
@@ -538,7 +709,7 @@ async function main() {
   try {
     await waitServerReady();
     await runServiciosContract();
-    console.log("OK: contrato E2E Servicios por Marca validado.");
+    console.log("OK: contrato E2E Servicios por Marca validado en Laravel + Python.");
   } finally {
     server.kill();
   }

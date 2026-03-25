@@ -1,0 +1,42 @@
+{
+  "fecha_proceso": "2026-03-24T11:23:51.051832",
+  "input_source": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_canary.txt",
+  "input_sources": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_canary.txt"
+  ],
+  "input_pdf": null,
+  "input_tipo": "txt",
+  "archivos_origen": [
+    {
+      "input_source": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_canary.txt",
+      "file_name": "accion3_python_native_canary.txt",
+      "movimientos_extraidos": 328,
+      "source_type": "txt",
+      "lines_total": 329,
+      "date_rows_detected": 328,
+      "movement_rows_extracted": 328,
+      "skipped_date_rows": 0,
+      "account_totals_checked": 5,
+      "account_total_mismatches": 0
+    }
+  ],
+  "total_archivos_origen": 1,
+  "output_xlsx": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_canary.xlsx",
+  "hoja_salida": "MAYOR RET",
+  "movimientos_extraidos": 328,
+  "filas_fecha_detectadas": 328,
+  "filas_fecha_omitidas": 0,
+  "cuentas_validadas_fuente": 5,
+  "cuentas_descuadradas_fuente": 0,
+  "cuentas_validadas_pdf": 5,
+  "cuentas_descuadradas_pdf": 0,
+  "resumen_filtrado": 12,
+  "timings_ms": {
+    "parse": 52,
+    "validate": 5,
+    "build": 328,
+    "write": 785,
+    "total": 1171
+  },
+  "verificacion_final_ok": true
+}

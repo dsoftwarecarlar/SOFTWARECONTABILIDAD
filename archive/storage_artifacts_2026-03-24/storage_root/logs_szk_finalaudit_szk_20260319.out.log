@@ -1,0 +1,4 @@
+INFO|custom_source|rows=268
+INFO|source_priority|excel_primary|custom_support=268
+WARN|excel_visible_no_conflict|Excel visible (PID: 34908) pero sin archivos en conflicto abiertos. Se continua.
+INFO|processing|szk|rows=274

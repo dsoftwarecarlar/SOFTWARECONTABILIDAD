@@ -1,0 +1,26 @@
+{
+  "processor": "repuestos_tytserv.nc_stage",
+  "input_paths": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral.xlsx",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (1).xlsx",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (3).xlsx"
+  ],
+  "output_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\repuestos_nc_stage_1774375072868.xlsx",
+  "template_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\templates\\FACTURACION REPUESTOS TYTSERV FEBRERO 2026.xlsx",
+  "options": {
+    "saved_inputs": {
+      "excel_nc_tyt": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral.xlsx",
+        "original_name": "RepLibroDevolucionesGeneral.xlsx"
+      },
+      "excel_nc_peug": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (1).xlsx",
+        "original_name": "RepLibroDevolucionesGeneral (1).xlsx"
+      },
+      "excel_nc_szk": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (3).xlsx",
+        "original_name": "RepLibroDevolucionesGeneral (3).xlsx"
+      }
+    }
+  }
+}

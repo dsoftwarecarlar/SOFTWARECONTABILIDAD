@@ -454,6 +454,20 @@ function cloneMovementRow(row) {
   };
 }
 
+function originPriority(row) {
+  const origin = sanitizeText(row.ORIGEN).toUpperCase();
+  const priorities = {
+    CP: 1,
+    INVEN: 2,
+    INVSE: 3,
+    SUBCO: 4,
+    REPTO: 5,
+    COMIS: 5,
+    VENSE: 6,
+  };
+  return priorities[origin] || 4;
+}
+
 function buildAction4OutputPlan(rows) {
   const normalizedRows = rows.map(cloneMovementRow);
   let agcmCount = 0;
@@ -462,61 +476,76 @@ function buildAction4OutputPlan(rows) {
   }
 
   const saldoOffset = agcmCount > 0 ? round2(-normalizedRows[agcmCount - 1].SALDO) : 0;
-
-  let comisTailStart = agcmCount;
-  while (
-    comisTailStart < normalizedRows.length
-    && sanitizeText(normalizedRows[comisTailStart].ORIGEN).toUpperCase() === "COMIS"
-  ) {
-    comisTailStart += 1;
-  }
-
-  const leadingComisRows = normalizedRows.slice(agcmCount, comisTailStart).map(cloneMovementRow);
-  const keptRows = normalizedRows.slice(comisTailStart).map(cloneMovementRow);
-  const movementRows = keptRows.concat(leadingComisRows).map((row) => ({
-    ...row,
+  const adjustedRows = normalizedRows.slice(agcmCount).map((row, index) => ({
+    ...cloneMovementRow(row),
+    __sourceIndex: index,
+    __priority: originPriority(row),
     SALDO: round2(row.SALDO + saldoOffset),
   }));
+  const orderedRows = adjustedRows.slice().sort((left, right) => {
+    if (left.__priority !== right.__priority) {
+      return left.__priority - right.__priority;
+    }
+    return left.__sourceIndex - right.__sourceIndex;
+  });
+  const movementRows = orderedRows.map((row) => {
+    const clone = { ...row };
+    delete clone.__sourceIndex;
+    delete clone.__priority;
+    return clone;
+  });
 
-  let lastInvenIndex = -1;
-  for (let index = 0; index < movementRows.length; index += 1) {
-    if (sanitizeText(movementRows[index].ORIGEN).toUpperCase() === "INVEN") {
-      lastInvenIndex = index;
+  const firstBlock = orderedRows.filter((row) => row.__priority <= 4);
+  const secondBlock = orderedRows.filter((row) => row.__priority === 5);
+  const thirdBlock = orderedRows.filter((row) => row.__priority >= 6);
+
+  const rowPlan = [];
+  let currentExcelRow = 2;
+
+  for (const row of firstBlock) {
+    const clone = { ...row };
+    delete clone.__sourceIndex;
+    delete clone.__priority;
+    rowPlan.push({ type: "movement", row: clone });
+    currentExcelRow += 1;
+  }
+
+  if (firstBlock.length > 0 && (secondBlock.length > 0 || thirdBlock.length > 0)) {
+    const firstBlockEnd = currentExcelRow - 1;
+    rowPlan.push({ type: "subtotal", fromRow: 2, toRow: firstBlockEnd });
+    currentExcelRow += 1;
+    rowPlan.push({ type: "subtotal_balance", mode: "debe_minus_haber" });
+    currentExcelRow += 1;
+    for (let index = 0; index < 9; index += 1) {
+      rowPlan.push({ type: "blank" });
+      currentExcelRow += 1;
     }
   }
 
-  const rowPlan = [];
-  if (lastInvenIndex === -1) {
-    for (const row of movementRows) {
-      rowPlan.push({ type: "movement", row });
-    }
-  } else {
-    const beforeSummary = movementRows.slice(0, lastInvenIndex + 1);
-    const afterSummary = movementRows.slice(lastInvenIndex + 1);
+  const secondBlockStart = currentExcelRow;
+  for (const row of secondBlock) {
+    const clone = { ...row };
+    delete clone.__sourceIndex;
+    delete clone.__priority;
+    rowPlan.push({ type: "movement", row: clone });
+    currentExcelRow += 1;
+  }
 
-    for (const row of beforeSummary) {
-      rowPlan.push({ type: "movement", row });
-    }
+  if (secondBlock.length > 0 && thirdBlock.length > 0) {
+    const secondBlockEnd = currentExcelRow - 1;
+    rowPlan.push({ type: "subtotal", fromRow: secondBlockStart, toRow: secondBlockEnd });
+    currentExcelRow += 1;
+    rowPlan.push({ type: "subtotal_balance", mode: "haber_minus_debe" });
+    currentExcelRow += 1;
+    rowPlan.push({ type: "blank" });
+    currentExcelRow += 1;
+  }
 
-    const subtotalDebe = beforeSummary.reduce((sum, row) => sum + Number(row.DEBE || 0), 0);
-    const subtotalHaber = beforeSummary.reduce((sum, row) => sum + Number(row.HABER || 0), 0);
-    rowPlan.push({
-      type: "subtotal",
-      sumToRow: beforeSummary.length + 1,
-      debe: subtotalDebe,
-      haber: subtotalHaber,
-    });
-    rowPlan.push({
-      type: "subtotal_balance",
-      saldo: subtotalDebe - subtotalHaber,
-    });
-    for (let index = 0; index < 5; index += 1) {
-      rowPlan.push({ type: "blank" });
-    }
-
-    for (const row of afterSummary) {
-      rowPlan.push({ type: "movement", row });
-    }
+  for (const row of thirdBlock) {
+    const clone = { ...row };
+    delete clone.__sourceIndex;
+    delete clone.__priority;
+    rowPlan.push({ type: "movement", row: clone });
   }
 
   return {
@@ -524,10 +553,10 @@ function buildAction4OutputPlan(rows) {
     rowPlan,
     transform: {
       agcm_rows_omitidas: agcmCount,
-      comis_rows_movidas_al_final: leadingComisRows.length,
+      comis_rows_movidas_al_final: secondBlock.filter((row) => sanitizeText(row.ORIGEN).toUpperCase() === "COMIS").length,
       saldo_offset_aplicado: saldoOffset,
-      subtotal_rows_insertadas: lastInvenIndex === -1 ? 0 : 2,
-      blank_rows_insertadas: lastInvenIndex === -1 ? 0 : 5,
+      subtotal_rows_insertadas: rowPlan.filter((item) => item.type === "subtotal_balance").length,
+      blank_rows_insertadas: rowPlan.filter((item) => item.type === "blank").length,
     },
   };
 }

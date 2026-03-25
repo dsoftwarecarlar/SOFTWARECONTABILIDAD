@@ -1,0 +1,37 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+    RewriteRule ^(?:archive|config|docs|node_modules|outputs|python_services|resources|scripts|src|storage|templates|uploads)(?:/|$) - [F,L,NC]
+    RewriteRule ^laravel_app/(?:app|bootstrap|config|database|resources|routes|storage|vendor)(?:/|$) - [F,L,NC]
+
+    RewriteRule ^laravel_app/public/?$ ./ [R=302,L,NE]
+    RewriteRule ^laravel_app/public/(.+)$ $1 [R=302,L,NE,QSA]
+
+    RewriteRule ^areas/cxp/index\.php$ cxp [R=302,L,NE,QSA]
+    RewriteRule ^areas/cxp/libro-compras-aclt\.php$ cxp/windows/libro-compras-aclt [R=302,L,NE,QSA]
+    RewriteRule ^areas/cxp/conciliacion-servicios-marcas\.php$ cxp/windows/conciliacion-servicios-marcas [R=302,L,NE,QSA]
+    RewriteRule ^areas/cxp/facturacion-repuestos-tytserv\.php$ cxp/windows/facturacion-repuestos-tytserv [R=302,L,NE,QSA]
+
+    RewriteRule ^modules/cxp_pdf/index\.php$ cxp/modules/accion1 [R=302,L,NE,QSA]
+    RewriteRule ^modules/cxp_txt/index\.php$ cxp/modules/accion2 [R=302,L,NE,QSA]
+    RewriteRule ^modules/cxp_accion3/index\.php$ cxp/modules/accion3 [R=302,L,NE,QSA]
+    RewriteRule ^modules/cxp_accion4/index\.php$ cxp/modules/accion4 [R=302,L,NE,QSA]
+    RewriteRule ^modules/cxp_servicios_marcas/index\.php$ cxp/modules/servicios-marcas [R=302,L,NE,QSA]
+    RewriteRule ^modules/cxp_repuestos_tytserv/index\.php$ cxp/modules/repuestos-tytserv [R=302,L,NE,QSA]
+
+    RewriteCond %{QUERY_STRING} ^file=([^&]+)$ [NC]
+    RewriteRule ^download\.php$ downloads/%1? [R=302,L,NE]
+    RewriteRule ^export_all_actions\.php$ cxp/modules/consolidado-acciones [R=302,L,NE,QSA]
+
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    RewriteRule ^assets/(.+)$ laravel_app/public/assets/$1 [L,NC]
+    RewriteRule ^brand/(.+)$ laravel_app/public/brand/$1 [L,NC]
+    RewriteRule ^favicon\.ico$ laravel_app/public/favicon.ico [L,NC]
+    RewriteRule ^robots\.txt$ laravel_app/public/robots.txt [L,NC]
+
+    RewriteRule ^ index.php [L,QSA]
+</IfModule>

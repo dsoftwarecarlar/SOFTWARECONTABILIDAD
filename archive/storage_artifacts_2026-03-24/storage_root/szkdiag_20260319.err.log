@@ -1,0 +1,9 @@
+No existe InputPath: 
+C:\xampp\htdocs\SOFTWARECONTABILIDAD\resources\cxp\servicios_marcas\fixtures\RepFacturacionServContabilidad
+En C:\xampp\htdocs\SOFTWARECONTABILIDAD\run_servicios_marcas.ps1: 106 Car cter: 9
++         throw "No existe ${Label}: ${Path}"
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (No existe Input...ervContabilidad:String) [], RuntimeException
+    + FullyQualifiedErrorId : No existe InputPath: C:\xampp\htdocs\SOFTWARECONTABILIDAD\resources\cxp\servicios_marcas 
+   \fixtures\RepFacturacionServContabilidad
+ 

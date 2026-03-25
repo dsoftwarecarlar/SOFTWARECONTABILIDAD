@@ -1,0 +1,11 @@
+/vendor/
+/.env
+/storage/*.key
+/storage/logs/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/testing/*
+/storage/framework/views/*
+/bootstrap/cache/*
+/database/*.sqlite
+!/database/.gitignore

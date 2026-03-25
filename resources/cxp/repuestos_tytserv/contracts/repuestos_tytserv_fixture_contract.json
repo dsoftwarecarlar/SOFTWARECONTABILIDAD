@@ -1,0 +1,114 @@
+{
+  "source_output": "storage/outputs/repuestos_tytserv_20260324_121503_f760ef.xlsx",
+  "sheet_order": [
+    "REP TYT",
+    "NC REP TYT",
+    "MY REP TYT",
+    "REP PEUGT",
+    "NC REP PEUG",
+    "MY REP PEUG",
+    "REP CHGN",
+    "MY REP CHGN",
+    "REP SZK",
+    "NC REP SZK",
+    "MY REP SZK",
+    "MAYOR IVA"
+  ],
+  "visible_signature_rules": {
+    "ignored_header_cells": {
+      "REP TYT": [16],
+      "REP PEUGT": [16],
+      "REP CHGN": [16],
+      "REP SZK": [16],
+      "NC REP TYT": [31],
+      "NC REP PEUG": [31],
+      "NC REP SZK": [31]
+    }
+  },
+  "sheets": {
+    "REP TYT": {
+      "ref": "A1:AO97",
+      "non_empty_rows": 84,
+      "hash": "bc81c7e66db36fd64d7de20c708c55a224625c03370da59982af8e42890c8aee",
+      "visible_non_empty_rows": 84,
+      "visible_hash": "1e0a4d54efc463a5aca8e29fe274fd2c1ab1bbfd425d8f79cd820d15208320d6"
+    },
+    "NC REP TYT": {
+      "ref": "A1:AQ12",
+      "non_empty_rows": 9,
+      "hash": "f8745b85c8611100eff0d4de21d17e74ed11635fc243dc5594fdc6dbcbb9c11e",
+      "visible_non_empty_rows": 9,
+      "visible_hash": "a9c5cfb896a86c4afe26c6849788b6e6d4161cbccdbf09e83240112dd290615e"
+    },
+    "MY REP TYT": {
+      "ref": "A1:J58",
+      "non_empty_rows": 45,
+      "hash": "107193a3c8a1d2a90d903b5be91b21d5d51e6bf090e3f4ead7a27c8597067375",
+      "visible_non_empty_rows": 45,
+      "visible_hash": "626541682483a5a6f75f52c64d646e0a722b13d1ea5d71d3d15c4f0fd398c07b"
+    },
+    "REP PEUGT": {
+      "ref": "A1:AO40",
+      "non_empty_rows": 28,
+      "hash": "fb969755e356ea377ed91ffddfe958265d95586b6a20d54e6ea1367027ea2761",
+      "visible_non_empty_rows": 28,
+      "visible_hash": "6b7df94ded2271a6368cc2b34c8c793d0e0447a3d2eed66b453b6ea1fa2d9a49"
+    },
+    "NC REP PEUG": {
+      "ref": "A1:AQ12",
+      "non_empty_rows": 9,
+      "hash": "ebb247a2e322ab1d06be1c860b8536c4d0952cf65ae52f8813952f2efb599916",
+      "visible_non_empty_rows": 9,
+      "visible_hash": "ed0b269ab9a8c917eed0265583ed94466bad7db5879f04e17bfaec780e5034ad"
+    },
+    "MY REP PEUG": {
+      "ref": "A1:J29",
+      "non_empty_rows": 21,
+      "hash": "fa198e80e88ea359fa7cccfb37dadc2f4cf666127ade57896ece63a79469ab64",
+      "visible_non_empty_rows": 21,
+      "visible_hash": "9457d9138ebfe1ee187b0ca7090255d97f76c55fc89456fc87882d55772be384"
+    },
+    "REP CHGN": {
+      "ref": "A1:AO32",
+      "non_empty_rows": 20,
+      "hash": "be72a1b64a475e6e02b38491ce2026c2af7991d730b8b081014bdb16dfe50c3f",
+      "visible_non_empty_rows": 20,
+      "visible_hash": "bc3c7b678447f837ad4e31cfe0fc83a25d5ab4febff2a31613a63dfc0d520968"
+    },
+    "MY REP CHGN": {
+      "ref": "A1:L15",
+      "non_empty_rows": 12,
+      "hash": "91133e1e67f7a3ca3567fba3945fc88904f30a0bc080047d43365243790a3269",
+      "visible_non_empty_rows": 12,
+      "visible_hash": "630985979492ff784fca0d499edfd378e8552c7eeb2eed2de0537e6ab9f4cc9c"
+    },
+    "REP SZK": {
+      "ref": "A1:AO73",
+      "non_empty_rows": 60,
+      "hash": "0660b50ce1b95c9392c74a81e47765fa19ba222cfd7759292b9117af505a9975",
+      "visible_non_empty_rows": 60,
+      "visible_hash": "da05af5549944fbc9f2e3a480fb51c741f43ce017ca0e9579ad150c94478a6f9"
+    },
+    "NC REP SZK": {
+      "ref": "A1:AQ12",
+      "non_empty_rows": 10,
+      "hash": "453cabdeb65a158c93f170ea95307d7f5671a39a1f4556c5636eea987afe0aee",
+      "visible_non_empty_rows": 10,
+      "visible_hash": "caea8ca67c5453e7aa3513db219905437378697c4da4cb58be8d64b2ba6e1733"
+    },
+    "MY REP SZK": {
+      "ref": "A1:J55",
+      "non_empty_rows": 51,
+      "hash": "bfc28c5bff27852b0e418e4936ecd615f4eb54880c3b6a1e60189ef26e3a71af",
+      "visible_non_empty_rows": 51,
+      "visible_hash": "0e8f41cc17f2ccbbfc938bba45b06c99a9cd5dc0d62cc89d0b836a459056ebb2"
+    },
+    "MAYOR IVA": {
+      "ref": "A1:J370",
+      "non_empty_rows": 370,
+      "hash": "5082a789d8c7067d49f65e8edbed582d3194ac2d523ade85b59a09b39995f260",
+      "visible_non_empty_rows": 370,
+      "visible_hash": "f12413f3367f2f5764e92391e5018690e243d4181d8965719ec7e2af99f28fb5"
+    }
+  }
+}

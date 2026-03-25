@@ -146,10 +146,14 @@ async function buildWorkbookFromTemplate(templatePath, rowPlan, movementRows) {
       ws.getCell(rowNum, 10).value = round2(row.HABER);
       ws.getCell(rowNum, 11).value = round2(row.SALDO);
     } else if (planItem.type === "subtotal") {
-      ws.getCell(rowNum, 9).value = { formula: `SUM(I2:I${planItem.sumToRow})`, result: planItem.debe };
-      ws.getCell(rowNum, 10).value = { formula: `SUM(J2:J${planItem.sumToRow})`, result: planItem.haber };
+      ws.getCell(rowNum, 9).value = { formula: `SUM(I${planItem.fromRow}:I${planItem.toRow})` };
+      ws.getCell(rowNum, 10).value = { formula: `SUM(J${planItem.fromRow}:J${planItem.toRow})` };
     } else if (planItem.type === "subtotal_balance") {
-      ws.getCell(rowNum, 11).value = { formula: `+I${rowNum - 1}-J${rowNum - 1}`, result: planItem.saldo };
+      ws.getCell(rowNum, 11).value = {
+        formula: planItem.mode === "haber_minus_debe"
+          ? `+J${rowNum - 1}-I${rowNum - 1}`
+          : `+I${rowNum - 1}-J${rowNum - 1}`,
+      };
     }
 
     for (let col = 1; col <= 11; col += 1) {

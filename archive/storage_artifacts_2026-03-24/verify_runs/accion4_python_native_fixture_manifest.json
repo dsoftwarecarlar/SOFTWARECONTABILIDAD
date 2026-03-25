@@ -1,0 +1,11 @@
+﻿{
+    "processor":  "cxp_actions.accion4",
+    "input_paths":  [
+                        "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CON_MAYORGEN2IVAACCION4.TXT"
+                    ],
+    "output_path":  "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion4_python_native_fixture.xlsx",
+    "template_path":  "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\templates\\MAYORIVAACCION4.xlsx",
+    "options":  {
+
+                }
+}

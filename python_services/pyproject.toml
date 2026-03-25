@@ -1,0 +1,10 @@
+[project]
+name = "softwarecontabilidad-python-services"
+version = "0.1.0"
+description = "Future Python processors for SOFTWARECONTABILIDAD."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "."}
+

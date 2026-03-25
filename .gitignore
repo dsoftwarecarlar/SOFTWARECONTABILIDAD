@@ -3,3 +3,15 @@
 /storage/jobs/
 /storage/uploads/
 /storage/*.log
+/storage/bench_*/
+/storage/perf_runs/
+/storage/verify_runs/
+/storage/verify_fix_*/
+/storage/outputs_debug_servicios/
+/storage/outputs_services_*/
+/storage/outputs_test_*/
+/storage/tmp_*
+/storage/audit_*.json
+/storage/temp_*
+/storage/test_*.xlsx
+/.tools/

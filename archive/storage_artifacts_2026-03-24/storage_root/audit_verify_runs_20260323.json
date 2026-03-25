@@ -1,0 +1,1923 @@
+﻿[
+    {
+        "Brand":  "CHANGAN",
+        "SheetOrderMatch":  true,
+        "Sheets":  [
+                       {
+                           "Sheet":  "REP FACTURACIÓN",
+                           "TemplateLastRow":  315,
+                           "TemplateLastCol":  19,
+                           "OutputLastRow":  82,
+                           "OutputLastCol":  19,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  620,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "D9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120001\",\"DESCRIPCION\",\"VTAS SERV CHANGAN - CONTADO CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120003\",\"DESCRIPCION\",\"VTAS SERV CHANGAN - CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101120001\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101120003\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "E9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120010\",\"DESCRIPCION\",\"DESC VTAS SERV CHANGAN CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120012\",\"DESCRIPCION\",\"DESC VTAS SERV CHANGAN CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101120010\")+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101120012\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F17",
+                                                     "TemplateValue":  "601288392",
+                                                     "OutputValue":  "06XXXXXXX2"
+                                                 },
+                                                 {
+                                                     "Cell":  "G17",
+                                                     "TemplateValue":  "BORJA DAQUI HECTOR HUGO",
+                                                     "OutputValue":  ",Y3#\u0026RC)4a;+.ZK1\u003ciC36bS"
+                                                 },
+                                                 {
+                                                     "Cell":  "Q17",
+                                                     "TemplateValue":  "",
+                                                     "OutputValue":  "422"
+                                                 },
+                                                 {
+                                                     "Cell":  "F18",
+                                                     "TemplateValue":  "1805002126",
+                                                     "OutputValue":  "18XXXXXXX6"
+                                                 },
+                                                 {
+                                                     "Cell":  "G18",
+                                                     "TemplateValue":  "JATIVA QUINDE JEAN CARLO",
+                                                     "OutputValue":  "]xaXp[zJe!i`xc#Rm)qh!k+Z"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "NOTA DE CREDITO",
+                           "TemplateLastRow":  10,
+                           "TemplateLastCol":  21,
+                           "OutputLastRow":  10,
+                           "OutputLastCol":  21,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  0,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "F4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120014\",\"DESCRIPCION\",\"DEVOL VTAS SERV CHANGAN CONTADO\")",
+                                                       "OutputFormula":  "=0"
+                                                   },
+                                                   {
+                                                       "Cell":  "G4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120010\",\"DESCRIPCION\",\"DESC VTAS SERV CHANGAN CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101120012\",\"DESCRIPCION\",\"DESC VTAS SERV CHANGAN CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101120010\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101120012\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PX",
+                           "TemplateLastRow":  58,
+                           "TemplateLastCol":  17,
+                           "OutputLastRow":  58,
+                           "OutputLastCol":  17,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  3,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D3",
+                                                     "TemplateValue":  "45996,6147569444",
+                                                     "OutputValue":  "23/03/2026 12.11.33"
+                                                 },
+                                                 {
+                                                     "Cell":  "H3",
+                                                     "TemplateValue":  "45261",
+                                                     "OutputValue":  "46054,5085532407"
+                                                 },
+                                                 {
+                                                     "Cell":  "F49",
+                                                     "TemplateValue":  "46064,6431828705",
+                                                     "OutputValue":  "46064"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "REP VTAS",
+                           "TemplateLastRow":  345,
+                           "TemplateLastCol":  38,
+                           "OutputLastRow":  80,
+                           "OutputLastCol":  38,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  136,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F15",
+                                                     "TemplateValue":  "1792107423001",
+                                                     "OutputValue":  "17XXXXXXX3001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G15",
+                                                     "TemplateValue":  "SWEADEN CIA DE SEGUROS",
+                                                     "OutputValue":  "uQ-|M[HX}Y5%UcP`\u0026a=-]k"
+                                                 },
+                                                 {
+                                                     "Cell":  "F16",
+                                                     "TemplateValue":  "1891709478001",
+                                                     "OutputValue":  "18XXXXXXX8001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G16",
+                                                     "TemplateValue":  "AUTOMOTORES CARLOS LARREA T. CIA. LTDA.",
+                                                     "OutputValue":  ",w=JfF`64 ERnNh\u003e\u003c(MZvVpFD0Ub~^xNL8]j\u0027f!"
+                                                 },
+                                                 {
+                                                     "Cell":  "F17",
+                                                     "TemplateValue":  "1891709478001",
+                                                     "OutputValue":  "18XXXXXXX8001"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionVentas",
+                           "TemplateLastRow":  66,
+                           "TemplateLastCol":  22,
+                           "OutputLastRow":  33,
+                           "OutputLastCol":  22,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  492,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "V7",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",$Q$4,\"CUENTA\",\"010104100002\",\"DESCRIPCION\",\"CLIENTES SERV TOYOTA  CRÉDITO\")-GETPIVOTDATA(\"Suma de DEBITO\",$Q$4,\"CUENTA\",\"020105010002\",\"DESCRIPCION\",\"RESERVA SERVICIOS TOYOTA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"010104110002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020105010004\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "V10",
+                                                       "TemplateFormula":  "",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"020120020002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020120020004\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "CA",
+                                                     "OutputValue":  "FA"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "010104110002",
+                                                     "OutputValue":  "010104110001"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "CLIENTES SERV CHANGAN  CREDITO",
+                                                     "OutputValue":  "CLIENTES SERV CHANGAN"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "6745,74"
+                                                 },
+                                                 {
+                                                     "Cell":  "I2",
+                                                     "TemplateValue":  "1520,94",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos",
+                           "TemplateLastRow":  922,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  1,
+                           "OutputLastCol":  10,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  7480,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "P1",
+                                                     "TemplateValue":  "AG.",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "Q1",
+                                                     "TemplateValue":  "(Todas)",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B2",
+                                                     "TemplateValue":  "03",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "90",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010115120001",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  102,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos (2)",
+                           "TemplateLastRow":  51,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  10,
+                           "OutputLastCol":  20,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  463,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010108130001",
+                                                     "OutputValue":  "050201010001"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "3",
+                                                     "OutputValue":  "9"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "TRANSFER RTOS TOYOTA",
+                                                     "OutputValue":  "EST COSTO DE VTAS RPTOS TOYOTA"
+                                                 },
+                                                 {
+                                                     "Cell":  "G2",
+                                                     "TemplateValue":  "0199999930",
+                                                     "OutputValue":  "0104020110"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "5253,71"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "COSTO",
+                           "TemplateLastRow":  132,
+                           "TemplateLastCol":  12,
+                           "OutputLastRow":  12,
+                           "OutputLastCol":  12,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  1149,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,505462963"
+                                                 },
+                                                 {
+                                                     "Cell":  "E6",
+                                                     "TemplateValue":  "1450",
+                                                     "OutputValue":  "1"
+                                                 },
+                                                 {
+                                                     "Cell":  "G6",
+                                                     "TemplateValue":  "ASIENTO AUT. COSTOS-CENT 03",
+                                                     "OutputValue":  "REPUESTOS"
+                                                 },
+                                                 {
+                                                     "Cell":  "H6",
+                                                     "TemplateValue":  "48388,88",
+                                                     "OutputValue":  "5253,71"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "ESTADISTICAS",
+                           "TemplateLastRow":  572,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  445,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  4727,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,505462963"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "50501,47",
+                                                     "OutputValue":  "5253,71"
+                                                 },
+                                                 {
+                                                     "Cell":  "J6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "A7",
+                                                     "TemplateValue":  "05.02.01.01.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B7",
+                                                     "TemplateValue":  "ESTAD. COSTO DE VENTAS REPUESTOS",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "VENTAS",
+                           "TemplateLastRow":  439,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  438,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  2,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "A439",
+                                                     "TemplateValue":  "01.01.05.12.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B439",
+                                                     "TemplateValue":  "GARANTIA EXTENDIDAS SERVICIO",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       }
+                   ]
+    },
+    {
+        "Brand":  "PEUGEOT",
+        "SheetOrderMatch":  true,
+        "Sheets":  [
+                       {
+                           "Sheet":  "REP FACTURACIÓN",
+                           "TemplateLastRow":  38,
+                           "TemplateLastCol":  19,
+                           "OutputLastRow":  38,
+                           "OutputLastCol":  19,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  74,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "D9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101130001\",\"DESCRIPCION\",\"VTAS SERV PEUGEOT - CONTADO CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101130003\",\"DESCRIPCION\",\"VTAS SERV PEUGEOT - CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101130001\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101130003\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "E9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101130010\",\"DESCRIPCION\",\"DESC VTAS SERV PEUGEOT CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101130012\",\"DESCRIPCION\",\"DESC VTAS SERV PEUGEOT CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101130010\")+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101130012\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F17",
+                                                     "TemplateValue":  "1802520559",
+                                                     "OutputValue":  "18XXXXXXX9"
+                                                 },
+                                                 {
+                                                     "Cell":  "G17",
+                                                     "TemplateValue":  "NARANJO MALAN MILTON ELDER",
+                                                     "OutputValue":  "x\u003cf/O,_C!Dn7W4gK)Lv?_\u003coS1T"
+                                                 },
+                                                 {
+                                                     "Cell":  "Q17",
+                                                     "TemplateValue":  "",
+                                                     "OutputValue":  "420"
+                                                 },
+                                                 {
+                                                     "Cell":  "F18",
+                                                     "TemplateValue":  "602669004001",
+                                                     "OutputValue":  "06XXXXXXX4001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G18",
+                                                     "TemplateValue":  "TARCO YAGUACHI ANA CRISTINA",
+                                                     "OutputValue":  "Y87*`7gVa@?2h?o^iHG:pGwfqPO"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "NOTA DE CREDITO",
+                           "TemplateLastRow":  13,
+                           "TemplateLastCol":  21,
+                           "OutputLastRow":  13,
+                           "OutputLastCol":  21,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  6,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "F4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101130014\",\"DESCRIPCION\",\"DEVOL VTAS SERV PEUGEOT CONTADO\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101130014\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "G4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101130012\",\"DESCRIPCION\",\"DESC VTAS SERV PEUGEOT CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101130010\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101130012\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "H11",
+                                                     "TemplateValue":  "992823461001",
+                                                     "OutputValue":  "09XXXXXXX1001"
+                                                 },
+                                                 {
+                                                     "Cell":  "I11",
+                                                     "TemplateValue":  "RNT RENTING S.A.",
+                                                     "OutputValue":  "$ai3Q,#(,iq;Y4+0"
+                                                 },
+                                                 {
+                                                     "Cell":  "H12",
+                                                     "TemplateValue":  "1791287835001",
+                                                     "OutputValue":  "17XXXXXXX5001"
+                                                 },
+                                                 {
+                                                     "Cell":  "I12",
+                                                     "TemplateValue":  "CONSORCIO DEL PICHINCHA S.A CONDELPI",
+                                                     "OutputValue":  "mm 5bF1_uu(=jN9g}}0ErVAo\u0026\u00268Mz^Iw..@U"
+                                                 },
+                                                 {
+                                                     "Cell":  "H13",
+                                                     "TemplateValue":  "1791287835001",
+                                                     "OutputValue":  "17XXXXXXX5001"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PX",
+                           "TemplateLastRow":  58,
+                           "TemplateLastCol":  17,
+                           "OutputLastRow":  58,
+                           "OutputLastCol":  17,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  3,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D3",
+                                                     "TemplateValue":  "45996,6147569444",
+                                                     "OutputValue":  "23/03/2026 12.13.49"
+                                                 },
+                                                 {
+                                                     "Cell":  "H3",
+                                                     "TemplateValue":  "45261",
+                                                     "OutputValue":  "46054,5100810185"
+                                                 },
+                                                 {
+                                                     "Cell":  "D5",
+                                                     "TemplateValue":  "CHANGAN",
+                                                     "OutputValue":  "PEUGEOT"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "REP VTAS",
+                           "TemplateLastRow":  345,
+                           "TemplateLastCol":  38,
+                           "OutputLastRow":  39,
+                           "OutputLastCol":  38,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  58,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F15",
+                                                     "TemplateValue":  "1791287835001",
+                                                     "OutputValue":  "17XXXXXXX5001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G15",
+                                                     "TemplateValue":  "CONSORCIO DEL PICHINCHA S.A CONDELPI",
+                                                     "OutputValue":  "+M.V#sT33U6^+{\\;;]\u003ef3$dCCeFn;,lKKmNv"
+                                                 },
+                                                 {
+                                                     "Cell":  "W15",
+                                                     "TemplateValue":  "",
+                                                     "OutputValue":  "0"
+                                                 },
+                                                 {
+                                                     "Cell":  "F16",
+                                                     "TemplateValue":  "1791287835001",
+                                                     "OutputValue":  "17XXXXXXX5001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G16",
+                                                     "TemplateValue":  "CONSORCIO DEL PICHINCHA S.A CONDELPI",
+                                                     "OutputValue":  "+3\u0026[3@S53;.c;H[=;C6kCPcECK\u003esKXkMKSF{"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionVentas",
+                           "TemplateLastRow":  56,
+                           "TemplateLastCol":  22,
+                           "OutputLastRow":  29,
+                           "OutputLastCol":  22,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  484,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "V7",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",$Q$4,\"CUENTA\",\"010104100002\",\"DESCRIPCION\",\"CLIENTES SERV TOYOTA  CRÉDITO\")-GETPIVOTDATA(\"Suma de DEBITO\",$Q$4,\"CUENTA\",\"020105010002\",\"DESCRIPCION\",\"RESERVA SERVICIOS TOYOTA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"010104120002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020105010006\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "V10",
+                                                       "TemplateFormula":  "",
+                                                       "OutputFormula":  "=0"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "CA",
+                                                     "OutputValue":  "FA"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "010104120002",
+                                                     "OutputValue":  "010104120001"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "CLIENTES SERV PEUGEOT CREDITO",
+                                                     "OutputValue":  "CLIENTES SERV PEUGEOT"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "3053,4"
+                                                 },
+                                                 {
+                                                     "Cell":  "I2",
+                                                     "TemplateValue":  "112,17",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos",
+                           "TemplateLastRow":  922,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  1,
+                           "OutputLastCol":  10,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  7480,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "P1",
+                                                     "TemplateValue":  "AG.",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "Q1",
+                                                     "TemplateValue":  "(Todas)",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B2",
+                                                     "TemplateValue":  "03",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "90",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010115120001",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  102,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos (2)",
+                           "TemplateLastRow":  51,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  10,
+                           "OutputLastCol":  20,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  463,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010108130001",
+                                                     "OutputValue":  "050201010001"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "3",
+                                                     "OutputValue":  "9"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "TRANSFER RTOS TOYOTA",
+                                                     "OutputValue":  "EST COSTO DE VTAS RPTOS TOYOTA"
+                                                 },
+                                                 {
+                                                     "Cell":  "G2",
+                                                     "TemplateValue":  "0199999930",
+                                                     "OutputValue":  "0104020110"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "906,04"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "COSTO",
+                           "TemplateLastRow":  132,
+                           "TemplateLastCol":  12,
+                           "OutputLastRow":  12,
+                           "OutputLastCol":  12,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  1149,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,5303587963"
+                                                 },
+                                                 {
+                                                     "Cell":  "E6",
+                                                     "TemplateValue":  "1450",
+                                                     "OutputValue":  "1"
+                                                 },
+                                                 {
+                                                     "Cell":  "G6",
+                                                     "TemplateValue":  "ASIENTO AUT. COSTOS-CENT 03",
+                                                     "OutputValue":  "REPUESTOS"
+                                                 },
+                                                 {
+                                                     "Cell":  "H6",
+                                                     "TemplateValue":  "48388,88",
+                                                     "OutputValue":  "906,04"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "ESTADISTICAS",
+                           "TemplateLastRow":  572,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  445,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  4727,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,5303587963"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "50501,47",
+                                                     "OutputValue":  "906,04"
+                                                 },
+                                                 {
+                                                     "Cell":  "J6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "A7",
+                                                     "TemplateValue":  "05.02.01.01.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B7",
+                                                     "TemplateValue":  "ESTAD. COSTO DE VENTAS REPUESTOS",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "VENTAS",
+                           "TemplateLastRow":  439,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  438,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  92,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "A6",
+                                                     "TemplateValue":  "04.01.01.13.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B6",
+                                                     "TemplateValue":  "VTAS SERV PEUGEOT - CONTADO CON IVA",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "C6",
+                                                     "TemplateValue":  "N",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "D6",
+                                                     "TemplateValue":  "46081",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "E6",
+                                                     "TemplateValue":  "VENSE",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       }
+                   ]
+    },
+    {
+        "Brand":  "SUZUKI",
+        "SheetOrderMatch":  true,
+        "Sheets":  [
+                       {
+                           "Sheet":  "REP FACTURACIÓN",
+                           "TemplateLastRow":  274,
+                           "TemplateLastCol":  19,
+                           "OutputLastRow":  274,
+                           "OutputLastCol":  19,
+                           "FormulaMismatchCount":  6,
+                           "ValueMismatchCount":  836,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "D9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140001\",\"DESCRIPCION\",\"VTAS SERV SUZUKI - CONTADO CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140003\",\"DESCRIPCION\",\"VTAS SERV SUZUKI - CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101140001\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101140003\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "E9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140010\",\"DESCRIPCION\",\"DESC VTAS SERV SUZUKI CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140012\",\"DESCRIPCION\",\"DESC VTAS SERV SUZUKI CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101140010\")+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101140012\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "G26",
+                                                       "TemplateFormula":  "URRUTIA GUEVARA JEANNETTE AMPARITO",
+                                                       "OutputFormula":  "=j,9e8r]Er4Am@zeMz\u003cIuH#mU#DQ}P+u]+"
+                                                   },
+                                                   {
+                                                       "Cell":  "G65",
+                                                       "TemplateFormula":  "SALTOS ÁVALOS JAVIER ANTONIO",
+                                                       "OutputFormula":  "=!-{;z^+E)5$C#f3M1=,K+n;U9E4"
+                                                   },
+                                                   {
+                                                       "Cell":  "G95",
+                                                       "TemplateFormula":  "CHANGO CHASI MONICA ALEXANDRA",
+                                                       "OutputFormula":  "=A`zbxLXEIh#j!T`MQp+r)\\hUYx3z"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F17",
+                                                     "TemplateValue":  "1805037452001",
+                                                     "OutputValue":  "18XXXXXXX2001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G17",
+                                                     "TemplateValue":  "TUBON TAMAYO GENESIS MISHELLE",
+                                                     "OutputValue":  "sMAe(Juo{UIm0R}w$]Qu8Z\u0026 ,eY}@"
+                                                 },
+                                                 {
+                                                     "Cell":  "Q17",
+                                                     "TemplateValue":  "",
+                                                     "OutputValue":  "358"
+                                                 },
+                                                 {
+                                                     "Cell":  "F18",
+                                                     "TemplateValue":  "1600516254001",
+                                                     "OutputValue":  "16XXXXXXX4001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G18",
+                                                     "TemplateValue":  "BARRIONUEVO CASTAÑEDA ALEXIS ANDRES",
+                                                     "OutputValue":  "Vn:XtL\u003e;^vB`|TFCf~Jh%\\NKn\u0027Rp-dVSv/Z"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "NOTA DE CREDITO",
+                           "TemplateLastRow":  20,
+                           "TemplateLastCol":  21,
+                           "OutputLastRow":  20,
+                           "OutputLastCol":  21,
+                           "FormulaMismatchCount":  3,
+                           "ValueMismatchCount":  20,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "F4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140014\",\"DESCRIPCION\",\"DEVOL VTAS SERV SUZUKI CONTADO\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101140014\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "G4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140010\",\"DESCRIPCION\",\"DESC VTAS SERV SUZUKI CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101140012\",\"DESCRIPCION\",\"DESC VTAS SERV SUZUKI CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101140010\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101140012\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "I17",
+                                                       "TemplateFormula":  "SZK DEL ECUADOR S.A.",
+                                                       "OutputFormula":  "=-xJe``FE5!RmhhNM=)Z"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "H11",
+                                                     "TemplateValue":  "1790093808001",
+                                                     "OutputValue":  "17XXXXXXX8001"
+                                                 },
+                                                 {
+                                                     "Cell":  "I11",
+                                                     "TemplateValue":  "SEGUROS ATLANTIDA SEGURATLANTIDA S.A.",
+                                                     "OutputValue":  "G}\"P{(i.O\u0026*X$0q6W.2`,8y\u003e_6:h4@\"Fg\u003eBp\u003c"
+                                                 },
+                                                 {
+                                                     "Cell":  "H12",
+                                                     "TemplateValue":  "1790475247001",
+                                                     "OutputValue":  "17XXXXXXX7001"
+                                                 },
+                                                 {
+                                                     "Cell":  "I12",
+                                                     "TemplateValue":  "AIG METROPOLITANA  DE SEGUROS",
+                                                     "OutputValue":  "}6X\u003ep}f@\u0026\u003e`Fx\u0026nH.FhN!.vP6NpV)"
+                                                 },
+                                                 {
+                                                     "Cell":  "H13",
+                                                     "TemplateValue":  "1791240014001",
+                                                     "OutputValue":  "17XXXXXXX4001"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PX",
+                           "TemplateLastRow":  58,
+                           "TemplateLastCol":  17,
+                           "OutputLastRow":  58,
+                           "OutputLastCol":  17,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  6,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D3",
+                                                     "TemplateValue":  "45299,4855902777",
+                                                     "OutputValue":  "23/03/2026 12.19.52"
+                                                 },
+                                                 {
+                                                     "Cell":  "H3",
+                                                     "TemplateValue":  "45261",
+                                                     "OutputValue":  "46054,5144560185"
+                                                 },
+                                                 {
+                                                     "Cell":  "D5",
+                                                     "TemplateValue":  "TOYOTA",
+                                                     "OutputValue":  "SUZUKI"
+                                                 },
+                                                 {
+                                                     "Cell":  "F49",
+                                                     "TemplateValue":  "46062,3738078703",
+                                                     "OutputValue":  "46062"
+                                                 },
+                                                 {
+                                                     "Cell":  "F50",
+                                                     "TemplateValue":  "46062,3738078703",
+                                                     "OutputValue":  "46062"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "REP VTAS",
+                           "TemplateLastRow":  288,
+                           "TemplateLastCol":  38,
+                           "OutputLastRow":  288,
+                           "OutputLastCol":  38,
+                           "FormulaMismatchCount":  4,
+                           "ValueMismatchCount":  562,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "G16",
+                                                       "TemplateFormula":  "SZK DEL ECUADOR S.A.",
+                                                       "OutputFormula":  "=tvGY8TsE|~Oa@\\{M%\u0027W"
+                                                   },
+                                                   {
+                                                       "Cell":  "G147",
+                                                       "TemplateFormula":  "SILVA OÑATE SEGUNDO VICTOR",
+                                                       "OutputFormula":  "=\u0026Z-Ku\u0027/E.b5S}/7M6j=[\u00267?U\u003e"
+                                                   },
+                                                   {
+                                                       "Cell":  "G242",
+                                                       "TemplateFormula":  "MERA SEGOVIA GLADYS MARIA",
+                                                       "OutputFormula":  "=Ac/sIXfEIk7{Q`nMQs?$YhvU"
+                                                   },
+                                                   {
+                                                       "Cell":  "G262",
+                                                       "TemplateFormula":  "RNT RENTING S.A.",
+                                                       "OutputFormula":  "=\u0027Qj f{VE/Yr(n$^"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F15",
+                                                     "TemplateValue":  "1793107958001",
+                                                     "OutputValue":  "17XXXXXXX8001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G15",
+                                                     "TemplateValue":  "SZK DEL ECUADOR S.A.",
+                                                     "OutputValue":  "\u0026D_wvM\u0026\".Lg ~U.*6To("
+                                                 },
+                                                 {
+                                                     "Cell":  "F16",
+                                                     "TemplateValue":  "1793107958001",
+                                                     "OutputValue":  "17XXXXXXX8001"
+                                                 },
+                                                 {
+                                                     "Cell":  "F17",
+                                                     "TemplateValue":  "1792688302001",
+                                                     "OutputValue":  "17XXXXXXX2001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G17",
+                                                     "TemplateValue":  "SOCIEDAD AGRICOLA GANADERA AGRIGATAPIA",
+                                                     "OutputValue":  "6pz2x;g\u0027\u003ex#:!Co/F!+B)Kw7N)3J1S ?V1;R9["
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionVentas",
+                           "TemplateLastRow":  156,
+                           "TemplateLastCol":  22,
+                           "OutputLastRow":  63,
+                           "OutputLastCol":  22,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  1237,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "V7",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",$Q$4,\"CUENTA\",\"010104100002\",\"DESCRIPCION\",\"CLIENTES SERV TOYOTA  CRÉDITO\")-GETPIVOTDATA(\"Suma de DEBITO\",$Q$4,\"CUENTA\",\"020105010002\",\"DESCRIPCION\",\"RESERVA SERVICIOS TOYOTA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"010104130002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020105010009\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "V10",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",$Q$4,\"CUENTA\",\"020120010002\",\"DESCRIPCION\",\"VTAS POR LIQUIDAR SERVICIO TOYOTA\")-GETPIVOTDATA(\"Suma de DEBITO\",$Q$4,\"CUENTA\",\"020120010004\",\"DESCRIPCION\",\"DESCTO POR LIQUIDAR SERVICIO TOYOTA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"020120040002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020120040004\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "CA",
+                                                     "OutputValue":  "FA"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "010104130002",
+                                                     "OutputValue":  "010104130001"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "CLIENTES SERV SUZUKI CREDITO",
+                                                     "OutputValue":  "CLIENTES SERV SUZUKI"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "24688,97"
+                                                 },
+                                                 {
+                                                     "Cell":  "I2",
+                                                     "TemplateValue":  "7135,95",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos",
+                           "TemplateLastRow":  922,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  1,
+                           "OutputLastCol":  10,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  7480,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "P1",
+                                                     "TemplateValue":  "AG.",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "Q1",
+                                                     "TemplateValue":  "(Todas)",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B2",
+                                                     "TemplateValue":  "03",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "90",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010115120001",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  102,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos (2)",
+                           "TemplateLastRow":  51,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  10,
+                           "OutputLastCol":  20,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  463,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010108130001",
+                                                     "OutputValue":  "050201010001"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "3",
+                                                     "OutputValue":  "9"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "TRANSFER RTOS TOYOTA",
+                                                     "OutputValue":  "EST COSTO DE VTAS RPTOS TOYOTA"
+                                                 },
+                                                 {
+                                                     "Cell":  "G2",
+                                                     "TemplateValue":  "0199999930",
+                                                     "OutputValue":  "0104020110"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "24186,39"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "COSTO",
+                           "TemplateLastRow":  132,
+                           "TemplateLastCol":  12,
+                           "OutputLastRow":  12,
+                           "OutputLastCol":  12,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  1149,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,5684027778"
+                                                 },
+                                                 {
+                                                     "Cell":  "E6",
+                                                     "TemplateValue":  "1450",
+                                                     "OutputValue":  "1"
+                                                 },
+                                                 {
+                                                     "Cell":  "G6",
+                                                     "TemplateValue":  "ASIENTO AUT. COSTOS-CENT 03",
+                                                     "OutputValue":  "REPUESTOS"
+                                                 },
+                                                 {
+                                                     "Cell":  "H6",
+                                                     "TemplateValue":  "48388,88",
+                                                     "OutputValue":  "24186,39"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "ESTADISTICAS",
+                           "TemplateLastRow":  572,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  445,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  4727,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,5684027778"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "50501,47",
+                                                     "OutputValue":  "24186,39"
+                                                 },
+                                                 {
+                                                     "Cell":  "J6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "A7",
+                                                     "TemplateValue":  "05.02.01.01.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B7",
+                                                     "TemplateValue":  "ESTAD. COSTO DE VENTAS REPUESTOS",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "VENTAS",
+                           "TemplateLastRow":  439,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  438,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  2,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "A439",
+                                                     "TemplateValue":  "01.01.05.12.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B439",
+                                                     "TemplateValue":  "GARANTIA EXTENDIDAS SERVICIO",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       }
+                   ]
+    },
+    {
+        "Brand":  "MATRIZ",
+        "SheetOrderMatch":  true,
+        "Sheets":  [
+                       {
+                           "Sheet":  "REP FACTURACIÓN",
+                           "TemplateLastRow":  307,
+                           "TemplateLastCol":  19,
+                           "OutputLastRow":  307,
+                           "OutputLastCol":  19,
+                           "FormulaMismatchCount":  6,
+                           "ValueMismatchCount":  940,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "D9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110001\",\"DESCRIPCION\",\"VTAS SERV TOYOTA - CONTADO CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110003\",\"DESCRIPCION\",\"VTAS SERV TOYOTA - CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101110001\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101110003\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "E9",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110010\",\"DESCRIPCION\",\"DESC VTAS SERV TOYOTA CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110012\",\"DESCRIPCION\",\"DESC VTAS SERV TOYOTA CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101110010\")+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101110012\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "G135",
+                                                       "TemplateFormula":  "PICO CARRASCO OSWALDO PATRICIO",
+                                                       "OutputFormula":  "=0)XU*Z@E81`]2bHM@9he:jPUHApmB"
+                                                   },
+                                                   {
+                                                       "Cell":  "G158",
+                                                       "TemplateFormula":  "AIG METROPOLITANA  DE SEGUROS",
+                                                       "OutputFormula":  "=PZH\u003e$95EXbPF,A=M`jXN4IEUhr`V"
+                                                   },
+                                                   {
+                                                       "Cell":  "G164",
+                                                       "TemplateFormula":  "SWEADEN CIA DE SEGUROS",
+                                                       "OutputFormula":  "=U)|(\u00261#E]1%0.9+Me9-86"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F17",
+                                                     "TemplateValue":  "1802002277001",
+                                                     "OutputValue":  "18XXXXXXX7001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G17",
+                                                     "TemplateValue":  "RUIZ JEREZ MAGDALENA DEL ROCIO",
+                                                     "OutputValue":  "]t,q\u003c]LTe|4yDeT\\m%\u003c\"Lm\\du-D*Tu"
+                                                 },
+                                                 {
+                                                     "Cell":  "P17",
+                                                     "TemplateValue":  "C",
+                                                     "OutputValue":  "E"
+                                                 },
+                                                 {
+                                                     "Cell":  "Q17",
+                                                     "TemplateValue":  "",
+                                                     "OutputValue":  "341"
+                                                 },
+                                                 {
+                                                     "Cell":  "F18",
+                                                     "TemplateValue":  "605742097001",
+                                                     "OutputValue":  "06XXXXXXX7001"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "NOTA DE CREDITO",
+                           "TemplateLastRow":  15,
+                           "TemplateLastCol":  21,
+                           "OutputLastRow":  15,
+                           "OutputLastCol":  21,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  12,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "F4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de DEBITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110014\",\"DESCRIPCION\",\"DEVOL VTAS SERV TOYOTA CONTADO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"040101110014\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "G4",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110010\",\"DESCRIPCION\",\"DESC VTAS SERV TOYOTA CONTADO  CON IVA\")+GETPIVOTDATA(\"Suma de CREDITO\",PrecontabilizacionVentas!$Q$4,\"CUENTA\",\"040101110012\",\"DESCRIPCION\",\"DESC VTAS SERV TOYOTA CREDITO CON IVA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101110010\")+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"040101110012\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "H11",
+                                                     "TemplateValue":  "1865030070001",
+                                                     "OutputValue":  "18XXXXXXX0001"
+                                                 },
+                                                 {
+                                                     "Cell":  "I11",
+                                                     "TemplateValue":  "EP-EMAPA-A",
+                                                     "OutputValue":  "8j7-+0jK@r"
+                                                 },
+                                                 {
+                                                     "Cell":  "H12",
+                                                     "TemplateValue":  "1891709478001",
+                                                     "OutputValue":  "18XXXXXXX8001"
+                                                 },
+                                                 {
+                                                     "Cell":  "I12",
+                                                     "TemplateValue":  "AUTOMOTORES CARLOS LARREA T. CIA. LTDA.",
+                                                     "OutputValue":  "$D(SY8a9,L0[a@iA4T8ciHqI\u003c\\@kqPyQDdHsyX\""
+                                                 },
+                                                 {
+                                                     "Cell":  "H13",
+                                                     "TemplateValue":  "1890001439001",
+                                                     "OutputValue":  "18XXXXXXX9001"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PX",
+                           "TemplateLastRow":  61,
+                           "TemplateLastCol":  17,
+                           "OutputLastRow":  61,
+                           "OutputLastCol":  17,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  11,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D3",
+                                                     "TemplateValue":  "45299,4855902777",
+                                                     "OutputValue":  "23/03/2026 12.28.48"
+                                                 },
+                                                 {
+                                                     "Cell":  "H3",
+                                                     "TemplateValue":  "45261",
+                                                     "OutputValue":  "46054,5205092593"
+                                                 },
+                                                 {
+                                                     "Cell":  "F49",
+                                                     "TemplateValue":  "46058,5374189815",
+                                                     "OutputValue":  "46058"
+                                                 },
+                                                 {
+                                                     "Cell":  "F50",
+                                                     "TemplateValue":  "46059,3817129629",
+                                                     "OutputValue":  "46059"
+                                                 },
+                                                 {
+                                                     "Cell":  "F51",
+                                                     "TemplateValue":  "46059,3817129629",
+                                                     "OutputValue":  "46059"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "REP VTAS",
+                           "TemplateLastRow":  310,
+                           "TemplateLastCol":  38,
+                           "OutputLastRow":  310,
+                           "OutputLastCol":  38,
+                           "FormulaMismatchCount":  6,
+                           "ValueMismatchCount":  1114,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "G63",
+                                                       "TemplateFormula":  "RUIZ JEREZ MAGDALENA DEL ROCIO",
+                                                       "OutputFormula":  "=ND[_MpQEVLcgUxYM^Tko]!aUf\\swe"
+                                                   },
+                                                   {
+                                                       "Cell":  "G71",
+                                                       "TemplateFormula":  "MOTTIER CHRISTIAN JAQUES",
+                                                       "OutputFormula":  "=u*%w#6eE}2- +\u003emM\u0026:5(3Fu"
+                                                   },
+                                                   {
+                                                       "Cell":  "G105",
+                                                       "TemplateFormula":  "RODRIGUEZ ZURITA VICTOR HUGO",
+                                                       "OutputFormula":  "=|Q.[]dRE%Y6celZM-a\u003ekmtbU5iF"
+                                                   },
+                                                   {
+                                                       "Cell":  "G108",
+                                                       "TemplateFormula":  "CHANGO PERICHE CARLOS JAVIER",
+                                                       "OutputFormula":  "=Ct/iwYSEK|7q a[MS%?y(icU[-G"
+                                                   },
+                                                   {
+                                                       "Cell":  "G288",
+                                                       "TemplateFormula":  "NUÑEZ MEDINA MARCO DAVID",
+                                                       "OutputFormula":  "=/\u003c|Yn_]E7D%avgeM?L-i~om"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "F15",
+                                                     "TemplateValue":  "1793212111001",
+                                                     "OutputValue":  "17XXXXXXX1001"
+                                                 },
+                                                 {
+                                                     "Cell":  "G15",
+                                                     "TemplateValue":  "CAANLOJ S A S",
+                                                     "OutputValue":  "#(dZ0Ida+0lb8"
+                                                 },
+                                                 {
+                                                     "Cell":  "X15",
+                                                     "TemplateValue":  "5,87",
+                                                     "OutputValue":  "0"
+                                                 },
+                                                 {
+                                                     "Cell":  "F16",
+                                                     "TemplateValue":  "1803687407",
+                                                     "OutputValue":  "18XXXXXXX7"
+                                                 },
+                                                 {
+                                                     "Cell":  "G16",
+                                                     "TemplateValue":  "SANCHEZ HIDALGO FRANKLIN GEOVANNY",
+                                                     "OutputValue":  "\u0026\\ ~R\"Xt.d(\u0027Z*`|6l0/b2h%\u003et87j:p-F"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionVentas",
+                           "TemplateLastRow":  95,
+                           "TemplateLastCol":  22,
+                           "OutputLastRow":  42,
+                           "OutputLastCol":  22,
+                           "FormulaMismatchCount":  2,
+                           "ValueMismatchCount":  717,
+                           "FormulaExamples":  [
+                                                   {
+                                                       "Cell":  "V7",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",$Q$4,\"CUENTA\",\"010104100002\",\"DESCRIPCION\",\"CLIENTES SERV TOYOTA  CRÉDITO\")-GETPIVOTDATA(\"Suma de DEBITO\",$Q$4,\"CUENTA\",\"020105010002\",\"DESCRIPCION\",\"RESERVA SERVICIOS TOYOTA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"010104100002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020105010002\")"
+                                                   },
+                                                   {
+                                                       "Cell":  "V10",
+                                                       "TemplateFormula":  "=+GETPIVOTDATA(\"Suma de CREDITO\",$Q$4,\"CUENTA\",\"020120010002\",\"DESCRIPCION\",\"VTAS POR LIQUIDAR SERVICIO TOYOTA\")-GETPIVOTDATA(\"Suma de DEBITO\",$Q$4,\"CUENTA\",\"020120010004\",\"DESCRIPCION\",\"DESCTO POR LIQUIDAR SERVICIO TOYOTA\")",
+                                                       "OutputFormula":  "=+SUMIFS(PrecontabilizacionVentas!$I:$I,PrecontabilizacionVentas!$E:$E,\"020120010002\")-SUMIFS(PrecontabilizacionVentas!$H:$H,PrecontabilizacionVentas!$E:$E,\"020120010004\")"
+                                                   }
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "CA",
+                                                     "OutputValue":  "FA"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "010104100002",
+                                                     "OutputValue":  "010104100001"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "CLIENTES SERV TOYOTA  CRÉDITO",
+                                                     "OutputValue":  "CLIENTES SERV TOYOTA"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "79559,85"
+                                                 },
+                                                 {
+                                                     "Cell":  "I2",
+                                                     "TemplateValue":  "27276",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos",
+                           "TemplateLastRow":  922,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  1,
+                           "OutputLastCol":  10,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  7480,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "P1",
+                                                     "TemplateValue":  "AG.",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "Q1",
+                                                     "TemplateValue":  "(Todas)",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B2",
+                                                     "TemplateValue":  "03",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "C2",
+                                                     "TemplateValue":  "90",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010115120001",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  102,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "PrecontabilizacionCostos (2)",
+                           "TemplateLastRow":  51,
+                           "TemplateLastCol":  20,
+                           "OutputLastRow":  10,
+                           "OutputLastCol":  20,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  463,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D2",
+                                                     "TemplateValue":  "010108130001",
+                                                     "OutputValue":  "050201010001"
+                                                 },
+                                                 {
+                                                     "Cell":  "E2",
+                                                     "TemplateValue":  "3",
+                                                     "OutputValue":  "9"
+                                                 },
+                                                 {
+                                                     "Cell":  "F2",
+                                                     "TemplateValue":  "TRANSFER RTOS TOYOTA",
+                                                     "OutputValue":  "EST COSTO DE VTAS RPTOS TOYOTA"
+                                                 },
+                                                 {
+                                                     "Cell":  "G2",
+                                                     "TemplateValue":  "0199999930",
+                                                     "OutputValue":  "0104020110"
+                                                 },
+                                                 {
+                                                     "Cell":  "H2",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  "39460,88"
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "COSTO",
+                           "TemplateLastRow":  132,
+                           "TemplateLastCol":  12,
+                           "OutputLastRow":  12,
+                           "OutputLastCol":  12,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  1149,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "C6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,661724537"
+                                                 },
+                                                 {
+                                                     "Cell":  "E6",
+                                                     "TemplateValue":  "1450",
+                                                     "OutputValue":  "1"
+                                                 },
+                                                 {
+                                                     "Cell":  "G6",
+                                                     "TemplateValue":  "ASIENTO AUT. COSTOS-CENT 03",
+                                                     "OutputValue":  "REPUESTOS"
+                                                 },
+                                                 {
+                                                     "Cell":  "H6",
+                                                     "TemplateValue":  "48388,88",
+                                                     "OutputValue":  "39460,88"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "ESTADISTICAS",
+                           "TemplateLastRow":  572,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  445,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  4727,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "D6",
+                                                     "TemplateValue":  "45107",
+                                                     "OutputValue":  "46081,661724537"
+                                                 },
+                                                 {
+                                                     "Cell":  "I6",
+                                                     "TemplateValue":  "50501,47",
+                                                     "OutputValue":  "39460,88"
+                                                 },
+                                                 {
+                                                     "Cell":  "J6",
+                                                     "TemplateValue":  "0",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "A7",
+                                                     "TemplateValue":  "05.02.01.01.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B7",
+                                                     "TemplateValue":  "ESTAD. COSTO DE VENTAS REPUESTOS",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       },
+                       {
+                           "Sheet":  "MAY VTAS",
+                           "TemplateLastRow":  439,
+                           "TemplateLastCol":  11,
+                           "OutputLastRow":  438,
+                           "OutputLastCol":  11,
+                           "FormulaMismatchCount":  0,
+                           "ValueMismatchCount":  2,
+                           "FormulaExamples":  [
+
+                                               ],
+                           "ValueExamples":  [
+                                                 {
+                                                     "Cell":  "A439",
+                                                     "TemplateValue":  "01.01.05.12.0001",
+                                                     "OutputValue":  ""
+                                                 },
+                                                 {
+                                                     "Cell":  "B439",
+                                                     "TemplateValue":  "GARANTIA EXTENDIDAS SERVICIO",
+                                                     "OutputValue":  ""
+                                                 }
+                                             ],
+                           "ColumnWidthMismatchCount":  0,
+                           "RowHeightMismatchCount":  0,
+                           "PageSetupMismatchFields":  [
+
+                                                       ],
+                           "RefErrorCount":  0
+                       }
+                   ]
+    }
+]

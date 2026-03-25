@@ -1,0 +1,18 @@
+INFO|custom_source|rows=268
+INFO|source_priority|excel_primary|custom_support=268
+WARN|excel_visible_no_conflict|Excel visible (PID: 34908) pero sin archivos en conflicto abiertos. Se continua.
+INFO|processing|szk|rows=274
+INFO|px|szk|rows=3|bottom_capacity=6
+INFO|mayor|szk|rows=52|sections=5
+INFO|precont_ventas|szk|rows=17
+INFO|precont_costos2|szk|rows=4
+INFO|precont_costos_cleared|szk
+INFO|estadisticas|szk|repuestos=24186,39|lub=2654,91|subcont=4731,92|accesorios=377,77
+INFO|costo|szk|total=31950,99
+WARN|recalc_full_failed|Excepci¢n al establecer "FullCalculationOnLoad": "La propiedad 'FullCalculationOnLoad' no se encuentra en este objeto. Compruebe que la propiedad existe y se puede establecer."
+INFO|validate_begin|szk
+INFO|validate_done|szk
+INFO|save_begin|szk
+INFO|save_done|szk
+OUTPUT|servicios_szk_finalaudit2_szk_20260319.xls|SUZUKI
+INFO|szk|invoice_fallbacks=0|note_fallbacks=0

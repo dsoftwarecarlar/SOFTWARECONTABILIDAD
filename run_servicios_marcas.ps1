@@ -63,8 +63,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $script:CancelFilePath = $CancelPath
-$script:StrictValidationEnabled = ([string]$env:SERVICIOS_MARCAS_STRICT_VALIDATE -ne '0')
+$script:StrictValidationEnabled = ([string]$env:SERVICIOS_MARCAS_STRICT_VALIDATE -eq '1')
 $script:AllowTemplateDataFallback = ([string]$env:SERVICIOS_MARCAS_ALLOW_TEMPLATE_FALLBACK -eq '1')
+$script:PivotRefreshEnabled = ([string]$env:SERVICIOS_MARCAS_REFRESH_PIVOTS -eq '1')
+$script:LayoutRestoreEnabled = ([string]$env:SERVICIOS_MARCAS_RESTORE_LAYOUT -eq '1')
 
 function Test-CancelRequested {
     if ([string]::IsNullOrWhiteSpace($script:CancelFilePath)) {
@@ -409,32 +411,39 @@ function Copy-File-WithRetry {
     throw ("No se pudo preparar copia temporal del archivo fuente. Origen: {0}. Destino: {1}. Detalle: {2}" -f $SourcePath, $DestinationPath, $lastError)
 }
 
-function Resolve-NodeBinary {
+function Resolve-PythonBinary {
     $candidates = New-Object System.Collections.Generic.List[string]
 
     try {
-        $nodeCommand = Get-Command node.exe -ErrorAction Stop
-        if ($null -ne $nodeCommand -and -not [string]::IsNullOrWhiteSpace($nodeCommand.Source)) {
-            $candidates.Add($nodeCommand.Source) | Out-Null
+        $pythonCommand = Get-Command python.exe -ErrorAction Stop
+        if ($null -ne $pythonCommand -and -not [string]::IsNullOrWhiteSpace($pythonCommand.Source)) {
+            $candidates.Add($pythonCommand.Source) | Out-Null
         }
     } catch {
     }
 
     try {
-        $nodeCommand = Get-Command node -ErrorAction Stop
-        if ($null -ne $nodeCommand -and -not [string]::IsNullOrWhiteSpace($nodeCommand.Source)) {
-            $candidates.Add($nodeCommand.Source) | Out-Null
+        $pythonCommand = Get-Command python -ErrorAction Stop
+        if ($null -ne $pythonCommand -and -not [string]::IsNullOrWhiteSpace($pythonCommand.Source)) {
+            $candidates.Add($pythonCommand.Source) | Out-Null
         }
     } catch {
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:PYTHON_BINARY) -and (Test-Path -LiteralPath $env:PYTHON_BINARY)) {
+        $candidates.Add($env:PYTHON_BINARY) | Out-Null
     }
 
     $programFiles = if ([string]::IsNullOrWhiteSpace($env:ProgramFiles)) { 'C:\Program Files' } else { $env:ProgramFiles }
     $programFilesX86 = if ([string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) { 'C:\Program Files (x86)' } else { ${env:ProgramFiles(x86)} }
 
     foreach ($candidate in @(
-        (Join-Path $programFiles 'nodejs\node.exe'),
-        (Join-Path $programFilesX86 'nodejs\node.exe'),
-        'C:\Program Files\nodejs\node.exe'
+        (Join-Path $programFiles 'Python312\python.exe'),
+        (Join-Path $programFiles 'Python311\python.exe'),
+        (Join-Path $programFiles 'Python310\python.exe'),
+        (Join-Path $programFilesX86 'Python312\python.exe'),
+        (Join-Path $programFilesX86 'Python311\python.exe'),
+        (Join-Path $programFilesX86 'Python310\python.exe')
     )) {
         if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
             $candidates.Add($candidate) | Out-Null
@@ -447,7 +456,7 @@ function Resolve-NodeBinary {
         }
     }
 
-    throw 'No se encontro node.exe para leer el Excel fuente sin COM.'
+    throw 'No se encontro Python para leer el Excel fuente sin COM.'
 }
 
 function Read-SourceRows-FromFile {
@@ -456,18 +465,18 @@ function Read-SourceRows-FromFile {
         [string]$WorkingDirectory
     )
 
-    $nodeBinary = Resolve-NodeBinary
-    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'scripts\cxp\servicios_marcas\read_source.js') -Label 'read_source.js'
+    $pythonBinary = Resolve-PythonBinary
+    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'python_services\processors\servicios_marcas\readers.py') -Label 'readers.py'
     $jsonPath = Join-Path $WorkingDirectory 'source_rows.json'
     if (Test-Path -LiteralPath $jsonPath) {
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
 
-    $nodeOutput = & $nodeBinary $readerScript '--input' $InputPath '--output-json' $jsonPath 2>&1
+    $pythonOutput = & $pythonBinary $readerScript 'source' '--input' $InputPath '--output-json' $jsonPath 2>&1
     if ($LASTEXITCODE -ne 0) {
-        $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        $detail = (($pythonOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
         if ($detail -eq '') {
-            $detail = 'Node termino sin detalle.'
+            $detail = 'Python termino sin detalle.'
         }
         throw ("No se pudo leer el Excel fuente sin COM. Detalle: {0}" -f $detail)
     }
@@ -502,17 +511,17 @@ function Read-PxRows {
         return @()
     }
 
-    $nodeBinary = Resolve-NodeBinary
-    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'scripts\cxp\servicios_marcas\read_px.js') -Label 'read_px.js'
+    $pythonBinary = Resolve-PythonBinary
+    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'python_services\processors\servicios_marcas\readers.py') -Label 'readers.py'
     $jsonPath = Join-Path $WorkingDirectory 'px_rows.json'
     if (Test-Path -LiteralPath $jsonPath) {
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
 
-    $nodeOutput = & $nodeBinary $readerScript '--input' $PxPath '--brand' $BrandKey '--output-json' $jsonPath 2>&1
+    $pythonOutput = & $pythonBinary $readerScript 'px' '--input' $PxPath '--brand' $BrandKey '--output-json' $jsonPath 2>&1
     if ($LASTEXITCODE -ne 0) {
-        $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
-        if ($detail -eq '') { $detail = 'Node termino sin detalle.' }
+        $detail = (($pythonOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        if ($detail -eq '') { $detail = 'Python termino sin detalle.' }
         throw ("No se pudo leer el archivo PX. Detalle: {0}" -f $detail)
     }
 
@@ -675,25 +684,30 @@ function Write-PxRows-ToWorksheet {
         throw ("Las filas PX de {0} exceden la capacidad de la plantilla. Capacidad={1}, filas={2}" -f $BrandKey, $capacity, $detailRows.Count)
     }
 
-    $targetRow = [int]$bottomRange.StartRow
-    foreach ($row in $detailRows) {
-        $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $row.Agencia)
-        $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $row.Estado)
-        $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $row.Orden)
-        $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $row.Factura)
-        $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $row.Fecha)
-        $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $row.PxNo)
-        $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = (Get-Excel-TextLiteral $row.Cuenta)
-        $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = (Get-Excel-TextLiteral $row.Fr)
-        $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = (Get-Excel-TextLiteral $row.Codigo)
-        $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = (Get-Excel-TextLiteral $row.Item)
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 12 -Value $row.PvpBruto -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 13 -Value $row.DescPct -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 14 -Value $row.DescValor -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 15 -Value $row.PvpNeto -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 16 -Value $row.Costo -BlankIfZero
-        $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = (Get-Excel-TextLiteral $row.Origen)
-        $targetRow++
+    if ($detailRows.Count -gt 0) {
+        $sheetRows = New-Object System.Collections.Generic.List[object]
+        foreach ($row in $detailRows) {
+            $sheetRows.Add(@(
+                (Get-Excel-TextLiteral $row.Agencia),
+                (Get-Excel-TextLiteral $row.Estado),
+                (Get-Excel-TextLiteral $row.Orden),
+                (Get-Excel-TextLiteral $row.Factura),
+                (Get-Excel-TextLiteral $row.Fecha),
+                (Get-Excel-TextLiteral $row.PxNo),
+                (Get-Excel-TextLiteral $row.Cuenta),
+                (Get-Excel-TextLiteral $row.Fr),
+                (Get-Excel-TextLiteral $row.Codigo),
+                (Get-Excel-TextLiteral $row.Item),
+                (Get-NumericMatrixValue -Value $row.PvpBruto -BlankIfZero),
+                (Get-NumericMatrixValue -Value $row.DescPct -BlankIfZero),
+                (Get-NumericMatrixValue -Value $row.DescValor -BlankIfZero),
+                (Get-NumericMatrixValue -Value $row.PvpNeto -BlankIfZero),
+                (Get-NumericMatrixValue -Value $row.Costo -BlankIfZero),
+                (Get-Excel-TextLiteral $row.Origen)
+            )) | Out-Null
+        }
+
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow ([int]$bottomRange.StartRow) -StartColumn 2
     }
 
     $processCell = $Worksheet.Cells.Item(3, 4)
@@ -883,17 +897,17 @@ function Read-MayorRows {
         return @()
     }
 
-    $nodeBinary = Resolve-NodeBinary
-    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'scripts\cxp\servicios_marcas\read_mayor_txt.js') -Label 'read_mayor_txt.js'
+    $pythonBinary = Resolve-PythonBinary
+    $readerScript = Resolve-RequiredPath -Path (Join-Path $PSScriptRoot 'python_services\processors\servicios_marcas\readers.py') -Label 'readers.py'
     $jsonPath = Join-Path $WorkingDirectory ("mayor_{0}.json" -f ([Guid]::NewGuid().ToString('N')))
     if (Test-Path -LiteralPath $jsonPath) {
         Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
     }
 
-    $nodeOutput = & $nodeBinary $readerScript '--input' $MayorPath '--output-json' $jsonPath 2>&1
+    $pythonOutput = & $pythonBinary $readerScript 'mayor' '--input' $MayorPath '--output-json' $jsonPath 2>&1
     if ($LASTEXITCODE -ne 0) {
-        $detail = (($nodeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
-        if ($detail -eq '') { $detail = 'Node termino sin detalle.' }
+        $detail = (($pythonOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        if ($detail -eq '') { $detail = 'Python termino sin detalle.' }
         throw ("No se pudo leer el mayor TXT. Detalle: {0}" -f $detail)
     }
 
@@ -912,6 +926,84 @@ function Read-MayorRows {
     }
 
     return @($payload.rows)
+}
+
+function Test-MayorPxAdjustmentRow {
+    param([object]$Row)
+
+    if ($null -eq $Row) {
+        return $false
+    }
+
+    $account = Get-CompactAccountCode $Row.account
+    $origin = (Normalize-Text $Row.origin).ToUpperInvariant()
+    $seat = Normalize-Text $Row.seat
+    $detail = (Normalize-Text $Row.detail).ToUpperInvariant()
+
+    if ($account -notmatch '^040101\d{2}(0003|0012)$') {
+        return $false
+    }
+
+    if ($detail -match 'REGISTRO DE PX AJUSTE DE EGRESO') {
+        return $true
+    }
+
+    return ($origin -eq 'AGCM' -and $seat -eq '435')
+}
+
+function Filter-MayorRowsForWorkbook {
+    param([object[]]$Rows)
+
+    $kept = New-Object System.Collections.Generic.List[object]
+    $removed = New-Object System.Collections.Generic.List[object]
+    $balanceAdjustments = @{}
+
+    foreach ($row in @($Rows)) {
+        $account = Get-CompactAccountCode $row.account
+        if (-not $balanceAdjustments.ContainsKey($account)) {
+            $balanceAdjustments[$account] = [double]0
+        }
+
+        if (Test-MayorPxAdjustmentRow -Row $row) {
+            $balanceAdjustments[$account] = [double]$balanceAdjustments[$account] + [double](To-Number $row.credit) - [double](To-Number $row.debit)
+            $removed.Add($row) | Out-Null
+            continue
+        }
+
+        $clone = $row | Select-Object *
+        $adjustedBalance = [double](To-Number $row.balance) + [double]$balanceAdjustments[$account]
+        try {
+            $clone | Add-Member -NotePropertyName effective_balance -NotePropertyValue ([double](Round-Amount $adjustedBalance)) -Force
+        } catch {}
+        $kept.Add($clone) | Out-Null
+    }
+
+    return [pscustomobject]@{
+        Rows = $kept.ToArray()
+        Removed = $removed.ToArray()
+    }
+}
+
+function Split-MayorUnmappedAccounts {
+    param([string[]]$Accounts)
+
+    $fatal = New-Object System.Collections.Generic.List[string]
+    $warning = New-Object System.Collections.Generic.List[string]
+
+    foreach ($account in @($Accounts | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)) {
+        $normalized = Normalize-Text $account
+        if ($normalized -match '^04\.01\.01\.\d{2}\.0002$') {
+            $warning.Add($normalized) | Out-Null
+            continue
+        }
+
+        $fatal.Add($normalized) | Out-Null
+    }
+
+    return [pscustomobject]@{
+        Warning = $warning.ToArray()
+        Fatal = $fatal.ToArray()
+    }
 }
 
 function Read-TabRows {
@@ -1830,14 +1922,25 @@ function Validate-Services-WrittenRows {
         return
     }
 
+    $startRow = [int]$Rows[0].RowNumber
+    $endRow = [int]$Rows[-1].RowNumber
+    $outputValues = Get-WorksheetRangePropertyValues -Worksheet $OutputWorksheet -StartRow $startRow -EndRow $endRow -LastColumn $LastColumn -PropertyName 'Value2'
+    $outputFormats = $null
+    $templateFormats = $null
+    if (@($FormatColumns).Count -gt 0) {
+        $outputFormats = Get-WorksheetRangePropertyValues -Worksheet $OutputWorksheet -StartRow $startRow -EndRow $endRow -LastColumn $LastColumn -PropertyName 'NumberFormat'
+        $templateFormats = Get-WorksheetRangePropertyValues -Worksheet $TemplateWorksheet -StartRow $startRow -EndRow $endRow -LastColumn $LastColumn -PropertyName 'NumberFormat'
+    }
+
     foreach ($entry in $Rows) {
         Assert-NotCancelled 'validacion_filas'
         $rowNumber = [int]$entry.RowNumber
+        $rowOffset = [int]($rowNumber - $startRow + 1)
         $values = $entry.Values
 
         foreach ($column in $TextColumns) {
             $expected = if ($values.ContainsKey($column)) { Normalize-ExcelLogicalText $values[$column] } else { '' }
-            $actual = Get-ComparableCellText -Worksheet $OutputWorksheet -Row $rowNumber -Column $column
+            $actual = Normalize-ExcelLogicalText (Get-WorksheetRangeMatrixValue -Matrix $outputValues -RowOffset $rowOffset -Column $column)
             if ($column -in $DocumentColumns) {
                 $expected = Trim-Document $expected
                 $actual = Trim-Document $actual
@@ -1853,8 +1956,24 @@ function Validate-Services-WrittenRows {
                 $expectedValue = [double]$values[$column]
             }
 
-            $actualValue = Get-ComparableCellNumber -Worksheet $OutputWorksheet -Row $rowNumber -Column $column
-            $actualText = Normalize-Text $OutputWorksheet.Cells.Item($rowNumber, $column).Text
+            $actualRaw = Get-WorksheetRangeMatrixValue -Matrix $outputValues -RowOffset $rowOffset -Column $column
+            $actualValue = $null
+            $actualText = Normalize-Text $actualRaw
+            if ($null -ne $actualRaw -and $actualRaw -ne '') {
+                if ($actualRaw -is [double] -or $actualRaw -is [int] -or $actualRaw -is [decimal]) {
+                    $actualValue = [double]$actualRaw
+                } else {
+                    $normalized = ($actualText -replace '\.', '') -replace ',', '.'
+                    if ($normalized -ne '') {
+                        try {
+                            $actualValue = [double]::Parse($normalized, [System.Globalization.CultureInfo]::InvariantCulture)
+                        } catch {
+                            $actualValue = $null
+                        }
+                    }
+                }
+            }
+
             if ($null -eq $expectedValue -and $actualText -eq '') {
                 continue
             }
@@ -1870,9 +1989,19 @@ function Validate-Services-WrittenRows {
                 $expectedDate = [double](Get-Date-Write-Value $values[$column])
             }
 
-            $actualDate = Get-Date-Value -Worksheet $OutputWorksheet -Row $rowNumber -Column $column
-            if ($null -ne $actualDate -and $actualDate -ne '') {
-                $actualDate = [double](Get-Date-Write-Value $actualDate)
+            $actualDate = $null
+            $actualRaw = Get-WorksheetRangeMatrixValue -Matrix $outputValues -RowOffset $rowOffset -Column $column
+            if ($null -ne $actualRaw -and $actualRaw -ne '') {
+                if ($actualRaw -is [double] -or $actualRaw -is [int] -or $actualRaw -is [decimal]) {
+                    $actualDate = [double](Get-Date-Write-Value $actualRaw)
+                } else {
+                    try {
+                        $actualDate = [double]([datetime]::Parse((Normalize-Text $actualRaw)).ToOADate())
+                        $actualDate = [double](Get-Date-Write-Value $actualDate)
+                    } catch {
+                        $actualDate = $null
+                    }
+                }
             }
             if ($null -eq $expectedDate -and $null -eq $actualDate) {
                 continue
@@ -1884,20 +2013,20 @@ function Validate-Services-WrittenRows {
         }
 
         foreach ($column in $FormatColumns) {
-            $templateFormat = Normalize-Text $TemplateWorksheet.Cells.Item($rowNumber, $column).NumberFormat
-            $outputFormat = Normalize-Text $OutputWorksheet.Cells.Item($rowNumber, $column).NumberFormat
+            $templateFormat = Normalize-Text (Get-WorksheetRangeMatrixValue -Matrix $templateFormats -RowOffset $rowOffset -Column $column)
+            $outputFormat = Normalize-Text (Get-WorksheetRangeMatrixValue -Matrix $outputFormats -RowOffset $rowOffset -Column $column)
             if ($templateFormat -ne $outputFormat) {
                 throw ("La hoja {0} perdio formato en fila {1} columna {2}. Esperado '{3}' y llego '{4}'." -f $Label, $rowNumber, $column, $templateFormat, $outputFormat)
             }
         }
     }
 
-    $nextRow = [int]$Rows[-1].RowNumber + 1
+    $nextRow = $endRow + 1
     if ((Normalize-Text $OutputWorksheet.Cells.Item($nextRow, $TrailingBlankColumn).Text) -ne '') {
         throw ("La hoja {0} conserva datos residuales despues de la ultima fila esperada ({1})." -f $Label, $Rows[-1].RowNumber)
     }
 
-    Assert-NoExcelErrorsInRange -Worksheet $OutputWorksheet -StartRow ([int]$Rows[0].RowNumber) -EndRow ([int]$Rows[-1].RowNumber) -LastColumn $LastColumn -Label $Label
+    Assert-NoExcelErrorsInRange -Worksheet $OutputWorksheet -StartRow $startRow -EndRow $endRow -LastColumn $LastColumn -Label $Label
 }
 
 function Get-Template-Key {
@@ -1945,6 +2074,132 @@ function New-LookupStore {
         ByDoc = @{}
         ByOrder = @{}
     }
+}
+
+function Get-FileSignature {
+    param([string]$Path)
+
+    $item = Get-Item -LiteralPath $Path
+    return [pscustomobject]@{
+        Path = $item.FullName
+        Length = [int64]$item.Length
+        LastWriteTimeUtc = $item.LastWriteTimeUtc.ToString('o')
+    }
+}
+
+function Get-TemplateSnapshotCachePath {
+    param([string]$TemplatePath)
+
+    $cacheRoot = Join-Path $PSScriptRoot 'storage\cache\servicios_marcas'
+    if (-not (Test-Path -LiteralPath $cacheRoot)) {
+        New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    }
+
+    $resolvedPath = (Resolve-Path -LiteralPath $TemplatePath).Path
+    $sha1 = [System.Security.Cryptography.SHA1]::Create()
+    try {
+        $hashBytes = $sha1.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($resolvedPath))
+    } finally {
+        $sha1.Dispose()
+    }
+
+    $hash = [System.BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
+    return (Join-Path $cacheRoot ("template_snapshot_{0}.clixml" -f $hash))
+}
+
+function Test-TemplateSnapshotSignature {
+    param(
+        [object]$SnapshotSignature,
+        [object]$CurrentSignature
+    )
+
+    if ($null -eq $SnapshotSignature -or $null -eq $CurrentSignature) {
+        return $false
+    }
+
+    return (
+        ([string]$SnapshotSignature.Path -eq [string]$CurrentSignature.Path) -and
+        ([string]$SnapshotSignature.Length -eq [string]$CurrentSignature.Length) -and
+        ([string]$SnapshotSignature.LastWriteTimeUtc -eq [string]$CurrentSignature.LastWriteTimeUtc)
+    )
+}
+
+function Get-TemplateSnapshot {
+    param(
+        [object]$Workbook,
+        [string]$TemplatePath,
+        [string]$TemplateKey
+    )
+
+    $signature = Get-FileSignature -Path $TemplatePath
+    $cachePath = Get-TemplateSnapshotCachePath -TemplatePath $TemplatePath
+    if (Test-Path -LiteralPath $cachePath) {
+        try {
+            $cachedRecord = Import-Clixml -LiteralPath $cachePath
+            if (Test-TemplateSnapshotSignature -SnapshotSignature $cachedRecord.Signature -CurrentSignature $signature) {
+                Write-Output ("INFO|template_snapshot_cache|{0}|hit" -f $TemplateKey)
+                return $cachedRecord.Data
+            }
+
+            Write-Output ("INFO|template_snapshot_cache|{0}|stale" -f $TemplateKey)
+        } catch {
+            Write-Output ("WARN|template_snapshot_cache_read_failed|{0}|{1}" -f $TemplateKey, $_.Exception.Message)
+        }
+    } else {
+        Write-Output ("INFO|template_snapshot_cache|{0}|miss" -f $TemplateKey)
+    }
+
+    $lookupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $lookups = Read-TemplateLookups -Workbook $Workbook
+    $lookupStopwatch.Stop()
+    Write-Output ("INFO|template_lookup_ms|{0}|{1}" -f $TemplateKey, $lookupStopwatch.ElapsedMilliseconds)
+
+    $templatePrecontVentasSheet = $null
+    $templatePrecontCostos2Sheet = $null
+    $precontVentasPrototypes = @()
+    $precontCostos2Prototypes = @()
+    try {
+        try { $templatePrecontVentasSheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @('PrecontabilizacionVentas') } catch {}
+        if ($null -ne $templatePrecontVentasSheet) {
+            $ventasProtoStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $precontVentasPrototypes = @(Read-PrecontVentasPrototypes -Worksheet $templatePrecontVentasSheet)
+            $ventasProtoStopwatch.Stop()
+            Write-Output ("INFO|template_precont_ventas_proto_ms|{0}|{1}" -f $TemplateKey, $ventasProtoStopwatch.ElapsedMilliseconds)
+        }
+
+        try { $templatePrecontCostos2Sheet = Get-Worksheet-Safe -Workbook $Workbook -CandidateNames @('PrecontabilizacionCostos (2)') } catch {}
+        if ($null -ne $templatePrecontCostos2Sheet) {
+            $costosProtoStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $precontCostos2Prototypes = @(Read-PrecontCostos2Prototypes -Worksheet $templatePrecontCostos2Sheet)
+            $costosProtoStopwatch.Stop()
+            Write-Output ("INFO|template_precont_costos2_proto_ms|{0}|{1}" -f $TemplateKey, $costosProtoStopwatch.ElapsedMilliseconds)
+        }
+    } finally {
+        if ($null -ne $templatePrecontCostos2Sheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templatePrecontCostos2Sheet)
+        }
+        if ($null -ne $templatePrecontVentasSheet) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templatePrecontVentasSheet)
+        }
+    }
+
+    $snapshot = [pscustomobject]@{
+        Lookups = $lookups
+        PrecontVentasPrototypes = @($precontVentasPrototypes)
+        PrecontCostos2Prototypes = @($precontCostos2Prototypes)
+    }
+
+    try {
+        [pscustomobject]@{
+            Signature = $signature
+            Data = $snapshot
+        } | Export-Clixml -LiteralPath $cachePath -Depth 8 -Force
+        Write-Output ("INFO|template_snapshot_cache|{0}|write" -f $TemplateKey)
+    } catch {
+        Write-Output ("WARN|template_snapshot_cache_write_failed|{0}|{1}" -f $TemplateKey, $_.Exception.Message)
+    }
+
+    return $snapshot
 }
 
 function Add-LookupEntry {
@@ -2567,6 +2822,7 @@ function Write-Rows-ToWorksheet {
 
     $rowCount = [int]$Rows.Count
     $colCount = [int]$maxColumns
+    $matrix = [System.Array]::CreateInstance([object], @($rowCount, $colCount), @(1, 1))
     for ($r = 0; $r -lt $rowCount; $r++) {
         $row = $Rows[$r]
         for ($c = 0; $c -lt $colCount; $c++) {
@@ -2574,9 +2830,86 @@ function Write-Rows-ToWorksheet {
             if ($row -is [System.Collections.ICollection] -and $c -lt $row.Count) {
                 $value = $row[$c]
             }
-            $Worksheet.Cells.Item($StartRow + $r, $StartColumn + $c).Value2 = $value
+
+            $matrix.SetValue($value, $r + 1, $c + 1)
         }
     }
+
+    $startCell = $null
+    $endCell = $null
+    $range = $null
+    try {
+        $startCell = $Worksheet.Cells.Item($StartRow, $StartColumn)
+        $endCell = $Worksheet.Cells.Item($StartRow + $rowCount - 1, $StartColumn + $colCount - 1)
+        $range = $Worksheet.Range($startCell, $endCell)
+        $range.Value2 = $matrix
+    } finally {
+        if ($null -ne $range) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($range)
+        }
+        if ($null -ne $endCell) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($endCell)
+        }
+        if ($null -ne $startCell) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($startCell)
+        }
+    }
+}
+
+function Get-DateColumnWriteMode {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column
+    )
+
+    $cell = $null
+    try {
+        $cell = $Worksheet.Cells.Item($Row, $Column)
+        $format = Normalize-Text $cell.NumberFormat
+        if ($format -eq '' -or $format -eq 'General') {
+            return 'text'
+        }
+
+        return 'serial'
+    } finally {
+        if ($null -ne $cell) {
+            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($cell)
+        }
+    }
+}
+
+function Get-DateMatrixValue {
+    param(
+        [object]$Value,
+        [string]$Mode = 'serial',
+        [string]$TextFormat = 'dd/MM/yyyy'
+    )
+
+    if ($null -eq $Value -or $Value -eq '') {
+        return $null
+    }
+
+    $dateSerial = [double]$Value
+    if ($Mode -eq 'text') {
+        return "'" + [datetime]::FromOADate($dateSerial).ToString($TextFormat)
+    }
+
+    return $dateSerial
+}
+
+function Get-NumericMatrixValue {
+    param(
+        [object]$Value,
+        [switch]$BlankIfZero
+    )
+
+    $rounded = [double](Round-Amount (To-Number $Value))
+    if ($BlankIfZero -and (Round-Amount ([Math]::Abs($rounded))) -eq 0) {
+        return $null
+    }
+
+    return $rounded
 }
 
 function Resolve-MayorPathForBrand {
@@ -2682,10 +3015,67 @@ function Get-MayorSheetSectionLayouts {
             Name = $current.Name
             StartRow = [int]$current.StartRow
             EndRow = [int]$endRow
+            ParentStartRow = [int]$current.ParentStartRow
+            ParentEndRow = [int]$current.ParentEndRow
         }) | Out-Null
     }
 
     return $layouts.ToArray()
+}
+
+function Get-MayorAccountFamilyKey {
+    param([string]$Account)
+
+    $normalized = Normalize-Text $Account
+    if ($normalized -notmatch '^(\d{2}\.\d{2}\.\d{2}\.\d{2})\.(\d{4})$') {
+        return $normalized
+    }
+
+    $prefix = $Matches[1]
+    $suffix = $Matches[2]
+    switch ($suffix) {
+        { $_ -in @('0001', '0002', '0003') } { return "$prefix|VENTA" }
+        { $_ -in @('0010', '0012') } { return "$prefix|DESCUENTO" }
+        '0014' { return "$prefix|DEVOLUCION" }
+        default { return "$prefix|$suffix" }
+    }
+}
+
+function Resolve-MayorCompatibleLayout {
+    param(
+        [string]$Account,
+        [object[]]$Layouts,
+        [hashtable]$RowsByLayoutKey
+    )
+
+    $familyKey = Get-MayorAccountFamilyKey -Account $Account
+    if ($familyKey -eq '') {
+        return $null
+    }
+
+    $candidates = @(
+        @($Layouts) |
+            Where-Object { (Get-MayorAccountFamilyKey -Account $_.Account) -eq $familyKey } |
+            Sort-Object @{ Expression = { [int]$_.EndRow - [int]$_.StartRow + 1 }; Descending = $true }, @{ Expression = { [int]$_.StartRow } }
+    )
+    if ($candidates.Count -eq 0) {
+        return $null
+    }
+
+    foreach ($candidate in $candidates) {
+        $layoutKey = "{0}:{1}-{2}" -f $candidate.Account, [int]$candidate.StartRow, [int]$candidate.EndRow
+        $existing = 0
+        if ($RowsByLayoutKey.ContainsKey($layoutKey)) {
+            $existing = [int]$RowsByLayoutKey[$layoutKey].Count
+        }
+
+        $capacity = [int]($candidate.EndRow - $candidate.StartRow + 1)
+        if ($existing -lt $capacity) {
+            return $candidate
+        }
+    }
+
+    return $candidates[0]
 }
 
 function Write-MayorDataRow {
@@ -2705,7 +3095,8 @@ function Write-MayorDataRow {
     $null = $Worksheet.Cells.Item($TargetRow, 8).Value2 = (Get-Excel-TextLiteral (Normalize-Text $MayorRow.detail))
     Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 9 -Value (To-Number $MayorRow.debit)
     Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 10 -Value (To-Number $MayorRow.credit)
-    Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 11 -Value (To-Number $MayorRow.balance)
+    $balanceValue = if ($null -ne $MayorRow.PSObject.Properties['effective_balance']) { $MayorRow.effective_balance } else { $MayorRow.balance }
+    Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 11 -Value (To-Number $balanceValue)
 }
 
 function Write-MayorRows-ToWorksheet {
@@ -2735,32 +3126,70 @@ function Write-MayorRows-ToWorksheet {
     }
 
     $knownAccounts = @{}
+    $rowsByLayoutKey = @{}
+    $compatibleMappedAccounts = New-Object System.Collections.Generic.List[string]
+    $unmappedAccounts = New-Object System.Collections.Generic.List[string]
+
+    foreach ($account in @($rowsByAccount.Keys)) {
+        $layout = @($layouts | Where-Object { $_.Account -eq $account } | Select-Object -First 1)[0]
+        if ($null -eq $layout) {
+            $layout = Resolve-MayorCompatibleLayout -Account $account -Layouts $layouts -RowsByLayoutKey $rowsByLayoutKey
+            if ($null -eq $layout) {
+                Write-Output ("WARN|mayor_account_unmapped|{0}|{1}|sheet={2}" -f $BrandKey, $account, $Worksheet.Name)
+                $unmappedAccounts.Add([string]$account) | Out-Null
+                continue
+            }
+
+            $compatibleMappedAccounts.Add([string]$account) | Out-Null
+            Write-Output ("WARN|mayor_account_compatible_section|{0}|{1}|section={2}|sheet={3}" -f $BrandKey, $account, $layout.Account, $Worksheet.Name)
+        }
+
+        $layoutKey = "{0}:{1}-{2}" -f $layout.Account, [int]$layout.StartRow, [int]$layout.EndRow
+        if (-not $rowsByLayoutKey.ContainsKey($layoutKey)) {
+            $rowsByLayoutKey[$layoutKey] = New-Object System.Collections.Generic.List[object]
+        }
+
+        foreach ($accountRow in $rowsByAccount[$account].ToArray()) {
+            $rowsByLayoutKey[$layoutKey].Add($accountRow) | Out-Null
+        }
+    }
+
     $writtenCount = 0
     foreach ($layout in $layouts) {
         $knownAccounts[$layout.Account] = $true
         Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'A' -StartRow $layout.StartRow -EndColumn 'M' -EndRow $layout.EndRow
+        $layoutKey = "{0}:{1}-{2}" -f $layout.Account, [int]$layout.StartRow, [int]$layout.EndRow
         $accountRows = @()
-        if ($rowsByAccount.ContainsKey($layout.Account)) {
-            $accountRows = $rowsByAccount[$layout.Account].ToArray()
+        if ($rowsByLayoutKey.ContainsKey($layoutKey)) {
+            $accountRows = $rowsByLayoutKey[$layoutKey].ToArray()
         }
         $capacity = [int]($layout.EndRow - $layout.StartRow + 1)
         if ($accountRows.Count -gt $capacity) {
             throw ("El mayor para {0} excede la capacidad de la seccion {1} en {2}. Capacidad={3}, filas={4}" -f $BrandKey, $layout.Account, $Worksheet.Name, $capacity, $accountRows.Count)
         }
 
-        $targetRow = [int]$layout.StartRow
-        foreach ($accountRow in $accountRows) {
-            Write-MayorDataRow -Worksheet $Worksheet -TargetRow $targetRow -MayorRow $accountRow
-            $targetRow++
-            $writtenCount++
-        }
-    }
+        if ($accountRows.Count -gt 0) {
+            $dateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row ([int]$layout.StartRow) -Column 4
+            $sheetRows = New-Object System.Collections.Generic.List[object]
+            foreach ($accountRow in $accountRows) {
+                $balanceValue = if ($null -ne $accountRow.PSObject.Properties['effective_balance']) { $accountRow.effective_balance } else { $accountRow.balance }
+                $sheetRows.Add(@(
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.account)),
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.name)),
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.ext)),
+                    (Get-DateMatrixValue -Value $accountRow.date_value -Mode $dateMode),
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.origin)),
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.seat)),
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.reference)),
+                    (Get-Excel-TextLiteral (Normalize-Text $accountRow.detail)),
+                    (Get-NumericMatrixValue -Value $accountRow.debit),
+                    (Get-NumericMatrixValue -Value $accountRow.credit),
+                    (Get-NumericMatrixValue -Value $balanceValue)
+                )) | Out-Null
+            }
 
-    $unmappedAccounts = New-Object System.Collections.Generic.List[string]
-    foreach ($account in $rowsByAccount.Keys) {
-        if (-not $knownAccounts.ContainsKey($account)) {
-            Write-Output ("WARN|mayor_account_unmapped|{0}|{1}|sheet={2}" -f $BrandKey, $account, $Worksheet.Name)
-            $unmappedAccounts.Add([string]$account) | Out-Null
+            Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow ([int]$layout.StartRow) -StartColumn 1
+            $writtenCount += $accountRows.Count
         }
     }
 
@@ -2796,6 +3225,7 @@ function Write-MayorRows-ToWorksheet {
         RowCount = $writtenCount
         SectionCount = $layouts.Count
         UnmappedAccounts = $unmappedAccounts.ToArray()
+        CompatibleMappedAccounts = $compatibleMappedAccounts.ToArray()
     }
 }
 
@@ -2901,7 +3331,10 @@ function Get-WorksheetMeaningfulBounds {
 function Restore-WorksheetLayoutFromTemplate {
     param(
         [object]$TemplateWorksheet,
-        [object]$OutputWorksheet
+        [object]$OutputWorksheet,
+        [int]$StartRow = 1,
+        [int]$EndRow = 0,
+        [int]$LastColumn = 0
     )
 
     if ($null -eq $TemplateWorksheet -or $null -eq $OutputWorksheet) {
@@ -2909,9 +3342,13 @@ function Restore-WorksheetLayoutFromTemplate {
     }
 
     $bounds = Get-WorksheetMeaningfulBounds -Worksheet $TemplateWorksheet
-    $lastRow = [Math]::Max(1, [int]$bounds.LastRow)
-    $lastColumn = [Math]::Max(1, [int]$bounds.LastColumn)
-    for ($column = 1; $column -le $lastColumn; $column++) {
+    $templateLastRow = [Math]::Max(1, [int]$bounds.LastRow)
+    $templateLastColumn = [Math]::Max(1, [int]$bounds.LastColumn)
+    $effectiveStartRow = [Math]::Max(1, [int]$StartRow)
+    $effectiveEndRow = if ($EndRow -gt 0) { [Math]::Min($templateLastRow, [int]$EndRow) } else { $templateLastRow }
+    $effectiveLastColumn = if ($LastColumn -gt 0) { [Math]::Min($templateLastColumn, [int]$LastColumn) } else { $templateLastColumn }
+
+    for ($column = 1; $column -le $effectiveLastColumn; $column++) {
         $templateColumn = $null
         $outputColumn = $null
         try {
@@ -2929,7 +3366,7 @@ function Restore-WorksheetLayoutFromTemplate {
         }
     }
 
-    for ($row = 1; $row -le $lastRow; $row++) {
+    for ($row = $effectiveStartRow; $row -le $effectiveEndRow; $row++) {
         $templateRow = $null
         $outputRow = $null
         try {
@@ -2984,7 +3421,8 @@ function Restore-SelectedWorkbookLayoutFromTemplate {
     param(
         [object]$TemplateWorkbook,
         [object]$OutputWorkbook,
-        [string[]]$SheetNames
+        [string[]]$SheetNames,
+        [hashtable]$SheetRangeMap = @{}
     )
 
     if ($null -eq $TemplateWorkbook -or $null -eq $OutputWorkbook) {
@@ -3009,7 +3447,21 @@ function Restore-SelectedWorkbookLayoutFromTemplate {
             try { $templateSheet = $TemplateWorkbook.Worksheets.Item($sheetName) } catch {}
             try { $outputSheet = $OutputWorkbook.Worksheets.Item($sheetName) } catch {}
             if ($null -ne $templateSheet -and $null -ne $outputSheet) {
-                Restore-WorksheetLayoutFromTemplate -TemplateWorksheet $templateSheet -OutputWorksheet $outputSheet
+                $sheetRange = $null
+                if ($SheetRangeMap.ContainsKey($sheetName)) {
+                    $sheetRange = $SheetRangeMap[$sheetName]
+                }
+
+                if ($null -ne $sheetRange) {
+                    Restore-WorksheetLayoutFromTemplate `
+                        -TemplateWorksheet $templateSheet `
+                        -OutputWorksheet $outputSheet `
+                        -StartRow $(if ($null -ne $sheetRange.StartRow) { [int]$sheetRange.StartRow } else { 1 }) `
+                        -EndRow $(if ($null -ne $sheetRange.EndRow) { [int]$sheetRange.EndRow } else { 0 }) `
+                        -LastColumn $(if ($null -ne $sheetRange.LastColumn) { [int]$sheetRange.LastColumn } else { 0 })
+                } else {
+                    Restore-WorksheetLayoutFromTemplate -TemplateWorksheet $templateSheet -OutputWorksheet $outputSheet
+                }
             }
         } finally {
             if ($null -ne $outputSheet) {
@@ -3404,16 +3856,20 @@ function New-PrecontVentasGeneratedRows {
     Add-TemplateAggregateRows -Target $generated -Prototypes $liquidarFcDiscountPrototypes -TotalsByCenter $pxDiscountByDocCenter['FC'] -AmountSide 'Debit' -EnsureAtLeastOneRow
 
     $criticalAccounts = @(
-        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0001$' } | Select-Object -ExpandProperty Account -Unique),
-        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0003$' } | Select-Object -ExpandProperty Account -Unique),
-        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0010$' } | Select-Object -ExpandProperty Account -Unique),
-        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0012$' } | Select-Object -ExpandProperty Account -Unique),
-        @($Prototypes | Where-Object { $_.Account -match '^040101\d{2}0014$' } | Select-Object -ExpandProperty Account -Unique)
-    ) | Where-Object { $_ -and $_ -ne '' } | Select-Object -Unique
+        $Prototypes | Where-Object { $_.Account -match '^040101\d{2}0001$' } | Select-Object -ExpandProperty Account
+        $Prototypes | Where-Object { $_.Account -match '^040101\d{2}0003$' } | Select-Object -ExpandProperty Account
+        $Prototypes | Where-Object { $_.Account -match '^040101\d{2}0010$' } | Select-Object -ExpandProperty Account
+        $Prototypes | Where-Object { $_.Account -match '^040101\d{2}0012$' } | Select-Object -ExpandProperty Account
+        $Prototypes | Where-Object { $_.Account -match '^040101\d{2}0014$' } | Select-Object -ExpandProperty Account
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ } | Sort-Object -Unique
 
     foreach ($account in $criticalAccounts) {
         $accountPrototypes = @($Prototypes | Where-Object { $_.Account -eq $account } | Sort-Object @{ Expression = { [int]$_.TemplateRow } })
-        $mayorGroup = if ($salesMayorByAccount.ContainsKey($account)) { @($salesMayorByAccount[$account]) } else { @() }
+        $mayorGroup = if ($salesMayorByAccount.ContainsKey($account)) {
+            @($salesMayorByAccount[$account].ToArray())
+        } else {
+            @()
+        }
         Add-TemplateSequentialRowsFromMayor -Target $generated -Prototypes $accountPrototypes -MayorRows $mayorGroup -EnsureAtLeastOneRow
     }
 
@@ -3427,21 +3883,26 @@ function Write-PrecontVentasGeneratedRows {
     )
 
     Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow 2 -EndColumn 'J' -EndRow 1412
-    $targetRow = 2
-    foreach ($row in @($Rows)) {
-        $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $row.Ag)
-        $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $row.Doc)
-        $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $row.Line)
-        $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $row.Account)
-        $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $row.Description)
-        $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $row.CostCenter)
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 8 -Value $row.Debit -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 9 -Value $row.Credit -BlankIfZero
-        $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = (Get-Excel-TextLiteral $row.Asiento)
-        $targetRow++
+    if (@($Rows).Count -gt 0) {
+        $sheetRows = New-Object System.Collections.Generic.List[object]
+        foreach ($row in @($Rows)) {
+            $sheetRows.Add(@(
+                (Get-Excel-TextLiteral $row.Ag),
+                (Get-Excel-TextLiteral $row.Doc),
+                (Get-Excel-TextLiteral $row.Line),
+                (Get-Excel-TextLiteral $row.Account),
+                (Get-Excel-TextLiteral $row.Description),
+                (Get-Excel-TextLiteral $row.CostCenter),
+                (Get-NumericMatrixValue -Value $row.Debit -BlankIfZero),
+                (Get-NumericMatrixValue -Value $row.Credit -BlankIfZero),
+                (Get-Excel-TextLiteral $row.Asiento)
+            )) | Out-Null
+        }
+
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow 2 -StartColumn 2
     }
 
-    return [int]($targetRow - 2)
+    return [int]@($Rows).Count
 }
 
 function Get-BrandCostMetrics {
@@ -3489,26 +3950,31 @@ function Write-PrecontCostos2GeneratedRows {
     )
 
     Clear-Worksheet-RangeContents -Worksheet $Worksheet -StartColumn 'B' -StartRow 2 -EndColumn 'J' -EndRow 51
-    $targetRow = 2
+    $sheetRows = New-Object System.Collections.Generic.List[object]
     foreach ($definition in $rowDefinitions) {
         $prototype = @($Prototypes | Where-Object { $_.Account -eq $definition.Account } | Select-Object -First 1)[0]
         if ($null -eq $prototype) {
             continue
         }
 
-        $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $prototype.Ag)
-        $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $prototype.Line)
-        $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $prototype.Account)
-        $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $prototype.Number)
-        $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $prototype.Description)
-        $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $prototype.CostCenter)
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 8 -Value $definition.Amount -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 9 -Value 0 -BlankIfZero
-        $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = (Get-Excel-TextLiteral $prototype.Asiento)
-        $targetRow++
+        $sheetRows.Add(@(
+            (Get-Excel-TextLiteral $prototype.Ag),
+            (Get-Excel-TextLiteral $prototype.Line),
+            (Get-Excel-TextLiteral $prototype.Account),
+            (Get-Excel-TextLiteral $prototype.Number),
+            (Get-Excel-TextLiteral $prototype.Description),
+            (Get-Excel-TextLiteral $prototype.CostCenter),
+            (Get-NumericMatrixValue -Value $definition.Amount -BlankIfZero),
+            $null,
+            (Get-Excel-TextLiteral $prototype.Asiento)
+        )) | Out-Null
     }
 
-    return [int]($targetRow - 2)
+    if ($sheetRows.Count -gt 0) {
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow 2 -StartColumn 2
+    }
+
+    return [int]$sheetRows.Count
 }
 
 function Read-EstadisticasSeedRows {
@@ -3567,6 +4033,7 @@ function Write-EstadisticasGeneratedRows {
         @{ Row = 365; Amount = [double]$Metrics.CostoAccesorios }
     )
 
+    $sheetRows = New-Object System.Collections.Generic.List[object]
     foreach ($definition in $blockRows) {
         $rowIndex = [int]$definition.Row
         $seed = $seedRows[$rowIndex]
@@ -3583,15 +4050,26 @@ function Write-EstadisticasGeneratedRows {
             $detalle = $seed.Detalle
         }
 
-        $null = $Worksheet.Cells.Item($rowIndex, 1).Value2 = (Get-Excel-TextLiteral $account)
-        $null = $Worksheet.Cells.Item($rowIndex, 2).Value2 = (Get-Excel-TextLiteral $description)
-        $null = $Worksheet.Cells.Item($rowIndex, 3).Value2 = 'N'
-        Set-DateCellValue -Worksheet $Worksheet -Row $rowIndex -Column 4 -Value $PeriodDateValue -Context 'ESTADISTICAS_FECHA'
-        $null = $Worksheet.Cells.Item($rowIndex, 5).Value2 = (Get-Excel-TextLiteral $(if ($mod -eq '') { 'COSSE' } else { $mod }))
-        $null = $Worksheet.Cells.Item($rowIndex, 6).Value2 = (Get-Excel-TextLiteral $asiento)
-        $null = $Worksheet.Cells.Item($rowIndex, 8).Value2 = (Get-Excel-TextLiteral $detalle)
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 9 -Value $definition.Amount -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 10 -Value 0 -BlankIfZero
+        $dateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row $rowIndex -Column 4
+        $sheetRows.Add([pscustomobject]@{
+            RowIndex = $rowIndex
+            Values = @(
+                (Get-Excel-TextLiteral $account),
+                (Get-Excel-TextLiteral $description),
+                'N',
+                (Get-DateMatrixValue -Value $PeriodDateValue -Mode $dateMode),
+                (Get-Excel-TextLiteral $(if ($mod -eq '') { 'COSSE' } else { $mod })),
+                (Get-Excel-TextLiteral $asiento),
+                $null,
+                (Get-Excel-TextLiteral $detalle),
+                (Get-NumericMatrixValue -Value $definition.Amount -BlankIfZero),
+                $null
+            )
+        }) | Out-Null
+    }
+
+    foreach ($sheetRow in $sheetRows) {
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows @($sheetRow.Values) -StartRow ([int]$sheetRow.RowIndex) -StartColumn 1
     }
 }
 
@@ -3611,16 +4089,28 @@ function Write-CostoGeneratedRows {
         @{ Row = 9; Detail = 'ACCESORIOS'; Amount = [double]$Metrics.CostoAccesorios }
     )
 
+    $sheetRows = New-Object System.Collections.Generic.List[object]
     foreach ($definition in $rows) {
         $rowIndex = [int]$definition.Row
-        $null = $Worksheet.Cells.Item($rowIndex, 1).Value2 = '05.01.01.01.0005'
-        $null = $Worksheet.Cells.Item($rowIndex, 2).Value2 = 'COSTO DE VENTAS-SERVICIO'
-        Set-DateCellValue -Worksheet $Worksheet -Row $rowIndex -Column 3 -Value $PeriodDateValue -Context 'COSTO_FECHA'
-        $null = $Worksheet.Cells.Item($rowIndex, 4).Value2 = 'COSSE'
-        $null = $Worksheet.Cells.Item($rowIndex, 5).Value2 = (Get-Excel-TextLiteral ([string]($rowIndex - 5)))
-        $null = $Worksheet.Cells.Item($rowIndex, 7).Value2 = (Get-Excel-TextLiteral $definition.Detail)
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 8 -Value $definition.Amount -BlankIfZero
-        Set-NumericCellSafe -Worksheet $Worksheet -Row $rowIndex -Column 9 -Value 0 -BlankIfZero
+        $dateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row $rowIndex -Column 3
+        $sheetRows.Add([pscustomobject]@{
+            RowIndex = $rowIndex
+            Values = @(
+                '05.01.01.01.0005',
+                'COSTO DE VENTAS-SERVICIO',
+                (Get-DateMatrixValue -Value $PeriodDateValue -Mode $dateMode),
+                'COSSE',
+                (Get-Excel-TextLiteral ([string]($rowIndex - 5))),
+                $null,
+                (Get-Excel-TextLiteral $definition.Detail),
+                (Get-NumericMatrixValue -Value $definition.Amount -BlankIfZero),
+                $null
+            )
+        }) | Out-Null
+    }
+
+    foreach ($sheetRow in $sheetRows) {
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows @($sheetRow.Values) -StartRow ([int]$sheetRow.RowIndex) -StartColumn 1
     }
 }
 
@@ -3636,6 +4126,11 @@ function Refresh-WorksheetPivotTablesSafe {
         [object]$Worksheet,
         [string]$Label
     )
+
+    if (-not $script:PivotRefreshEnabled) {
+        Write-Output ("INFO|pivot_refresh_skipped|{0}|mode=fast" -f $Label)
+        return
+    }
 
     try {
         $pivotTables = $Worksheet.PivotTables()
@@ -4094,6 +4589,9 @@ function Fill-RepVtas {
     Clear-OutputSheet -Worksheet $Worksheet -StartRow 15 -LastColumn 'AL'
     $targetRow = 15
     $writtenRows = New-Object System.Collections.Generic.List[object]
+    $sheetRows = New-Object System.Collections.Generic.List[object]
+    $factDateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row 15 -Column 9
+    $noteDateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row 15 -Column 10
     $sortedRows = @(
         $Rows |
             Sort-Object @{ Expression = {
@@ -4161,35 +4659,37 @@ function Fill-RepVtas {
             $interestCellValue = if ((Round-Amount ([Math]::Abs($interesValue))) -eq 0) { $null } else { [double]$interesValue }
             $rowNumber = $targetRow
 
-            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
-            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = "'" + $centerValue
-            $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = (Get-Excel-TextLiteral $orderValue)
-            $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $advisorValue)
-            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $lineValue)
-            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = "'" + $cedulaValue
-            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $customerValue)
-            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = "'" + $documentRawValue
             $factDate = $factDateValue
-            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 9 -Value $factDate -Context 'REP_VTAS_FACT'
             $noteDate = $noteDateValue
-            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 10 -Value $noteDate -Context 'REP_VTAS_NC'
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 11 -Value $noteCreditValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 12 -Value $totalManoObraValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 13 -Value $totalSubcontratosValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 14 -Value $totalInsumosValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 15 -Value $totalServicioValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 16 -Value $totalAccesoriosValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 17 -Value $totalRepuestosValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 18 -Value $interesValue -BlankIfZero
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 19 -Value $ivaValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 20 -Value $totalValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 21 -Value $costoValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 22 -Value $costoLubricantesValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 23 -Value $costoAccesoriosValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 24 -Value $costoRepuestosValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 25 -Value $costoPinturaValue
-            Set-NumericCellSafe -Worksheet $Worksheet -Row $targetRow -Column 26 -Value $costoSubconNcValue
-            $null = $Worksheet.Cells.Item($targetRow, 27).Value2 = (Get-Excel-TextLiteral $garExtValue)
+            $sheetRows.Add(@(
+                (Get-Excel-TextLiteral $agencyValue),
+                ("'" + $centerValue),
+                (Get-Excel-TextLiteral $orderValue),
+                (Get-Excel-TextLiteral $advisorValue),
+                (Get-Excel-TextLiteral $lineValue),
+                ("'" + $cedulaValue),
+                (Get-Excel-TextLiteral $customerValue),
+                ("'" + $documentRawValue),
+                (Get-DateMatrixValue -Value $factDate -Mode $factDateMode),
+                (Get-DateMatrixValue -Value $noteDate -Mode $noteDateMode),
+                (Get-NumericMatrixValue -Value $noteCreditValue),
+                (Get-NumericMatrixValue -Value $totalManoObraValue),
+                (Get-NumericMatrixValue -Value $totalSubcontratosValue),
+                (Get-NumericMatrixValue -Value $totalInsumosValue),
+                (Get-NumericMatrixValue -Value $totalServicioValue),
+                (Get-NumericMatrixValue -Value $totalAccesoriosValue),
+                (Get-NumericMatrixValue -Value $totalRepuestosValue),
+                (Get-NumericMatrixValue -Value $interesValue -BlankIfZero),
+                (Get-NumericMatrixValue -Value $ivaValue),
+                (Get-NumericMatrixValue -Value $totalValue),
+                (Get-NumericMatrixValue -Value $costoValue),
+                (Get-NumericMatrixValue -Value $costoLubricantesValue),
+                (Get-NumericMatrixValue -Value $costoAccesoriosValue),
+                (Get-NumericMatrixValue -Value $costoRepuestosValue),
+                (Get-NumericMatrixValue -Value $costoPinturaValue),
+                (Get-NumericMatrixValue -Value $costoSubconNcValue),
+                (Get-Excel-TextLiteral $garExtValue)
+            )) | Out-Null
 
             $writtenRows.Add([pscustomobject]@{
                 RowNumber = $rowNumber
@@ -4234,6 +4734,10 @@ function Fill-RepVtas {
         }
     }
 
+    if ($sheetRows.Count -gt 0) {
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow 15 -StartColumn 1
+    }
+
     return [pscustomobject]@{
         RowCount = $writtenRows.Count
         Rows = $writtenRows.ToArray()
@@ -4251,6 +4755,8 @@ function Fill-Invoices {
     $targetRow = 17
     $fallbackCount = 0
     $writtenRows = New-Object System.Collections.Generic.List[object]
+    $sheetRows = New-Object System.Collections.Generic.List[object]
+    $invoiceDateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row 17 -Column 4
     $sortedRows = @(
         $Rows |
             Where-Object { $_.DocType -in @('FA', 'FC') } |
@@ -4291,26 +4797,28 @@ function Fill-Invoices {
 
             $rowNumber = $targetRow
 
-            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
-            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = (Get-Excel-TextLiteral $seriesValue)
-            $null = $Worksheet.Cells.Item($targetRow, 3).Value2 = $row.DocumentTrim
             $invoiceDate = Get-Date-Write-Value $row.DateFactValue
-            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 4 -Value $invoiceDate -Context 'REP_FACTURACION_FECHA'
-            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $orderValue)
-            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = "'" + $cedulaValue
-            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $customerValue)
-            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = [double]$subtotal
-            $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = [double]$discount
-            $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = [double]$netoConIva
-            $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$netoIva0Value
-            $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$iva12Amount
-            $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$iva15Amount
-            $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$interestAmount
-            $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$totalAmount
-            $null = $Worksheet.Cells.Item($targetRow, 16).Value2 = $asientoValue
-            $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = (Get-Excel-TextLiteral $garExtValue)
-            $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = (Get-Excel-TextLiteral $tvValue)
-            $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = (Get-Excel-TextLiteral $markerValue)
+            $sheetRows.Add(@(
+                (Get-Excel-TextLiteral $agencyValue),
+                (Get-Excel-TextLiteral $seriesValue),
+                $row.DocumentTrim,
+                (Get-DateMatrixValue -Value $invoiceDate -Mode $invoiceDateMode),
+                (Get-Excel-TextLiteral $orderValue),
+                ("'" + $cedulaValue),
+                (Get-Excel-TextLiteral $customerValue),
+                (Get-NumericMatrixValue -Value $subtotal),
+                (Get-NumericMatrixValue -Value $discount),
+                (Get-NumericMatrixValue -Value $netoConIva),
+                (Get-NumericMatrixValue -Value $netoIva0Value),
+                (Get-NumericMatrixValue -Value $iva12Amount),
+                (Get-NumericMatrixValue -Value $iva15Amount),
+                (Get-NumericMatrixValue -Value $interestAmount),
+                (Get-NumericMatrixValue -Value $totalAmount),
+                $asientoValue,
+                (Get-Excel-TextLiteral $garExtValue),
+                (Get-Excel-TextLiteral $tvValue),
+                (Get-Excel-TextLiteral $markerValue)
+            )) | Out-Null
 
             $writtenRows.Add([pscustomobject]@{
                 RowNumber = $rowNumber
@@ -4347,6 +4855,10 @@ function Fill-Invoices {
         }
     }
 
+    if ($sheetRows.Count -gt 0) {
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow 17 -StartColumn 1
+    }
+
     return [pscustomobject]@{
         FallbackCount = $fallbackCount
         RowCount = $writtenRows.Count
@@ -4365,6 +4877,8 @@ function Fill-Notes {
     $targetRow = 11
     $fallbackCount = 0
     $writtenRows = New-Object System.Collections.Generic.List[object]
+    $sheetRows = New-Object System.Collections.Generic.List[object]
+    $creditNoteDateMode = Get-DateColumnWriteMode -Worksheet $Worksheet -Row 11 -Column 3
     $sortedRows = @(
         $Rows |
             Where-Object { $_.DocType -in @('DC', 'DE') } |
@@ -4412,28 +4926,30 @@ function Fill-Notes {
 
             $rowNumber = $targetRow
 
-            $null = $Worksheet.Cells.Item($targetRow, 1).Value2 = (Get-Excel-TextLiteral $agencyValue)
-            $null = $Worksheet.Cells.Item($targetRow, 2).Value2 = $row.DocumentTrim
             $creditNoteDate = Get-Date-Write-Value $row.DateNoteValue
-            Set-DateCellValue -Worksheet $Worksheet -Row $targetRow -Column 3 -Value $creditNoteDate -Context 'NOTA_CREDITO_FECHA'
-            $null = $Worksheet.Cells.Item($targetRow, 4).Value2 = (Get-Excel-TextLiteral $kindValue)
-            $null = $Worksheet.Cells.Item($targetRow, 5).Value2 = (Get-Excel-TextLiteral $seriesValue)
-            $null = $Worksheet.Cells.Item($targetRow, 6).Value2 = (Get-Excel-TextLiteral $invoiceValue)
-            $null = $Worksheet.Cells.Item($targetRow, 7).Value2 = (Get-Excel-TextLiteral $orderValue)
-            $null = $Worksheet.Cells.Item($targetRow, 8).Value2 = "'" + $cedulaValue
-            $null = $Worksheet.Cells.Item($targetRow, 9).Value2 = (Get-Excel-TextLiteral $customerValue)
-            $null = $Worksheet.Cells.Item($targetRow, 10).Value2 = [double]$subtotal
-            $null = $Worksheet.Cells.Item($targetRow, 11).Value2 = [double]$discount
-            $null = $Worksheet.Cells.Item($targetRow, 12).Value2 = [double]$netoSinIva
-            $null = $Worksheet.Cells.Item($targetRow, 13).Value2 = [double]$netoConIva
-            $null = $Worksheet.Cells.Item($targetRow, 14).Value2 = [double]$iva15Amount
-            $null = $Worksheet.Cells.Item($targetRow, 15).Value2 = [double]$iva12Amount
-            $null = $Worksheet.Cells.Item($targetRow, 16).Value2 = [double]$interestAmount
-            $null = $Worksheet.Cells.Item($targetRow, 17).Value2 = [double]$totalAmount
-            $null = $Worksheet.Cells.Item($targetRow, 18).Value2 = [double]$anticipo
-            $null = $Worksheet.Cells.Item($targetRow, 19).Value2 = [double]$neto
-            $null = $Worksheet.Cells.Item($targetRow, 20).Value2 = (Get-Excel-TextLiteral $asientoValue)
-            $null = $Worksheet.Cells.Item($targetRow, 21).Value2 = (Get-Excel-TextLiteral $garExtValue)
+            $sheetRows.Add(@(
+                (Get-Excel-TextLiteral $agencyValue),
+                $row.DocumentTrim,
+                (Get-DateMatrixValue -Value $creditNoteDate -Mode $creditNoteDateMode),
+                (Get-Excel-TextLiteral $kindValue),
+                (Get-Excel-TextLiteral $seriesValue),
+                (Get-Excel-TextLiteral $invoiceValue),
+                (Get-Excel-TextLiteral $orderValue),
+                ("'" + $cedulaValue),
+                (Get-Excel-TextLiteral $customerValue),
+                (Get-NumericMatrixValue -Value $subtotal),
+                (Get-NumericMatrixValue -Value $discount),
+                (Get-NumericMatrixValue -Value $netoSinIva),
+                (Get-NumericMatrixValue -Value $netoConIva),
+                (Get-NumericMatrixValue -Value $iva15Amount),
+                (Get-NumericMatrixValue -Value $iva12Amount),
+                (Get-NumericMatrixValue -Value $interestAmount),
+                (Get-NumericMatrixValue -Value $totalAmount),
+                (Get-NumericMatrixValue -Value $anticipo),
+                (Get-NumericMatrixValue -Value $neto),
+                (Get-Excel-TextLiteral $asientoValue),
+                (Get-Excel-TextLiteral $garExtValue)
+            )) | Out-Null
 
             $writtenRows.Add([pscustomobject]@{
                 RowNumber = $rowNumber
@@ -4472,6 +4988,10 @@ function Fill-Notes {
         }
     }
 
+    if ($sheetRows.Count -gt 0) {
+        Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow 11 -StartColumn 1
+    }
+
     return [pscustomobject]@{
         FallbackCount = $fallbackCount
         RowCount = $writtenRows.Count
@@ -4490,8 +5010,15 @@ function Validate-Services-BrandOutput {
     )
 
     if ($null -ne $MayorResult -and $null -ne $MayorResult.UnmappedAccounts -and @($MayorResult.UnmappedAccounts).Count -gt 0) {
-        $accountList = (@($MayorResult.UnmappedAccounts) | Where-Object { $_ -and $_ -ne '' } | Select-Object -Unique) -join ', '
-        throw "El mayor contiene cuentas sin seccion equivalente en la plantilla: $accountList"
+        $unmappedSplit = Split-MayorUnmappedAccounts -Accounts @($MayorResult.UnmappedAccounts)
+        if (@($unmappedSplit.Warning).Count -gt 0) {
+            Write-Output ("WARN|mayor_unmapped_compatible|{0}|accounts={1}" -f $BrandKey, ((@($unmappedSplit.Warning) | Select-Object -Unique) -join ', '))
+        }
+
+        if (@($unmappedSplit.Fatal).Count -gt 0) {
+            $accountList = (@($unmappedSplit.Fatal) | Where-Object { $_ -and $_ -ne '' } | Select-Object -Unique) -join ', '
+            throw "El mayor contiene cuentas sin seccion equivalente en la plantilla: $accountList"
+        }
     }
 
     $outputRepSheet = $null
@@ -4708,7 +5235,7 @@ foreach ($config in $templateConfigs.Values) {
 }
 
 $excelLock = Acquire-Excel-Automation-Lock -TimeoutSeconds 300
-Stop-OrphanExcelProcesses -TimeoutSeconds 20
+Stop-OrphanExcelProcesses -TimeoutSeconds 5
 $_conflictPaths = @(
     $resolvedTemplateDir,
     $resolvedOutputDir,
@@ -4733,7 +5260,7 @@ catch {
     throw
 }
 
-Start-Sleep -Milliseconds 1200
+Start-Sleep -Milliseconds 300
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 $excel.ScreenUpdating = $false
@@ -4760,20 +5287,27 @@ try {
 
     foreach ($templateKey in $brandOrder) {
         Assert-NotCancelled 'marcas'
+        $brandStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $rowsDisplay = @($displayRows | Where-Object { $_.TemplateKey -eq $templateKey })
         $rowsRepVtas = @($repVtasRows | Where-Object { $_.TemplateKey -eq $templateKey })
         if ($rowsRepVtas.Count -eq 0 -and $rowsDisplay.Count -eq 0) {
+            $brandStopwatch.Stop()
             continue
         }
 
         $rowsPosting = @($postingRows | Where-Object { $_.TemplateKey -eq $templateKey })
         Write-Output ("INFO|processing|{0}|rows={1}" -f $templateKey, $rowsRepVtas.Count)
+        Write-Output ("INFO|validation_mode|{0}|{1}" -f $templateKey, $(if ($script:StrictValidationEnabled) { 'strict' } else { 'fast' }))
 
         $templateWorkbook = $null
+        $openTemplateStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $templateWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $templateConfigs[$templateKey].TemplatePath -ReadOnly $true
+        $openTemplateStopwatch.Stop()
+        Write-Output ("INFO|open_template_ms|{0}|{1}" -f $templateKey, $openTemplateStopwatch.ElapsedMilliseconds)
         try {
             Assert-NotCancelled 'base_plantilla'
-            $lookups = Read-TemplateLookups -Workbook $templateWorkbook
+            $templateSnapshot = Get-TemplateSnapshot -Workbook $templateWorkbook -TemplatePath $templateConfigs[$templateKey].TemplatePath -TemplateKey $templateKey
+            $lookups = $templateSnapshot.Lookups
         }
         finally {
             # Se reutiliza esta plantilla para la validacion del mismo bloque.
@@ -4781,9 +5315,15 @@ try {
 
         $outputName = "servicios_{0}_{1}.xls" -f $templateKey, $timestamp
         $outputPath = Join-Path $resolvedOutputDir $outputName
+        $copyTemplateStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Copy-Item -LiteralPath $templateConfigs[$templateKey].TemplatePath -Destination $outputPath -Force
+        $copyTemplateStopwatch.Stop()
+        Write-Output ("INFO|copy_template_ms|{0}|{1}" -f $templateKey, $copyTemplateStopwatch.ElapsedMilliseconds)
 
+        $openOutputStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $outputWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $outputPath -ReadOnly $false
+        $openOutputStopwatch.Stop()
+        Write-Output ("INFO|open_output_ms|{0}|{1}" -f $templateKey, $openOutputStopwatch.ElapsedMilliseconds)
         $repSheet = $null
         $noteSheet = $null
         $repVtasSheet = $null
@@ -4795,16 +5335,30 @@ try {
             $noteSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('NOTA DE CREDITO')
             $repVtasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('REP VTAS')
 
+            $fillInvoicesStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             $invoiceResult = Fill-Invoices -Worksheet $repSheet -Rows $rowsDisplay -Lookups $lookups
+            $fillInvoicesStopwatch.Stop()
+            Write-Output ("INFO|fill_invoices_ms|{0}|{1}" -f $templateKey, $fillInvoicesStopwatch.ElapsedMilliseconds)
+
+            $fillNotesStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             $noteResult = Fill-Notes -Worksheet $noteSheet -Rows $rowsDisplay -Lookups $lookups
+            $fillNotesStopwatch.Stop()
+            Write-Output ("INFO|fill_notes_ms|{0}|{1}" -f $templateKey, $fillNotesStopwatch.ElapsedMilliseconds)
+
+            $fillRepVtasStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             $repVtasResult = Fill-RepVtas -Worksheet $repVtasSheet -Rows $rowsRepVtas -Lookups $lookups
+            $fillRepVtasStopwatch.Stop()
+            Write-Output ("INFO|fill_repvtas_ms|{0}|{1}" -f $templateKey, $fillRepVtasStopwatch.ElapsedMilliseconds)
 
             $pxSheet = $null
             $pxRows = @()
             try { $pxSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PX') } catch {}
             if ($null -ne $pxSheet) {
+                $fillPxStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 $pxRows = Read-PxRows -PxPath $PxPath -BrandKey $templateKey -WorkingDirectory $stagingDirectory
                 $pxResult = Write-PxRows-ToWorksheet -Worksheet $pxSheet -Rows $pxRows -BrandKey $templateKey
+                $fillPxStopwatch.Stop()
+                Write-Output ("INFO|fill_px_ms|{0}|{1}" -f $templateKey, $fillPxStopwatch.ElapsedMilliseconds)
                 Write-Output ("INFO|px|{0}|rows={1}|bottom_capacity={2}" -f $templateKey, $pxResult.RowCount, $pxResult.BottomCapacity)
             }
 
@@ -4813,12 +5367,20 @@ try {
             $mayorSheet = $null
             try { $mayorSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('VENTAS', 'MAY VTAS') } catch {}
             if ($null -ne $mayorSheet) {
+                $fillMayorStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 $mayorPath = Resolve-MayorPathForBrand -BrandKey $templateKey -MayorPaths $mayorPaths
                 if (-not [string]::IsNullOrWhiteSpace($mayorPath) -and (Test-Path -LiteralPath $mayorPath)) {
                     $mayorRows = Read-MayorRows -MayorPath $mayorPath -WorkingDirectory $stagingDirectory
+                    $mayorFilter = Filter-MayorRowsForWorkbook -Rows $mayorRows
+                    $mayorRows = @($mayorFilter.Rows)
+                    if (@($mayorFilter.Removed).Count -gt 0) {
+                        Write-Output ("INFO|mayor_px_adjustments_filtered|{0}|rows={1}" -f $templateKey, @($mayorFilter.Removed).Count)
+                    }
                 }
 
                 $mayorResult = Write-MayorRows-ToWorksheet -Worksheet $mayorSheet -Rows $mayorRows -BrandKey $templateKey
+                $fillMayorStopwatch.Stop()
+                Write-Output ("INFO|fill_mayor_ms|{0}|{1}" -f $templateKey, $fillMayorStopwatch.ElapsedMilliseconds)
                 if ($mayorRows.Count -gt 0) {
                     Write-Output ("INFO|mayor|{0}|rows={1}|sections={2}" -f $templateKey, $mayorResult.RowCount, $mayorResult.SectionCount)
                 } else {
@@ -4834,6 +5396,8 @@ try {
             $precontCostosSheet = $null
             $costoSheet = $null
             $estadisticasSheet = $null
+            $precontVentasCount = 0
+            $precontCostos2Count = 0
             try { $precontVentasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionVentas') } catch {}
             try { $precontCostos2Sheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionCostos (2)') } catch {}
             try { $precontCostosSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionCostos') } catch {}
@@ -4842,19 +5406,31 @@ try {
 
             try {
                 if ($null -ne $precontVentasSheet) {
-                    $precontVentasPrototypes = Read-PrecontVentasPrototypes -Worksheet $precontVentasSheet
+                    $precontVentasStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    $precontVentasPrototypes = @($templateSnapshot.PrecontVentasPrototypes)
+                    if ($precontVentasPrototypes.Count -eq 0) {
+                        $precontVentasPrototypes = @(Read-PrecontVentasPrototypes -Worksheet $precontVentasSheet)
+                    }
                     $precontVentasRows = New-PrecontVentasGeneratedRows -Prototypes $precontVentasPrototypes -RowsPosting $rowsPosting -MayorRows $mayorRows -PxRows $pxRows
                     $precontVentasCount = Write-PrecontVentasGeneratedRows -Worksheet $precontVentasSheet -Rows $precontVentasRows
                     Refresh-WorksheetPivotTablesSafe -Worksheet $precontVentasSheet -Label 'PrecontabilizacionVentas'
                     Update-PrecontVentasControlFormulas -Worksheet $precontVentasSheet -Rows $precontVentasRows
                     Update-RepAndNoteControlFormulas -RepWorksheet $repSheet -NoteWorksheet $noteSheet -Rows $precontVentasRows
+                    $precontVentasStopwatch.Stop()
+                    Write-Output ("INFO|fill_precont_ventas_ms|{0}|{1}" -f $templateKey, $precontVentasStopwatch.ElapsedMilliseconds)
                     Write-Output ("INFO|precont_ventas|{0}|rows={1}" -f $templateKey, $precontVentasCount)
                 }
 
                 if ($null -ne $precontCostos2Sheet) {
-                    $precontCostos2Prototypes = Read-PrecontCostos2Prototypes -Worksheet $precontCostos2Sheet
+                    $precontCostos2Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    $precontCostos2Prototypes = @($templateSnapshot.PrecontCostos2Prototypes)
+                    if ($precontCostos2Prototypes.Count -eq 0) {
+                        $precontCostos2Prototypes = @(Read-PrecontCostos2Prototypes -Worksheet $precontCostos2Sheet)
+                    }
                     $precontCostos2Count = Write-PrecontCostos2GeneratedRows -Worksheet $precontCostos2Sheet -Prototypes $precontCostos2Prototypes -Metrics $costMetrics
                     Refresh-WorksheetPivotTablesSafe -Worksheet $precontCostos2Sheet -Label 'PrecontabilizacionCostos (2)'
+                    $precontCostos2Stopwatch.Stop()
+                    Write-Output ("INFO|fill_precont_costos2_ms|{0}|{1}" -f $templateKey, $precontCostos2Stopwatch.ElapsedMilliseconds)
                     Write-Output ("INFO|precont_costos2|{0}|rows={1}" -f $templateKey, $precontCostos2Count)
                 }
 
@@ -4864,13 +5440,19 @@ try {
                 }
 
                 if ($null -ne $estadisticasSheet) {
+                    $estadisticasStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                     Write-EstadisticasGeneratedRows -Worksheet $estadisticasSheet -Metrics $costMetrics -PeriodDateValue $periodDateValue
+                    $estadisticasStopwatch.Stop()
+                    Write-Output ("INFO|fill_estadisticas_ms|{0}|{1}" -f $templateKey, $estadisticasStopwatch.ElapsedMilliseconds)
                     Write-Output ("INFO|estadisticas|{0}|repuestos={1}|lub={2}|subcont={3}|accesorios={4}" -f $templateKey, $costMetrics.CostoRepuestos, $costMetrics.CostoLubricantes, ([double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc), $costMetrics.CostoAccesorios)
                 }
 
                 if ($null -ne $costoSheet) {
+                    $costoStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                     Write-CostoGeneratedRows -Worksheet $costoSheet -Metrics $costMetrics -PeriodDateValue $periodDateValue
                     Refresh-WorksheetPivotTablesSafe -Worksheet $costoSheet -Label 'COSTO'
+                    $costoStopwatch.Stop()
+                    Write-Output ("INFO|fill_costo_ms|{0}|{1}" -f $templateKey, $costoStopwatch.ElapsedMilliseconds)
                     Write-Output ("INFO|costo|{0}|total={1}" -f $templateKey, ([double]$costMetrics.CostoRepuestos + [double]$costMetrics.CostoLubricantes + [double]$costMetrics.CostoAccesorios + [double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc))
                 }
                 if ($null -ne $pxSheet) {
@@ -4908,17 +5490,38 @@ try {
             $recalcStopwatch.Stop()
             Write-Output ("INFO|recalc_ms|{0}|{1}" -f $templateKey, $recalcStopwatch.ElapsedMilliseconds)
 
-            $layoutStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-            Restore-SelectedWorkbookLayoutFromTemplate `
-                -TemplateWorkbook $templateWorkbook `
-                -OutputWorkbook $outputWorkbook `
-                -SheetNames @(
-                    'PrecontabilizacionVentas',
-                    'PrecontabilizacionCostos (2)',
-                    'COSTO'
-                )
-            $layoutStopwatch.Stop()
-            Write-Output ("INFO|layout_ms|{0}|{1}" -f $templateKey, $layoutStopwatch.ElapsedMilliseconds)
+            if ($script:LayoutRestoreEnabled) {
+                $layoutStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                Restore-SelectedWorkbookLayoutFromTemplate `
+                    -TemplateWorkbook $templateWorkbook `
+                    -OutputWorkbook $outputWorkbook `
+                    -SheetNames @(
+                        'PrecontabilizacionVentas',
+                        'PrecontabilizacionCostos (2)',
+                        'COSTO'
+                    ) `
+                    -SheetRangeMap @{
+                        'PrecontabilizacionVentas' = @{
+                            StartRow = 1
+                            EndRow = [Math]::Max(20, ([int]$precontVentasCount + 5))
+                            LastColumn = 22
+                        }
+                        'PrecontabilizacionCostos (2)' = @{
+                            StartRow = 1
+                            EndRow = [Math]::Max(12, ([int]$precontCostos2Count + 5))
+                            LastColumn = 10
+                        }
+                        'COSTO' = @{
+                            StartRow = 1
+                            EndRow = 12
+                            LastColumn = 10
+                        }
+                    }
+                $layoutStopwatch.Stop()
+                Write-Output ("INFO|layout_ms|{0}|{1}" -f $templateKey, $layoutStopwatch.ElapsedMilliseconds)
+            } else {
+                Write-Output ("INFO|layout_skipped|{0}|mode=fast" -f $templateKey)
+            }
 
             if ($script:StrictValidationEnabled) {
                 $validateStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -4936,9 +5539,12 @@ try {
             }
 
             Assert-NotCancelled 'guardado_plantilla'
+            $saveStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             Write-Output ("INFO|save_begin|{0}" -f $templateKey)
             Save-Workbook-WithRetry -Workbook $outputWorkbook -PathForError $outputPath
             Write-Output ("INFO|save_done|{0}" -f $templateKey)
+            $saveStopwatch.Stop()
+            Write-Output ("INFO|save_ms|{0}|{1}" -f $templateKey, $saveStopwatch.ElapsedMilliseconds)
             Write-Output ("OUTPUT|{0}|{1}" -f $outputName, $templateConfigs[$templateKey].Label)
             Write-Output ("INFO|{0}|invoice_fallbacks={1}|note_fallbacks={2}" -f $templateKey, [int]$invoiceResult.FallbackCount, [int]$noteResult.FallbackCount)
         }
@@ -4970,6 +5576,8 @@ try {
                 [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templateWorkbook)
                 $templateWorkbook = $null
             }
+            $brandStopwatch.Stop()
+            Write-Output ("INFO|total_brand_ms|{0}|{1}" -f $templateKey, $brandStopwatch.ElapsedMilliseconds)
         }
     }
 }
@@ -4990,7 +5598,7 @@ finally {
         }
     }
     Unregister-OleMessageFilter
-    Stop-WorkerExcelProcess -ProcessId $excelProcessId -WaitMilliseconds 1500
+    Stop-WorkerExcelProcess -ProcessId $excelProcessId -WaitMilliseconds 500
     Stop-OrphanExcelProcesses -TimeoutSeconds 5
     Release-Excel-Automation-Lock -Mutex $excelLock
     if (-not [string]::IsNullOrWhiteSpace($stagingDirectory) -and (Test-Path -LiteralPath $stagingDirectory)) {

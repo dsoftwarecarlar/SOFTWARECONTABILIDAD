@@ -1,0 +1,12 @@
+{
+  "processor": "cxp_actions.accion3",
+  "input_paths": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CON_MAYORGEN2ACCION3.txt",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_lote_02.txt"
+  ],
+  "output_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_lote.xlsx",
+  "template_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\templates\\MAYOR RET_ACCION3.xlsx",
+  "options": {
+    "cwd": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD"
+  }
+}

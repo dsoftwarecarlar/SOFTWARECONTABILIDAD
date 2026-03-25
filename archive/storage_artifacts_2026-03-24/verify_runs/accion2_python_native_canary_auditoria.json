@@ -1,0 +1,27 @@
+{
+  "fecha_proceso": "2026-03-24T11:01:54.636358",
+  "input_txt": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_canary.txt",
+  "output_xlsx": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_canary.xlsx",
+  "hoja_salida": "RET PROV",
+  "filas_txt": 491,
+  "columnas_esperadas": [
+    "NUM RT",
+    "PROVEEDOR",
+    "FECHA",
+    "FECHA CONT",
+    "TIPO",
+    "COD",
+    "FACT",
+    "%",
+    "BASE",
+    "RETENCION"
+  ],
+  "resumen_generado_filas": 7,
+  "timings_ms": {
+    "parse": 376,
+    "build": 402,
+    "write": 546,
+    "total": 1325
+  },
+  "verificacion_final_ok": true
+}

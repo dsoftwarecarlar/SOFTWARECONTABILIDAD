@@ -1,0 +1,58 @@
+{
+  "fecha_proceso": "2026-03-24T11:24:42.130177",
+  "input_source": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CON_MAYORGEN2ACCION3.txt",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_lote_02.txt"
+  ],
+  "input_sources": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CON_MAYORGEN2ACCION3.txt",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_lote_02.txt"
+  ],
+  "input_pdf": null,
+  "input_tipo": "txt_multi",
+  "archivos_origen": [
+    {
+      "input_source": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CON_MAYORGEN2ACCION3.txt",
+      "file_name": "CON_MAYORGEN2ACCION3.txt",
+      "movimientos_extraidos": 328,
+      "source_type": "txt",
+      "lines_total": 329,
+      "date_rows_detected": 328,
+      "movement_rows_extracted": 328,
+      "skipped_date_rows": 0,
+      "account_totals_checked": 5,
+      "account_total_mismatches": 0
+    },
+    {
+      "input_source": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_lote_02.txt",
+      "file_name": "accion3_python_native_lote_02.txt",
+      "movimientos_extraidos": 328,
+      "source_type": "txt",
+      "lines_total": 329,
+      "date_rows_detected": 328,
+      "movement_rows_extracted": 328,
+      "skipped_date_rows": 0,
+      "account_totals_checked": 5,
+      "account_total_mismatches": 0
+    }
+  ],
+  "total_archivos_origen": 2,
+  "output_xlsx": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion3_python_native_lote.xlsx",
+  "hoja_salida": "MAYOR RET",
+  "movimientos_extraidos": 656,
+  "filas_fecha_detectadas": 656,
+  "filas_fecha_omitidas": 0,
+  "cuentas_validadas_fuente": 10,
+  "cuentas_descuadradas_fuente": 0,
+  "cuentas_validadas_pdf": 10,
+  "cuentas_descuadradas_pdf": 0,
+  "resumen_filtrado": 12,
+  "timings_ms": {
+    "parse": 428,
+    "validate": 26,
+    "build": 1131,
+    "write": 2764,
+    "total": 4350
+  },
+  "verificacion_final_ok": true
+}

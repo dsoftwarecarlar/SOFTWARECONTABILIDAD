@@ -1,0 +1,11 @@
+INFO|custom_source|rows=66
+INFO|source_priority|excel_primary|custom_support=66
+WARN|excel_visible_no_conflict|Excel visible (PID: 34908) pero sin archivos en conflicto abiertos. Se continua.
+INFO|processing|changan|rows=66
+INFO|px|changan|rows=1|bottom_capacity=6
+INFO|mayor|changan|rows=23|sections=4
+INFO|precont_ventas|changan|rows=15
+INFO|precont_costos2|changan|rows=4
+INFO|precont_costos_cleared|changan
+INFO|estadisticas|changan|repuestos=5253,71|lub=0|subcont=213,7|accesorios=69,65
+INFO|costo|changan|total=5537,06

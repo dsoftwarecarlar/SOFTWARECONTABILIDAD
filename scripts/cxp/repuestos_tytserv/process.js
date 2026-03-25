@@ -109,6 +109,33 @@ const MY_LAYOUTS = {
   },
 };
 
+const MY_ACCOUNT_STATIC_METADATA = {
+  "04.01.01.01.0001": { name: "VTAS RPTOS TOYOTA - CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.01.0003": { name: "VTAS RPTOS TOYOTA - CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.01.0005": { name: "DESC VTAS RPTOS TOYOTA CONTADO  CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.01.0007": { name: "DESC VTAS RPTOS TOYOTA CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.01.0009": { name: "DEVOL VTAS RPTOS TOYOTA CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.01.0011": { name: "DEVOL VTAS RPTOS TOYOTA CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.02.0001": { name: "VTAS RPTOS CHANGAN - CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.02.0003": { name: "VTAS RPTOS CHANGAN - CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.02.0005": { name: "DESC VTAS RPTOS CHANGAN CONTADO  CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.02.0007": { name: "DESC VTAS RPTOS CHANGAN CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.02.0009": { name: "DEVOL VTAS RPTOS CHANGAN CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.02.0011": { name: "DEVOL VTAS RPTOS CHANGAN CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.03.0001": { name: "VTAS RPTOS PEUGEOT - CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.03.0003": { name: "VTAS RPTOS PEUGEOT - CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.03.0005": { name: "DESC VTAS RPTOS PEUGEOT CONTADO  CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.03.0007": { name: "DESC VTAS RPTOS PEUGEOT CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.03.0009": { name: "DEVOL VTAS RPTOS PEUGEOT CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.03.0011": { name: "DEVOL VTAS RPTOS PEUGEOT CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.04.0001": { name: "VTAS RPTOS SUZUKI - CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.04.0003": { name: "VTAS RPTOS SUZUKI - CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.04.0005": { name: "DESC VTAS RPTOS SUZUKI CONTADO  CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.04.0007": { name: "DESC VTAS RPTOS SUZUKI CREDITO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.04.0009": { name: "DEVOL VTAS RPTOS SUZUKI CONTADO CON IVA", marker: "N", type: "REPTO" },
+  "04.01.01.04.0011": { name: "DEVOL VTAS RPTOS SUZUKI CREDITO CON IVA", marker: "N", type: "REPTO" },
+};
+
 const MONTHS = {
   ENE: 0,
   FEB: 1,
@@ -1238,6 +1265,26 @@ function getSectionStaticTemplates(templateWorksheet, layout, section) {
   return templates;
 }
 
+function getMyAccountStaticFallback(layout, account) {
+  const metadata = MY_ACCOUNT_STATIC_METADATA[normalizeText(account)];
+  if (!metadata) {
+    return {};
+  }
+
+  const staticColumns = new Set(getSectionStaticColumns(layout));
+  const fallback = {};
+  if (staticColumns.has(2)) {
+    fallback[2] = metadata.name;
+  }
+  if (staticColumns.has(3)) {
+    fallback[3] = metadata.marker || "N";
+  }
+  if (staticColumns.has(5)) {
+    fallback[5] = metadata.type || "REPTO";
+  }
+  return fallback;
+}
+
 function setFormulaResult(cell, result, formulaOverride = null) {
   const currentValue = cell.value;
   const formula = formulaOverride || (currentValue && typeof currentValue === "object" ? currentValue.formula : null);
@@ -1345,7 +1392,7 @@ function getPostingAccount(key, category, form) {
     },
     chgn: {
       sales: { CONTADO: "04.01.01.02.0001", CREDITO: "04.01.01.02.0003" },
-      discount: { CONTADO: "04.01.01.02.0005" },
+      discount: { CONTADO: "04.01.01.02.0005", CREDITO: "04.01.01.02.0007" },
     },
     szk: {
       sales: { CONTADO: "04.01.01.04.0001", CREDITO: "04.01.01.04.0003" },
@@ -2986,7 +3033,10 @@ function applySectionScaling(
     const rowNumber = section.startRow + index;
     const row = outputWorksheet.getRow(rowNumber);
     activeRows.add(rowNumber);
-    const staticValues = staticTemplates[entry.account] || {};
+    const staticValues = {
+      ...getMyAccountStaticFallback(layout, entry.account),
+      ...(staticTemplates[entry.account] || {}),
+    };
     for (const [column, value] of Object.entries(staticValues)) {
       row.getCell(Number(column)).value = cloneDeep(value);
     }

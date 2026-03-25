@@ -1,0 +1,87 @@
+{
+  "processor": "repuestos_tytserv.process",
+  "input_paths": [],
+  "output_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\repuestos_legacy_baseline_1774375498.xlsx",
+  "template_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\templates\\FACTURACION REPUESTOS TYTSERV FEBRERO 2026.xlsx",
+  "options": {
+    "script_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\scripts\\cxp\\repuestos_tytserv\\process.js",
+    "cwd": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD",
+    "timeout_seconds": 600,
+    "file_fields": [
+      {
+        "field": "excel_tyt",
+        "script_flag": "--input-tyt",
+        "summary_key": "matriz",
+        "summary_label": "MATRIZ"
+      },
+      {
+        "field": "excel_peug",
+        "script_flag": "--input-peug",
+        "summary_key": "peugeot",
+        "summary_label": "PEUGEOT"
+      },
+      {
+        "field": "excel_chgn",
+        "script_flag": "--input-chgn",
+        "summary_key": "changan",
+        "summary_label": "CHANGAN"
+      },
+      {
+        "field": "excel_szk",
+        "script_flag": "--input-szk",
+        "summary_key": "suzuki",
+        "summary_label": "SUZUKI"
+      },
+      {
+        "field": "excel_nc_tyt",
+        "script_flag": "--input-nc-tyt",
+        "summary_key": "nc-matriz",
+        "summary_label": "NC MATRIZ"
+      },
+      {
+        "field": "excel_nc_peug",
+        "script_flag": "--input-nc-peug",
+        "summary_key": "nc-peugeot",
+        "summary_label": "NC PEUGEOT"
+      },
+      {
+        "field": "excel_nc_chgn",
+        "script_flag": "--input-nc-chgn",
+        "summary_key": "nc-changan",
+        "summary_label": "NC CHANGAN"
+      },
+      {
+        "field": "excel_nc_szk",
+        "script_flag": "--input-nc-szk",
+        "summary_key": "nc-suzuki",
+        "summary_label": "NC SUZUKI"
+      }
+    ],
+    "saved_inputs": {
+      "excel_tyt": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral.xlsx"
+      },
+      "excel_peug": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (1).xlsx"
+      },
+      "excel_chgn": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (2).xlsx"
+      },
+      "excel_szk": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (3).xlsx"
+      },
+      "excel_nc_tyt": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral.xlsx"
+      },
+      "excel_nc_peug": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (1).xlsx"
+      },
+      "excel_nc_chgn": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (2).xlsx"
+      },
+      "excel_nc_szk": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\archivosnc_rep\\RepLibroDevolucionesGeneral (3).xlsx"
+      }
+    }
+  }
+}

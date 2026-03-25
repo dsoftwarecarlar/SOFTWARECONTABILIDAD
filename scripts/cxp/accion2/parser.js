@@ -408,16 +408,6 @@ function inferTipoFromHints(fields, hints) {
   }
 
   const rate = round2(fields.percent);
-  const ivaOnly = new Set([0, 20, 30, 70, 100]);
-  const rentaOnly = new Set([1, 1.75, 2, 2.75, 3, 5, 8]);
-
-  if (ivaOnly.has(rate)) {
-    return "IVA";
-  }
-  if (rentaOnly.has(rate)) {
-    return "RENTA";
-  }
-
   const cpKey = `${fields.cod}|${rate.toFixed(4)}`;
   const cpHint = hints.byCodePercent.get(cpKey);
   if (cpHint) {
@@ -427,6 +417,16 @@ function inferTipoFromHints(fields, hints) {
     if (cpHint.RENTA > cpHint.IVA) {
       return "RENTA";
     }
+  }
+
+  if (rate === 0) {
+    return "RENTA";
+  }
+  if (new Set([20, 30, 70, 100]).has(rate)) {
+    return "IVA";
+  }
+  if (new Set([1, 1.75, 2, 2.75, 3, 5, 8]).has(rate)) {
+    return "RENTA";
   }
 
   if (rate >= 20) {

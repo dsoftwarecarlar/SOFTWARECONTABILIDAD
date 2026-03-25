@@ -1,10 +1,9 @@
 <?php
 declare(strict_types=1);
 
-date_default_timezone_set('America/Guayaquil');
+date_default_timezone_set('America/Quito');
 
 const APP_OUTPUT_RETENTION_LIMIT = 3;
-const APP_UPLOAD_RETENTION_LIMIT = 20;
 const APP_PUBLIC_HOST = '192.168.100.182';
 
 function app_root(): string
@@ -25,17 +24,6 @@ function app_join_path(string ...$parts): string
     }
 
     return implode(DIRECTORY_SEPARATOR, array_filter($clean, static fn($part) => $part !== ''));
-}
-
-function app_first_existing_path(string ...$candidates): string
-{
-    foreach ($candidates as $candidate) {
-        if ($candidate !== '' && file_exists($candidate)) {
-            return $candidate;
-        }
-    }
-
-    return $candidates[0] ?? '';
 }
 
 function app_storage_path(string $relative = ''): string
@@ -114,40 +102,14 @@ function app_public_url(string $relative = ''): string
     return app_request_scheme() . '://' . $host . app_url($relative);
 }
 
-function app_asset_url(string $relative = ''): string
-{
-    $relative = trim(str_replace('\\', '/', $relative), '/');
-    if ($relative === '') {
-        return app_url('assets');
-    }
-
-    return app_url('assets/' . $relative);
-}
-
 function app_output_download_url(string $fileName): string
 {
     return app_url('download.php?file=' . rawurlencode($fileName));
 }
 
-function app_output_extensions(): array
-{
-    return ['xlsx', 'xls'];
-}
-
-function app_output_has_supported_extension(string $fileName): bool
-{
-    $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-    return in_array($extension, app_output_extensions(), true);
-}
-
 function app_output_retention_limit(): int
 {
     return APP_OUTPUT_RETENTION_LIMIT;
-}
-
-function app_upload_retention_limit(): int
-{
-    return APP_UPLOAD_RETENTION_LIMIT;
 }
 
 function app_logo_path(): string
@@ -206,22 +168,6 @@ function app_workspaces(): array
             'url' => app_public_url('modules/cxp_accion4/index.php'),
             'state' => 'active',
         ],
-        [
-            'slug' => 'cxp_servicios_marcas',
-            'title' => 'Conciliacion Servicios por Marca',
-            'status' => 'Operativo',
-            'description' => 'Separa el reporte mensual de servicios por marca y genera la plantilla operativa de cada empresa.',
-            'url' => app_public_url('modules/cxp_servicios_marcas/index.php'),
-            'state' => 'active',
-        ],
-        [
-            'slug' => 'cxp_repuestos_tytserv',
-            'title' => 'Facturacion Repuestos TYTSERV',
-            'status' => 'Operativo',
-            'description' => 'Carga 4 reportes de ventas por marca y genera la plantilla mensual consolidada de facturacion de repuestos.',
-            'url' => app_public_url('modules/cxp_repuestos_tytserv/index.php'),
-            'state' => 'active',
-        ],
     ];
 
     $cxpModulesBySlug = [];
@@ -234,7 +180,7 @@ function app_workspaces(): array
             'slug' => 'cxp',
             'title' => 'Contabilidad Talleres',
             'person' => 'Responsable asignado por contabilidad',
-            'summary' => 'Proceso en produccion para leer archivos PDF, TXT y Excel, clasificar datos y generar archivos finales para carga contable.',
+            'summary' => 'Proceso en produccion para leer archivos PDF y TXT, clasificar datos y generar Excel final para carga contable.',
             'future_note' => 'La expansion del area queda organizada por ventanas operativas, sin mezclar funciones entre responsables.',
             'home_url' => app_public_url('areas/cxp/index.php'),
             'modules' => $cxpModules,
@@ -258,26 +204,6 @@ function app_workspaces(): array
                         'description' => 'Consolida las ultimas salidas validadas de las 4 acciones en un solo Excel de control.',
                         'url' => app_public_url('export_all_actions.php'),
                         'state' => 'active',
-                    ],
-                ],
-                [
-                    'slug' => 'conciliacion_servicios_marcas',
-                    'title' => 'Conciliacion Servicios por Marca',
-                    'summary' => 'Ventana operativa para separar el reporte mensual de servicios por marca y descargar cada plantilla final por empresa.',
-                    'route_note' => 'Ruta de salida: storage/outputs. Descarga publica: archivos .xls y .xlsx. Base operativa: plantillas mensuales del area.',
-                    'url' => app_public_url('areas/cxp/conciliacion-servicios-marcas.php'),
-                    'modules' => [
-                        $cxpModulesBySlug['cxp_servicios_marcas'],
-                    ],
-                ],
-                [
-                    'slug' => 'facturacion_repuestos_tytserv',
-                    'title' => 'Facturacion Repuestos TYTSERV',
-                    'summary' => 'Ventana operativa para cargar las 4 bases RepLibroVentasGeneral del mes y obtener el reporte final segun la plantilla manual.',
-                    'route_note' => 'Ruta de salida: storage/outputs. Descarga publica: archivo .xlsx. Base operativa: resources/cxp/repuestos_tytserv/templates.',
-                    'url' => app_public_url('areas/cxp/facturacion-repuestos-tytserv.php'),
-                    'modules' => [
-                        $cxpModulesBySlug['cxp_repuestos_tytserv'],
                     ],
                 ],
             ],
@@ -334,124 +260,26 @@ function app_workspace_window(string $workspaceSlug, string $windowSlug): ?array
     return null;
 }
 
-function app_action_export_config_path(): string
-{
-    return app_join_path(app_root(), 'config', 'cxp', 'action_exports.json');
-}
-
-function app_action_export_definitions(): array
-{
-    static $cache = null;
-    if ($cache !== null) {
-        return $cache;
-    }
-
-    $path = app_action_export_config_path();
-    if (!is_file($path)) {
-        throw new RuntimeException('No existe config/cxp/action_exports.json en el proyecto.');
-    }
-
-    try {
-        $decoded = json_decode((string)file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
-    } catch (Throwable $exception) {
-        throw new RuntimeException('No se pudo leer config/cxp/action_exports.json: ' . $exception->getMessage(), 0, $exception);
-    }
-
-    if (!is_array($decoded)) {
-        throw new RuntimeException('config/cxp/action_exports.json no contiene una lista valida de acciones.');
-    }
-
-    $definitions = [];
-    foreach ($decoded as $item) {
-        if (!is_array($item)) {
-            continue;
-        }
-
-        $key = trim((string)($item['key'] ?? ''));
-        if ($key === '') {
-            continue;
-        }
-
-        $bundleExtensions = array_values(array_filter(
-            array_map(
-                static fn($extension): string => strtolower(ltrim(trim((string)$extension), '.')),
-                is_array($item['bundle_extensions'] ?? null) ? $item['bundle_extensions'] : []
-            ),
-            static fn(string $extension): bool => $extension !== ''
-        ));
-
-        $definitions[$key] = [
-            'key' => $key,
-            'label' => (string)($item['label'] ?? $key),
-            'sheet_name' => (string)($item['sheet_name'] ?? strtoupper($key)),
-            'module_path' => trim((string)($item['module_path'] ?? ''), '/'),
-            'bundle_extensions' => $bundleExtensions,
-            'file_match' => is_array($item['file_match'] ?? null) ? $item['file_match'] : [],
-        ];
-    }
-
-    $cache = $definitions;
-    return $cache;
-}
-
-function app_output_matches_export_definition(string $fileName, array $definition): bool
-{
-    $rule = is_array($definition['file_match'] ?? null) ? $definition['file_match'] : [];
-    $type = strtolower(trim((string)($rule['type'] ?? '')));
-    $value = (string)($rule['value'] ?? '');
-
-    if ($type === 'contains') {
-        return $value !== '' && stripos($fileName, $value) !== false;
-    }
-
-    if ($type === 'regex') {
-        if ($value === '') {
-            return false;
-        }
-        $flags = preg_replace('/[^imsxuADSUXJu]/', '', (string)($rule['flags'] ?? '')) ?: '';
-        $pattern = '~' . str_replace('~', '\\~', $value) . '~' . $flags;
-        return preg_match($pattern, $fileName) === 1;
-    }
-
-    return false;
-}
-
 function app_output_matches_action(string $fileName, string $actionKey): bool
 {
     $name = strtolower(trim($fileName));
-    if (!app_output_has_supported_extension($name)) {
+    if (!str_ends_with($name, '.xlsx')) {
         return false;
     }
 
-    $actionDefinitions = app_action_export_definitions();
-    if (isset($actionDefinitions[$actionKey])) {
-        return app_output_matches_export_definition($name, $actionDefinitions[$actionKey]);
-    }
-
     return match ($actionKey) {
+        'accion1' => str_contains($name, '_resultado'),
+        'accion2' => str_contains($name, 'accion2'),
+        'accion3' => str_contains($name, 'accion3'),
+        'accion4' => str_contains($name, 'accion4'),
         'bundle' => str_contains($name, 'acciones_resumen'),
-        'servicios' => str_starts_with($name, 'servicios_'),
-        'repuestos_tytserv' => str_starts_with($name, 'repuestos_tytserv_'),
         default => false,
     };
 }
 
-function app_output_storage_files(): array
-{
-    $files = [];
-    foreach (app_output_extensions() as $extension) {
-        $pattern = app_storage_path('outputs' . DIRECTORY_SEPARATOR . '*.' . $extension);
-        foreach (glob($pattern) ?: [] as $file) {
-            $files[] = $file;
-        }
-    }
-
-    return array_values(array_unique($files));
-}
-
 function app_output_file_entries(): array
 {
-    $files = app_output_storage_files();
+    $files = glob(app_storage_path('outputs' . DIRECTORY_SEPARATOR . '*.xlsx')) ?: [];
     usort(
         $files,
         static function (string $a, string $b): int {
@@ -510,26 +338,43 @@ function app_cleanup_output_files_for_action(string $actionKey, int $keep = APP_
 
 function app_latest_action_exports(): array
 {
-    $actions = [];
-    foreach (app_action_export_definitions() as $key => $meta) {
-        $actions[$key] = [
-            'key' => $key,
-            'label' => (string)$meta['label'],
-            'sheet_name' => (string)$meta['sheet_name'],
-            'module_url' => app_url((string)$meta['module_path']),
-            'latest' => app_find_latest_output_file($key),
-        ];
+    $actions = [
+        'accion1' => [
+            'label' => 'Libro Compras Proveedores',
+            'sheet_name' => 'ACCION 1 LIBRO COMPRAS',
+            'module_url' => app_url('modules/cxp_pdf/index.php'),
+        ],
+        'accion2' => [
+            'label' => 'Retenciones Proveedores',
+            'sheet_name' => 'ACCION 2 RET PROV',
+            'module_url' => app_url('modules/cxp_txt/index.php'),
+        ],
+        'accion3' => [
+            'label' => 'Mayor Retenciones',
+            'sheet_name' => 'ACCION 3 MAYOR RET',
+            'module_url' => app_url('modules/cxp_accion3/index.php'),
+        ],
+        'accion4' => [
+            'label' => 'Mayor IVA',
+            'sheet_name' => 'ACCION 4 MAYOR IVA',
+            'module_url' => app_url('modules/cxp_accion4/index.php'),
+        ],
+    ];
+
+    foreach ($actions as $key => $meta) {
+        $actions[$key]['key'] = $key;
+        $actions[$key]['latest'] = app_find_latest_output_file($key);
     }
 
     return $actions;
 }
 
 /**
- * Elimina archivos Excel antiguos de storage/outputs y su auditoria JSON asociada,
+ * Elimina archivos XLSX antiguos de storage/outputs y su auditoria JSON asociada,
  * conservando solo los mas recientes segun el filtro recibido.
  *
  * @param int $keep Cantidad de archivos a conservar.
- * @param null|callable(string):bool $filter Recibe el nombre del archivo Excel.
+ * @param null|callable(string):bool $filter Recibe el nombre del archivo XLSX.
  */
 function app_cleanup_output_files(int $keep = APP_OUTPUT_RETENTION_LIMIT, ?callable $filter = null): void
 {
@@ -537,7 +382,7 @@ function app_cleanup_output_files(int $keep = APP_OUTPUT_RETENTION_LIMIT, ?calla
         $keep = 0;
     }
 
-    $files = app_output_storage_files();
+    $files = glob(app_storage_path('outputs' . DIRECTORY_SEPARATOR . '*.xlsx')) ?: [];
     $entries = [];
 
     foreach ($files as $file) {
@@ -564,62 +409,15 @@ function app_cleanup_output_files(int $keep = APP_OUTPUT_RETENTION_LIMIT, ?calla
     );
 
     foreach (array_slice($entries, $keep) as $entry) {
-        $excelPath = (string)$entry['path'];
-        if (is_file($excelPath)) {
-            @unlink($excelPath);
+        $xlsxPath = (string)$entry['path'];
+        if (is_file($xlsxPath)) {
+            @unlink($xlsxPath);
         }
 
         $baseName = pathinfo((string)$entry['name'], PATHINFO_FILENAME);
         $auditPath = app_join_path(app_storage_path('outputs'), $baseName . '_auditoria.json');
         if (is_file($auditPath)) {
             @unlink($auditPath);
-        }
-    }
-}
-
-function app_upload_file_entries(): array
-{
-    $pattern = app_storage_path('uploads' . DIRECTORY_SEPARATOR . '*');
-    $entries = [];
-
-    foreach (glob($pattern) ?: [] as $file) {
-        if (!is_file($file)) {
-            continue;
-        }
-
-        $timestamp = filectime($file) ?: (filemtime($file) ?: time());
-        $entries[] = [
-            'path' => $file,
-            'name' => basename($file),
-            'size' => filesize($file) ?: 0,
-            'timestamp' => $timestamp,
-            'time' => date('Y-m-d H:i:s', $timestamp),
-        ];
-    }
-
-    usort(
-        $entries,
-        static function (array $a, array $b): int {
-            if ($a['timestamp'] === $b['timestamp']) {
-                return strcmp($b['name'], $a['name']);
-            }
-            return $b['timestamp'] <=> $a['timestamp'];
-        }
-    );
-
-    return $entries;
-}
-
-function app_cleanup_upload_files(int $keep = APP_UPLOAD_RETENTION_LIMIT): void
-{
-    if ($keep < 0) {
-        $keep = 0;
-    }
-
-    foreach (array_slice(app_upload_file_entries(), $keep) as $entry) {
-        $path = (string)$entry['path'];
-        if (is_file($path)) {
-            @unlink($path);
         }
     }
 }

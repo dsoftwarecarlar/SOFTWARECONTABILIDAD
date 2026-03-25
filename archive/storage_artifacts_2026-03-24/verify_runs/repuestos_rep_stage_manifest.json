@@ -1,0 +1,31 @@
+{
+  "processor": "repuestos_tytserv.rep_stage",
+  "input_paths": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral.xlsx",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (1).xlsx",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (2).xlsx",
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (3).xlsx"
+  ],
+  "output_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\repuestos_rep_stage_1774375105190.xlsx",
+  "template_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\templates\\FACTURACION REPUESTOS TYTSERV FEBRERO 2026.xlsx",
+  "options": {
+    "saved_inputs": {
+      "excel_tyt": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral.xlsx",
+        "original_name": "RepLibroVentasGeneral.xlsx"
+      },
+      "excel_peug": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (1).xlsx",
+        "original_name": "RepLibroVentasGeneral (1).xlsx"
+      },
+      "excel_chgn": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (2).xlsx",
+        "original_name": "RepLibroVentasGeneral (2).xlsx"
+      },
+      "excel_szk": {
+        "path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\repuestos_tytserv\\fixtures\\RepLibroVentasGeneral (3).xlsx",
+        "original_name": "RepLibroVentasGeneral (3).xlsx"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "processor": "cxp_actions.accion2",
+  "input_paths": [
+    "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_canary.txt"
+  ],
+  "output_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_canary.xlsx",
+  "template_path": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\templates\\ACCION2.xlsx",
+  "options": {
+    "cwd": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD",
+    "canary": "PROV_CAN_1774368060"
+  }
+}

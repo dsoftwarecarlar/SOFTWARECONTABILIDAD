@@ -1,0 +1,24 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Symfony\Component\Console\Input\ArgvInput;
+
+define('LARAVEL_START', microtime(true));
+
+$autoloadPath = __DIR__ . '/vendor/autoload.php';
+
+if (!is_file($autoloadPath)) {
+    fwrite(STDERR, "Laravel aun no esta instalado. Ejecuta composer install en laravel_app con PHP 8.2+.\n");
+    exit(1);
+}
+
+require $autoloadPath;
+
+$app = require_once __DIR__ . '/bootstrap/app.php';
+
+$status = $app->handleCommand(new ArgvInput());
+
+exit($status);
+

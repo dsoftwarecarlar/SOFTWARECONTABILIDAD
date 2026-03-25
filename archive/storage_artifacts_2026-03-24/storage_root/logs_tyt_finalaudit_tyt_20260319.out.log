@@ -1,0 +1,18 @@
+INFO|custom_source|rows=296
+INFO|source_priority|excel_primary|custom_support=296
+WARN|excel_visible_no_conflict|Excel visible (PID: 34908) pero sin archivos en conflicto abiertos. Se continua.
+INFO|processing|tyt|rows=296
+INFO|px|tyt|rows=9|bottom_capacity=10
+INFO|mayor|tyt|rows=34|sections=5
+INFO|precont_ventas|tyt|rows=14
+INFO|precont_costos2|tyt|rows=4
+INFO|precont_costos_cleared|tyt
+INFO|estadisticas|tyt|repuestos=39460,88|lub=4360,03|subcont=1982,74|accesorios=250
+INFO|costo|tyt|total=46053,65
+WARN|recalc_full_failed|Excepci¢n al establecer "FullCalculationOnLoad": "La propiedad 'FullCalculationOnLoad' no se encuentra en este objeto. Compruebe que la propiedad existe y se puede establecer."
+INFO|validate_begin|tyt
+INFO|validate_done|tyt
+INFO|save_begin|tyt
+INFO|save_done|tyt
+OUTPUT|servicios_tyt_finalaudit_tyt_20260319.xls|MATRIZ
+INFO|tyt|invoice_fallbacks=0|note_fallbacks=0

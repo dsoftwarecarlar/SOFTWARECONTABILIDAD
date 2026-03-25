@@ -1,0 +1,27 @@
+{
+  "fecha_proceso": "2026-03-24T11:08:32.593860",
+  "input_txt": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\resources\\cxp\\acciones\\fixtures\\CXPREP_RET_GENERALACCION2.txt",
+  "output_xlsx": "C:\\xampp\\htdocs\\SOFTWARECONTABILIDAD\\storage\\verify_runs\\accion2_python_native_fixture.xlsx",
+  "hoja_salida": "RET PROV",
+  "filas_txt": 491,
+  "columnas_esperadas": [
+    "NUM RT",
+    "PROVEEDOR",
+    "FECHA",
+    "FECHA CONT",
+    "TIPO",
+    "COD",
+    "FACT",
+    "%",
+    "BASE",
+    "RETENCION"
+  ],
+  "resumen_generado_filas": 7,
+  "timings_ms": {
+    "parse": 351,
+    "build": 423,
+    "write": 413,
+    "total": 1187
+  },
+  "verificacion_final_ok": true
+}

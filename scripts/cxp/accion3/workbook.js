@@ -78,6 +78,30 @@ function fromCents(value) {
   return numeric / 100;
 }
 
+function canonicalSummaryLabel(value) {
+  const text = sanitizeText(value).toUpperCase().replace(/\s*%\s*/g, "%").replace(/\s+/g, " ");
+  const aliases = new Map([
+    ["1%RETENCION FUENTE", "1%RETENCION"],
+    ["1%RETENCION", "1%RETENCION"],
+    ["2%RETENCION FUENTE", "2%RETENCION FUENTE"],
+    ["100%RETENCION IVA", "100%RETENCION IVA"],
+    ["RETENCION 30%IVA - COMPRAS", "30%RETENCION IVA - COMPRAS"],
+    ["30%RETENCION IVA - COMPRAS", "30%RETENCION IVA - COMPRAS"],
+    ["RETENCION 70%IVA - SERVICIOS", "70%RETENCION IVA -SERVICIOS"],
+    ["70%RETENCION IVA -SERVICIOS", "70%RETENCION IVA -SERVICIOS"],
+    ["70%RETENCION IVA - SERVICIOS", "70%RETENCION IVA -SERVICIOS"],
+    ["RETENCION 20% IVA (SERVICIOS )", "RETENCION 20% IVA (SERVICIOS)"],
+    ["RETENCION 20% IVA (SERVICIOS)", "RETENCION 20% IVA (SERVICIOS)"],
+    ["TOTAL GENERAL", "TOTAL GENERAL"],
+  ]);
+  return aliases.get(text) || text;
+}
+
+function shouldIncludeRowInSummary(row) {
+  const origin = sanitizeText(row.ORIGEN).toUpperCase();
+  return origin !== "AGCM" && origin !== "BCPI";
+}
+
 function createStyleSignatureCache() {
   const cache = new WeakMap();
   return (style) => {
@@ -102,7 +126,11 @@ function buildSummary(rows, templateLabels) {
   let totalHaberCents = 0;
 
   for (const row of rows) {
-    const label = sanitizeText(row.CUENTA);
+    if (!shouldIncludeRowInSummary(row)) {
+      continue;
+    }
+
+    const label = canonicalSummaryLabel(row.CUENTA);
     if (!bucket.has(label)) {
       bucket.set(label, { debeCents: 0, haberCents: 0 });
     }
@@ -117,7 +145,8 @@ function buildSummary(rows, templateLabels) {
 
   const result = [];
   for (const labelItem of templateLabels) {
-    if (labelItem.label.toUpperCase() === "TOTAL GENERAL") {
+    const normalizedLabel = canonicalSummaryLabel(labelItem.label);
+    if (normalizedLabel === "TOTAL GENERAL") {
       result.push({
         row: labelItem.row,
         label: labelItem.label,
@@ -127,7 +156,7 @@ function buildSummary(rows, templateLabels) {
       continue;
     }
 
-    const values = bucket.get(labelItem.label) || { debeCents: 0, haberCents: 0 };
+    const values = bucket.get(normalizedLabel) || { debeCents: 0, haberCents: 0 };
     result.push({
       row: labelItem.row,
       label: labelItem.label,
@@ -186,7 +215,7 @@ function capturePayloadSnapshot(rows, maxColumn) {
   };
 }
 
-async function buildWorkbookFromTemplate(templatePath, rows) {
+async function buildWorkbookFromTemplate(templatePath, rows, options = {}) {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`No se encontro plantilla de Accion 3: ${templatePath}`);
   }
@@ -198,15 +227,18 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
     throw new Error(`La plantilla de Accion 3 no contiene la hoja ${SHEET_NAME}.`);
   }
 
-  ensureTemplateCapacity(ws, Math.max(rows.length + 1, ws.rowCount));
+  const dropAgcmFromRender = options.dropAgcmFromRender !== false;
+  const renderedRows = rows.filter((row) => !dropAgcmFromRender || sanitizeText(row.ORIGEN).toUpperCase() !== "AGCM");
+
+  ensureTemplateCapacity(ws, Math.max(renderedRows.length + 1, ws.rowCount));
   const templateRowCount = ws.rowCount;
 
   clearRangeValues(ws, 2, templateRowCount, 1, 11);
   clearRangeValues(ws, 2, templateRowCount, 14, 15);
 
-  for (let i = 0; i < rows.length; i += 1) {
+  for (let i = 0; i < renderedRows.length; i += 1) {
     const rowNum = i + 2;
-    const row = rows[i];
+    const row = renderedRows[i];
 
     ws.getCell(rowNum, 1).value = row.COD;
     ws.getCell(rowNum, 2).value = row.CUENTA;
@@ -222,7 +254,7 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
   }
 
   const summaryLabels = readTemplateSummaryLabels(ws);
-  const summary = buildSummary(rows, summaryLabels);
+  const summary = buildSummary(renderedRows, summaryLabels);
   for (const item of summary) {
     ws.getCell(item.row, 14).value = round2(item.debe);
     ws.getCell(item.row, 15).value = round2(item.haber);
