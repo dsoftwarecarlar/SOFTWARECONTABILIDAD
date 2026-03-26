@@ -164,6 +164,11 @@ def quote_sheet_reference(sheet_name: str) -> str:
     return f"'{escaped}'!"
 
 
+def infer_source_sheet_name(target_sheet_name: str) -> str:
+    normalized = re.sub(r"^\s*ACCION\s+\d+\s+", "", str(target_sheet_name or "").strip(), flags=re.IGNORECASE)
+    return normalized or str(target_sheet_name or "").strip()
+
+
 def rewrite_formula_sheet_references(formula: str, sheet_name_map: dict[str, str]) -> str:
     updated = formula
     for source_sheet_name, target_sheet_name in sheet_name_map.items():
@@ -203,7 +208,10 @@ def count_external_workbook_formulas(workbook: Workbook) -> int:
 
 def copy_workbook_sheet(target_workbook: Workbook, source_path: Path, target_sheet_name: str) -> str:
     source_workbook = load_workbook(source_path, data_only=False, keep_links=True)
-    source_sheet = source_workbook.worksheets[0] if source_workbook.worksheets else None
+    preferred_sheet_name = infer_source_sheet_name(target_sheet_name)
+    source_sheet = source_workbook[preferred_sheet_name] if preferred_sheet_name in source_workbook.sheetnames else None
+    if source_sheet is None:
+        source_sheet = source_workbook.worksheets[0] if source_workbook.worksheets else None
     if source_sheet is None:
         raise ValueError(f"El archivo {source_path.name} no contiene hojas para copiar.")
 

@@ -1875,6 +1875,72 @@ def write_mayor_rows_to_worksheet(worksheet: Any, rows: list[dict[str, Any]], br
     }
 
 
+def split_mayor_unmapped_accounts(accounts: list[str]) -> dict[str, list[str]]:
+    warning: list[str] = []
+    fatal: list[str] = []
+    for account in sorted({normalize_text(item) for item in accounts if normalize_text(item) != ""}):
+        if re.fullmatch(r"04\.01\.01\.\d{2}\.0002", account):
+            warning.append(account)
+            continue
+        fatal.append(account)
+    return {"Warning": warning, "Fatal": fatal}
+
+
+def describe_mayor_accounts(rows: list[dict[str, Any]], accounts: list[str]) -> list[str]:
+    names_by_account: dict[str, str] = {}
+    for row in rows:
+        account = normalize_text(row.get("account"))
+        if account == "" or account in names_by_account:
+            continue
+        names_by_account[account] = normalize_text(row.get("name"))
+
+    descriptions: list[str] = []
+    for account in accounts:
+        normalized_account = normalize_text(account)
+        if normalized_account == "":
+            continue
+        account_name = names_by_account.get(normalized_account, "")
+        descriptions.append(f"{normalized_account} ({account_name})" if account_name else normalized_account)
+    return descriptions
+
+
+def assert_mayor_matches_template(
+    brand_key: str,
+    mayor_path: Path | None,
+    mayor_rows: list[dict[str, Any]],
+    mayor_result: dict[str, Any] | None,
+    worksheet_name: str,
+) -> None:
+    if mayor_path is None or not mayor_path.is_file():
+        return
+
+    brand_label = get_brand_display_label(brand_key)
+    if not mayor_rows:
+        raise RuntimeError(
+            f"El archivo MAYOR de {brand_label} no contiene movimientos validos para poblar {worksheet_name}. "
+            "Verifica que corresponda al mayor de ventas del periodo."
+        )
+
+    if mayor_result is None:
+        raise RuntimeError(f"No se pudo validar el archivo MAYOR de {brand_label} para {worksheet_name}.")
+
+    unmapped_split = split_mayor_unmapped_accounts(list(mayor_result.get("UnmappedAccounts") or []))
+    if unmapped_split["Warning"]:
+        accounts_text = ", ".join(unmapped_split["Warning"])
+        print(f"WARN|mayor_unmapped_compatible|{brand_key}|accounts={accounts_text}")
+    if int(mayor_result.get("RowCount") or 0) <= 0:
+        ignored_accounts = unmapped_split["Fatal"] or list(mayor_result.get("UnmappedAccounts") or [])
+        accounts_text = ", ".join(describe_mayor_accounts(mayor_rows, ignored_accounts))
+        raise RuntimeError(
+            f"El archivo MAYOR de {brand_label} no genero filas utiles en {worksheet_name}. "
+            f"Cuentas detectadas sin seccion util: {accounts_text}. "
+            "Debes subir el MAYOR VENTAS con cuentas 04.01.01.xx.xxxx."
+        )
+    if unmapped_split["Fatal"]:
+        accounts_text = ", ".join(describe_mayor_accounts(mayor_rows, unmapped_split["Fatal"]))
+        print(f"WARN|mayor_accounts_ignored|{brand_key}|accounts={accounts_text}")
+
+
 def fill_rep_vtas(worksheet: Any, rows: list[dict[str, Any]], lookups: dict[str, Any]) -> dict[str, Any]:
     clear_output_sheet(worksheet, 15, "AL")
     fact_date_mode = get_date_column_write_mode(worksheet, 15, 9)
@@ -2197,6 +2263,7 @@ def run_runtime(args: RuntimeArgs) -> int:
 
             brand_start = time.perf_counter()
             output_workbook = open_workbook_with_retry(excel, output_path, False)
+            brand_succeeded = False
             try:
                 lookups = read_template_lookups_from_xls(template_path)
                 precont_ventas_prototypes = read_precont_ventas_prototypes_from_xls(template_path)
@@ -2246,6 +2313,7 @@ def run_runtime(args: RuntimeArgs) -> int:
                         if mayor_filter["Removed"]:
                             print(f"INFO|mayor_px_adjustments_filtered|{template_key}|rows={len(mayor_filter['Removed'])}")
                     mayor_result = write_mayor_rows_to_worksheet(mayor_sheet, mayor_rows, template_key)
+                    assert_mayor_matches_template(template_key, mayor_path, mayor_rows, mayor_result, str(mayor_sheet.Name))
                     print(f"INFO|fill_mayor_ms|{template_key}|{int((time.perf_counter() - fill_start) * 1000)}")
                     print(f"INFO|mayor|{template_key}|rows={mayor_result['RowCount']}|sections={mayor_result['SectionCount']}")
 
@@ -2288,11 +2356,19 @@ def run_runtime(args: RuntimeArgs) -> int:
                         print(f"WARN|recalc_full_failed|{exc}")
 
                 save_workbook_with_retry(output_workbook, output_path)
+                brand_succeeded = True
                 print(f"OUTPUT|{output_name}|{TEMPLATE_CONFIGS[template_key]['label']}")
                 print(f"INFO|{template_key}|invoice_fallbacks={int(invoice_result['FallbackCount'])}|note_fallbacks={int(note_result['FallbackCount'])}")
                 print(f"INFO|total_brand_ms|{template_key}|{int((time.perf_counter() - brand_start) * 1000)}")
             finally:
-                output_workbook.Close(True)
+                try:
+                    output_workbook.Close(bool(brand_succeeded))
+                finally:
+                    if not brand_succeeded and output_path.exists():
+                        try:
+                            output_path.unlink()
+                        except OSError:
+                            pass
     finally:
         if excel is not None:
             try:

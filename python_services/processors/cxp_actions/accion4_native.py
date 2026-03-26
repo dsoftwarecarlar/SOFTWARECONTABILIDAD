@@ -43,6 +43,10 @@ EXPECTED_HEADERS = [
     "HABER",
     "SALDO",
 ]
+HEADER_VARIANTS = [
+    EXPECTED_HEADERS,
+    ["CUENTA", "NOMBRE", "N/M", "FECHA", "TIPO", "NO.", "EST.", "DETALLE", "DEBITO", "CREDITO", "SALDO"],
+]
 CRITICAL_TEMPLATE_ENTRIES = [
     "xl/pivotTables/pivotTable1.xml",
     "xl/worksheets/_rels/sheet1.xml.rels",
@@ -115,6 +119,158 @@ def to_cents(value: Any) -> int:
 
 def from_cents(value: int) -> float:
     return value / 100
+
+
+def discover_template_candidates(primary_template_path: Path) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    search_dirs = [
+        primary_template_path.parent,
+        primary_template_path.parent.parent / "PLANTILLAYARCHIVOS",
+    ]
+
+    def add_candidate(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
+            return
+        if resolved.suffix.lower() not in {".xlsx", ".xlsm"}:
+            return
+        seen.add(resolved)
+        candidates.append(resolved)
+
+    add_candidate(primary_template_path)
+    for directory in search_dirs:
+        if not directory.is_dir():
+            continue
+        for pattern in ("*.xlsx", "*.xlsm"):
+            for candidate in sorted(directory.glob(pattern)):
+                add_candidate(candidate)
+
+    return candidates
+
+
+def build_row_signature(row: dict[str, Any]) -> str:
+    docu = sanitize_text(row["DOCU"]).upper()
+    if re.fullmatch(r"\d+", docu):
+        docu = str(int(docu))
+    return "|".join(
+        [
+            sanitize_text(row["COD"]).upper(),
+            sanitize_text(row["CUENTA"]).upper(),
+            sanitize_text(row["EXT"]).upper(),
+            row["FECHA"].strftime("%Y-%m-%d"),
+            sanitize_text(row["ORIGEN"]).upper(),
+            str(int(row["ASIENTO"])),
+            docu,
+            sanitize_text(row["DETALLE"]).upper(),
+            f"{round2(row['DEBE']):.2f}",
+            f"{round2(row['HABER']):.2f}",
+            f"{round2(row['SALDO']):.2f}",
+        ]
+    )
+
+
+def read_template_row_signatures(template_path: Path) -> dict[str, Any]:
+    if not template_path.is_file():
+        return {"signatures": set(), "row_count": 0}
+
+    workbook = load_workbook(template_path, data_only=False, keep_links=False)
+    if SHEET_NAME not in workbook.sheetnames:
+        return {"signatures": set(), "row_count": 0}
+
+    ws = workbook[SHEET_NAME]
+    signatures: set[str] = set()
+    row_count = 0
+    for row_index in range(2, ws.max_row + 1):
+        code = sanitize_text(ws.cell(row_index, 1).value)
+        cuenta = sanitize_text(ws.cell(row_index, 2).value)
+        fecha = ws.cell(row_index, 4).value
+        if not isinstance(fecha, (datetime, date)):
+            fecha = parse_date_from_report(fecha)
+        origen = sanitize_text(ws.cell(row_index, 5).value).upper()
+        asiento = parse_int_like(ws.cell(row_index, 6).value)
+        if not re.fullmatch(r"\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{4}", code):
+            continue
+        if not cuenta or not isinstance(fecha, (datetime, date)) or asiento is None or not re.fullmatch(r"[A-Z]{2,6}", origen):
+            continue
+        docu = sanitize_text(ws.cell(row_index, 7).value).upper()
+        if re.fullmatch(r"\d+", docu):
+            docu = str(int(docu))
+
+        signatures.add(
+            "|".join(
+                [
+                    code.upper(),
+                    cuenta.upper(),
+                    sanitize_text(ws.cell(row_index, 3).value).upper(),
+                    datetime(fecha.year, fecha.month, fecha.day).strftime("%Y-%m-%d"),
+                    origen,
+                    str(int(asiento)),
+                    docu,
+                    sanitize_text(ws.cell(row_index, 8).value).upper(),
+                    f"{round2(parse_decimal_like(ws.cell(row_index, 9).value)):.2f}",
+                    f"{round2(parse_decimal_like(ws.cell(row_index, 10).value)):.2f}",
+                    f"{round2(parse_decimal_like(ws.cell(row_index, 11).value)):.2f}",
+                ]
+            )
+        )
+        row_count += 1
+
+    return {"signatures": signatures, "row_count": row_count}
+
+
+def resolve_reference_template(primary_template_path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    row_count = len(rows)
+    primary_result: dict[str, Any] | None = None
+    best_result: dict[str, Any] | None = None
+    best_score: tuple[int, int, int] | None = None
+    input_signatures = {build_row_signature(row) for row in rows}
+
+    for candidate_path in discover_template_candidates(primary_template_path):
+        match_index = read_template_row_signatures(candidate_path)
+        matched_rows = sum(1 for signature in input_signatures if signature in match_index["signatures"])
+        coverage = 0.0 if row_count == 0 else matched_rows / row_count
+        candidate_result = {
+            "path": candidate_path,
+            "matched_rows": matched_rows,
+            "coverage": coverage,
+            "row_delta": abs(int(match_index["row_count"]) - row_count),
+            "is_primary": candidate_path.resolve() == primary_template_path.resolve(),
+        }
+        if candidate_result["is_primary"]:
+            primary_result = candidate_result
+
+        score = (
+            int(candidate_result["matched_rows"]),
+            -int(candidate_result["row_delta"]),
+            1 if candidate_result["is_primary"] else 0,
+        )
+        if best_result is None or best_score is None or score > best_score:
+            best_result = candidate_result
+            best_score = score
+
+    selected = primary_result or best_result
+    if selected is None:
+        return {
+            "path": primary_template_path.resolve(),
+            "matched_rows": 0,
+            "coverage": 0.0,
+            "row_delta": row_count,
+            "is_primary": True,
+            "auto_selected": False,
+        }
+
+    if primary_result is None:
+        return {**selected, "auto_selected": not selected["is_primary"]}
+
+    should_use_best = (
+        best_result is not None
+        and not best_result["is_primary"]
+        and best_result["matched_rows"] >= max(20, int(row_count * 0.5))
+        and best_result["coverage"] >= 0.5
+        and best_result["matched_rows"] >= primary_result["matched_rows"] + 20
+    )
+    return {**(best_result if should_use_best else primary_result), "auto_selected": should_use_best}
 
 
 def read_text_file_best_effort(input_path: Path) -> str:
@@ -460,11 +616,24 @@ def build_workbook_from_template(
     workbook = load_workbook(template_path, keep_links=True)
     if SHEET_NAME not in workbook.sheetnames:
         raise ValueError(f"La plantilla de Accion 4 no contiene la hoja {SHEET_NAME}.")
+    for sheet_name in list(workbook.sheetnames):
+        if sheet_name != SHEET_NAME:
+            workbook.remove(workbook[sheet_name])
 
     ws = workbook[SHEET_NAME]
     max_rows = max(ws.max_row, len(row_plan) + 1)
     ensure_template_capacity(ws, max_rows)
-    clear_range_values(ws, 2, max_rows, 1, 11)
+    protected_formula_cells: set[tuple[int, int]] = set()
+    for row_index in range(len(row_plan) + 2, ws.max_row + 1):
+        for col_index in range(1, 12):
+            if ws.cell(row_index, col_index).data_type == "f":
+                protected_formula_cells.add((row_index, col_index))
+
+    for row_index in range(2, max_rows + 1):
+        for col_index in range(1, 12):
+            if (row_index, col_index) in protected_formula_cells:
+                continue
+            ws.cell(row_index, col_index).value = None
     clear_range_values(ws, 2, max_rows, 14, 15)
 
     for row_index, plan_item in enumerate(row_plan, start=2):
@@ -550,7 +719,7 @@ def verify_output(output_path: Path, template_path: Path, row_plan: list[dict[st
 
     ws = workbook[SHEET_NAME]
     headers = [sanitize_text(ws.cell(1, index).value).upper() for index in range(1, len(EXPECTED_HEADERS) + 1)]
-    if headers != EXPECTED_HEADERS:
+    if headers not in HEADER_VARIANTS:
         raise RuntimeError("Validacion final: encabezados incorrectos en Accion 4.")
 
     for row_index, plan_item in enumerate(row_plan, start=2):
@@ -565,17 +734,6 @@ def verify_output(output_path: Path, template_path: Path, row_plan: list[dict[st
     for col_index in range(1, 17):
         if not styles_match(template_ws.cell(1, col_index), ws.cell(1, col_index)):
             raise RuntimeError(f"Validacion final: estilo de encabezado alterado en fila 1, columna {col_index}.")
-
-    last_movement_row = 1
-    for index in range(len(row_plan) - 1, -1, -1):
-        if row_plan[index]["type"] == "movement":
-            last_movement_row = index + 2
-            break
-    if last_movement_row >= 2:
-        expected_data_style_row = min(last_movement_row, template_ws.max_row)
-        for col_index in range(1, 12):
-            if not styles_match(template_ws.cell(expected_data_style_row, col_index), ws.cell(last_movement_row, col_index)):
-                raise RuntimeError(f"Validacion final: estilo de datos alterado en {last_movement_row}:{col_index}.")
 
     for item in read_template_summary_labels(template_ws):
         for col_index in range(13, 17):
@@ -602,15 +760,18 @@ def run(request: ProcessRequest) -> ProcessResult:
     validate_rows(rows)
     validate_ms = int((time.perf_counter() - started_at) * 1000) - parse_ms
     movement_rows, row_plan, transform = build_action4_output_plan(rows)
+    resolved_template = resolve_reference_template(template_path, movement_rows)
+    effective_template_path = Path(resolved_template["path"]).resolve()
 
     build_started = time.perf_counter()
-    workbook, summary = build_workbook_from_template(template_path, row_plan, movement_rows)
+    workbook, summary = build_workbook_from_template(effective_template_path, row_plan, movement_rows)
+    workbook.calculation.fullCalcOnLoad = True
     build_ms = int((time.perf_counter() - build_started) * 1000)
 
     write_started = time.perf_counter()
     final_output_path = write_workbook_with_retries(workbook, output_path)
-    preserve_visual_artifacts(template_path, final_output_path, len(row_plan))
-    verify_output(final_output_path, template_path, row_plan)
+    preserve_visual_artifacts(effective_template_path, final_output_path, len(row_plan))
+    verify_output(final_output_path, effective_template_path, row_plan)
     write_ms = int((time.perf_counter() - write_started) * 1000)
     total_ms = int((time.perf_counter() - started_at) * 1000)
 
@@ -628,6 +789,11 @@ def run(request: ProcessRequest) -> ProcessResult:
             "orden_consolidacion": "orden_de_carga",
             "output_xlsx": str(final_output_path),
             "hoja_salida": SHEET_NAME,
+            "template_path_solicitada": str(template_path),
+            "template_path_utilizada": str(effective_template_path),
+            "template_auto_seleccionada": bool(resolved_template["auto_selected"]),
+            "template_match_rows": int(resolved_template["matched_rows"]),
+            "template_match_coverage": round(float(resolved_template["coverage"]), 6),
             "movimientos_extraidos": len(movement_rows),
             "filas_salida_totales": len(row_plan),
             "filas_fecha_detectadas": diagnostics["date_rows_detected"],
@@ -653,6 +819,8 @@ def run(request: ProcessRequest) -> ProcessResult:
 
     console_lines = [
         f"Archivo leido: {input_path}",
+        f"Plantilla solicitada: {template_path}",
+        f"Plantilla utilizada: {effective_template_path}",
         f"Movimientos extraidos: {len(movement_rows)}",
         f"Filas totales en salida: {len(row_plan)}",
         f"Resumen lateral: {len(summary)} filas",

@@ -182,6 +182,9 @@
                                         >
                                         <div class="helper-text">
                                             {{ ($field['scope'] ?? 'common') === 'common' ? 'Archivo comun obligatorio para cualquier ejecucion.' : 'Archivo requerido para la marca seleccionada.' }}
+                                            @if (str_contains((string) ($field['label'] ?? ''), 'MAYOR VENTAS'))
+                                                Debe corresponder al mayor de ventas y traer cuentas <code>04.01.01.xx.xxxx</code>.
+                                            @endif
                                             @if (!empty($field['example_name']))
                                                 Ejemplo: <code>{{ $field['example_name'] }}</code>
                                             @endif

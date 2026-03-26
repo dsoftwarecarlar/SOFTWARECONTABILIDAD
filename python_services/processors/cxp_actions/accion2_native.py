@@ -55,8 +55,10 @@ HEADER_ALIASES = {
     "TRANSACCION": "COD",
     "FACT": "FACT",
     "FACTURA": "FACT",
+    "NUMFACT": "FACT",
     "PORCENTAJE": "%",
     "%": "%",
+    "%RETEN": "%",
     "BASE": "BASE",
     "BASERET": "BASE",
     "BASEIVA": "BASE",
@@ -420,6 +422,140 @@ def build_tipo_match_key(fields: dict[str, Any]) -> str:
     )
 
 
+def discover_template_candidates(primary_template_path: Path) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    search_dirs = [
+        primary_template_path.parent,
+        primary_template_path.parent.parent / "PLANTILLAYARCHIVOS",
+    ]
+
+    def add_candidate(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
+            return
+        if resolved.suffix.lower() not in {".xlsx", ".xlsm"}:
+            return
+        seen.add(resolved)
+        candidates.append(resolved)
+
+    add_candidate(primary_template_path)
+    for directory in search_dirs:
+        if not directory.is_dir():
+            continue
+        for pattern in ("*.xlsx", "*.xlsm"):
+            for candidate in sorted(directory.glob(pattern)):
+                add_candidate(candidate)
+
+    return candidates
+
+
+def load_template_match_index(template_path: Path) -> dict[str, Any]:
+    if not template_path.is_file():
+        return {"keys": set(), "row_count": 0}
+
+    workbook = load_workbook(template_path, data_only=False, keep_links=False)
+    if SHEET_NAME not in workbook.sheetnames:
+        return {"keys": set(), "row_count": 0}
+
+    ws = workbook[SHEET_NAME]
+    keys: set[str] = set()
+    row_count = 0
+    for row_index in range(2, ws.max_row + 1):
+        tipo = normalize_tipo(ws.cell(row_index, 5).value)
+        if tipo not in {"IVA", "RENTA"}:
+            continue
+
+        fields = {
+            "num_rt": parse_int_like(ws.cell(row_index, 1).value),
+            "proveedor": ws.cell(row_index, 2).value,
+            "fecha": ws.cell(row_index, 3).value,
+            "fecha_cont": ws.cell(row_index, 4).value,
+            "cod": parse_int_like(ws.cell(row_index, 6).value),
+            "fact": ws.cell(row_index, 7).value,
+            "percent": parse_decimal_like(ws.cell(row_index, 8).value),
+            "base": parse_decimal_like(ws.cell(row_index, 9).value),
+            "retencion": parse_decimal_like(ws.cell(row_index, 10).value),
+        }
+        if fields["num_rt"] is None or fields["cod"] is None:
+            continue
+
+        keys.add(build_tipo_match_key(fields))
+        row_count += 1
+
+    return {"keys": keys, "row_count": row_count}
+
+
+def resolve_reference_template(primary_template_path: Path, rows: list[NormalizedRow]) -> dict[str, Any]:
+    row_count = len(rows)
+    primary_result: dict[str, Any] | None = None
+    best_result: dict[str, Any] | None = None
+    best_score: tuple[int, int, int] | None = None
+
+    input_keys = {
+        build_tipo_match_key(
+            {
+                "num_rt": row.num_rt,
+                "proveedor": row.proveedor,
+                "fecha": row.fecha,
+                "fecha_cont": row.fecha_cont,
+                "cod": row.cod,
+                "fact": row.fact,
+                "percent": row.percent,
+                "base": row.base,
+                "retencion": row.retencion,
+            }
+        )
+        for row in rows
+    }
+
+    for candidate_path in discover_template_candidates(primary_template_path):
+        match_index = load_template_match_index(candidate_path)
+        matched_rows = sum(1 for key in input_keys if key in match_index["keys"])
+        coverage = 0.0 if row_count == 0 else matched_rows / row_count
+        candidate_result = {
+            "path": candidate_path,
+            "matched_rows": matched_rows,
+            "coverage": coverage,
+            "row_delta": abs(int(match_index["row_count"]) - row_count),
+            "is_primary": candidate_path.resolve() == primary_template_path.resolve(),
+        }
+        if candidate_result["is_primary"]:
+            primary_result = candidate_result
+
+        score = (
+            int(candidate_result["matched_rows"]),
+            -int(candidate_result["row_delta"]),
+            1 if candidate_result["is_primary"] else 0,
+        )
+        if best_result is None or best_score is None or score > best_score:
+            best_result = candidate_result
+            best_score = score
+
+    selected = primary_result or best_result
+    if selected is None:
+        return {
+            "path": primary_template_path.resolve(),
+            "matched_rows": 0,
+            "coverage": 0.0,
+            "row_delta": row_count,
+            "is_primary": True,
+            "auto_selected": False,
+        }
+
+    if primary_result is None:
+        return {**selected, "auto_selected": not selected["is_primary"]}
+
+    should_use_best = (
+        best_result is not None
+        and not best_result["is_primary"]
+        and best_result["matched_rows"] >= max(25, int(row_count * 0.5))
+        and best_result["coverage"] >= 0.5
+        and best_result["matched_rows"] >= primary_result["matched_rows"] + 20
+    )
+    return {**(best_result if should_use_best else primary_result), "auto_selected": should_use_best}
+
+
 def load_template_tipo_hints(template_path: Path) -> dict[str, Any]:
     if not template_path.is_file():
         return {"exact": {}, "by_code_percent": {}}
@@ -724,7 +860,11 @@ def write_workbook_with_retries(workbook: Any, preferred_path: Path, max_attempt
 
 
 def verify_headers(ws: Worksheet) -> None:
-    headers = [sanitize_text(ws.cell(1, index).value).upper() for index in range(1, len(EXPECTED_COLUMNS) + 1)]
+    headers = []
+    for index in range(1, len(EXPECTED_COLUMNS) + 1):
+        raw_value = ws.cell(1, index).value
+        normalized = HEADER_ALIASES.get(normalize_header(raw_value))
+        headers.append(normalized or sanitize_text(raw_value).upper())
     if headers != EXPECTED_COLUMNS:
         raise RuntimeError("Validacion final: encabezados de Accion 2 alterados.")
 
@@ -861,15 +1001,21 @@ def run(request: ProcessRequest) -> ProcessResult:
     hints = load_template_tipo_hints(template_path)
     raw_rows = extract_rows_from_txt(input_path)
     rows = normalize_parsed_rows(raw_rows, hints)
+    resolved_template = resolve_reference_template(template_path, rows)
+    effective_template_path = Path(resolved_template["path"]).resolve()
+    if effective_template_path != template_path:
+        hints = load_template_tipo_hints(effective_template_path)
+        rows = normalize_parsed_rows(raw_rows, hints)
     parse_ms = int((time.perf_counter() - started_at) * 1000)
 
     build_started = time.perf_counter()
-    workbook, summary = build_workbook_from_template(template_path, rows)
+    workbook, summary = build_workbook_from_template(effective_template_path, rows)
+    workbook.calculation.fullCalcOnLoad = True
     build_ms = int((time.perf_counter() - build_started) * 1000)
 
     write_started = time.perf_counter()
     final_output_path = write_workbook_with_retries(workbook, output_path)
-    preserve_visual_artifacts(template_path, final_output_path, len(rows))
+    preserve_visual_artifacts(effective_template_path, final_output_path, len(rows))
     remove_external_links_from_package(final_output_path)
     write_ms = int((time.perf_counter() - write_started) * 1000)
 
@@ -882,6 +1028,11 @@ def run(request: ProcessRequest) -> ProcessResult:
             "input_txt": str(input_path),
             "output_xlsx": str(final_output_path),
             "hoja_salida": SHEET_NAME,
+            "template_path_solicitada": str(template_path),
+            "template_path_utilizada": str(effective_template_path),
+            "template_auto_seleccionada": bool(resolved_template["auto_selected"]),
+            "template_match_rows": int(resolved_template["matched_rows"]),
+            "template_match_coverage": round(float(resolved_template["coverage"]), 6),
             "filas_txt": len(rows),
             "columnas_esperadas": EXPECTED_COLUMNS,
             "resumen_generado_filas": len(summary),
@@ -897,6 +1048,8 @@ def run(request: ProcessRequest) -> ProcessResult:
 
     console_lines = [
         f"TXT leido: {input_path}",
+        f"Plantilla solicitada: {template_path}",
+        f"Plantilla utilizada: {effective_template_path}",
         f"Filas parseadas: {len(rows)}",
         f"Resumen lateral: {len(summary)} filas",
         f"Rendimiento (ms): parse={parse_ms}, build={build_ms}, write={write_ms}, total={total_ms}",

@@ -1,122 +1,113 @@
 # SOFTWARECONTABILIDAD
 
-Portal operativo interno para procesos contables de `Contabilidad Talleres`.
+Portal operativo interno para procesos contables del area de Cuentas por Pagar y conciliaciones asociadas. El sistema recibe archivos `PDF`, `TXT`, `XLS` y `XLSX`, ejecuta transformaciones controladas y publica archivos finales en `storage/outputs`.
 
-Desde el **24 de marzo de 2026**, la superficie activa del sistema ya queda centrada en:
+## 1. Resumen ejecutivo
 
-- `Laravel` para navegacion, formularios, descargas, historial y orquestacion
-- `Python` para el procesamiento principal de `Libro Compras ACLT` y `Repuestos TYTSERV`
-- `PowerShell + Excel COM` solo para el worker sensible de `Servicios por Marca`
+El proyecto esta organizado alrededor del workspace `cxp` y hoy opera con tres ventanas:
 
-La estructura PHP anterior ya no es la entrada principal. La superficie web legacy fue archivada en:
+1. `Libro de Compras ACLT`
+   Incluye `Accion 1`, `Accion 2`, `Accion 3`, `Accion 4` y `Consolidado General`.
+2. `Conciliacion Servicios por Marca`
+   Procesa `CHANGAN`, `PEUGEOT`, `SUZUKI` y `MATRIZ` con jobs en segundo plano.  
+3. `Facturacion Repuestos TYTSERV`
+   Procesa ventas y devoluciones por marca y genera un consolidado mensual.
 
-- `archive/legacy_php_surface_2026-03-24`
+## 2. Arquitectura resumida
 
-## 1. Entrada operativa
+El sistema usa tres runtimes principales:
 
-Rutas publicas que deben usarse:
+- `PHP`
+  Portal web, controladores, configuracion, render de vistas, descarga y limpieza.
+- `Node.js`
+  Procesos contables de `Accion 1`, `Accion 2`, `Accion 3`, `Accion 4`, consolidado general y `Repuestos TYTSERV`.
+- `PowerShell + Excel COM`
+  Worker especializado de `Servicios por Marca`.
 
-- `/`
-- `/cxp`
-- `/cxp/windows/libro-compras-aclt`
-- `/cxp/windows/conciliacion-servicios-marcas`
-- `/cxp/windows/facturacion-repuestos-tytserv`
-- `/cxp/modules/accion1`
-- `/cxp/modules/accion2`
-- `/cxp/modules/accion3`
-- `/cxp/modules/accion4`
-- `/cxp/modules/consolidado-acciones`
-- `/cxp/modules/servicios-marcas`
-- `/cxp/modules/repuestos-tytserv`
-- `/downloads/{archivo}`
+## 3. Modulos activos
 
-En Apache/XAMPP, la raiz del proyecto actua como front controller y enruta hacia Laravel. Las rutas antiguas de `areas/`, `modules/`, `download.php` y `export_all_actions.php` ya no son la superficie principal.
+| Modulo | Entrada | Runtime | Salida |
+| --- | --- | --- | --- |
+| Accion 1 - Libro Compras Proveedores | `PDF` | `Node.js` | `.xlsx` |
+| Accion 2 - Retenciones Proveedores | `TXT` | `Node.js` | `.xlsx` |
+| Accion 3 - Mayor Retenciones | `1..n TXT` | `Node.js` | `.xlsx` |
+| Accion 4 - Mayor IVA | `TXT` | `Node.js` | `.xlsx` |
+| Consolidado General | ultimas salidas de Accion 1..4 | `Node.js` | `.xlsx` |
+| Servicios por Marca | `2 Excel comunes + 3 TXT por marca` | `PowerShell + Excel COM` | `1 .xls por marca` |
+| Repuestos TYTSERV | `4 Excel ventas + 4 Excel devoluciones` | `Node.js` | `.xlsx` |
 
-## 2. Estado funcional actual
-
-### Ventana 1: Libro Compras ACLT
-
-- `Accion 1` -> `Laravel -> Python nativo`
-- `Accion 2` -> `Laravel -> Python nativo`
-- `Accion 3` -> `Laravel -> Python nativo`
-- `Accion 4` -> `Laravel -> Python nativo`
-- `Consolidado` -> `Laravel -> Python nativo`
-
-### Ventana 2: Conciliacion Servicios por Marca
-
-- capa web -> `Laravel`
-- validacion y preflight -> `Python`
-- arranque del job -> `Laravel`
-- worker final -> `PowerShell + Excel COM`
-
-Es la ultima excepcion tecnica importante. No depende ya de la vieja superficie web PHP, pero si del worker heredado de Excel.
-
-### Ventana 3: Facturacion Repuestos TYTSERV
-
-- `Laravel -> Python nativo`
-- `Node.js` queda solo como referencia/fallback controlado de paridad
-
-## 3. Estructura activa del repositorio
+## 4. Estructura principal del repositorio
 
 | Ruta | Responsabilidad |
 | --- | --- |
-| `index.php` | front controller raiz hacia Laravel |
-| `.htaccess` | rutas limpias, redirecciones legacy y proteccion de directorios privados |
-| `laravel_app/` | aplicacion web principal |
-| `python_services/` | procesadores y bridge Python |
-| `config/cxp/` | configuracion funcional compartida |
-| `resources/cxp/` | plantillas, fixtures y contratos |
-| `storage/uploads/` | uploads temporales |
-| `storage/outputs/` | salidas finales descargables |
-| `storage/jobs/` | estado y snapshots de Servicios por Marca |
-| `archive/legacy_php_surface_2026-03-24/` | superficie PHP archivada |
-| `docs/` | documentacion tecnica y operativa |
+| `index.php` | portal principal |
+| `areas/cxp` | ventanas del workspace contable |
+| `modules/*` | entrypoints web por modulo |
+| `src/*` | controladores y soporte de aplicacion |
+| `includes/*` | bootstrap, helpers y funciones globales |
+| `config/cxp/*` | configuracion funcional por modulo |
+| `scripts/cxp/*` | procesos contables y workers |
+| `resources/cxp/*` | plantillas base y fixtures |
+| `storage/uploads` | archivos subidos temporalmente |
+| `storage/outputs` | artefactos finales descargables |
+| `storage/jobs` | estado de jobs de servicios por marca |
+| `docs/*` | documentacion operativa y tecnica |
 
-## 4. Requisitos operativos
+## 5. Rutas operativas clave
 
-- Windows con `Apache` o host equivalente para las rutas publicas
-- `PHP 8.2+` para la capa Laravel
-- `Composer` para `laravel_app`
-- `Python` disponible para `python_services`
-- `Node.js` disponible mientras se mantenga fallback de referencia
-- `Microsoft Excel Desktop` en el host de `Servicios por Marca`
+- `resources/cxp/acciones`
+  Plantillas y fixtures de `Accion 1..4`.
+- `resources/cxp/servicios_marcas`
+  Plantillas y fixtures de `Servicios por Marca`.
+- `resources/cxp/repuestos_tytserv`
+  Plantillas y fixtures de `Repuestos TYTSERV`.
+- `storage/outputs`
+  Unica ruta publica de descarga de archivos finales.
+- `storage/uploads`
+  Buffer temporal de archivos subidos.
+- `storage/jobs`
+  Cola, estado y cancelacion de jobs de `Servicios por Marca`.
 
-## 5. Pruebas clave
+## 6. Requisitos operativos
 
-- `node scripts/tests/contable_quality_gate.js`
+- Host Windows con `PHP` y `Apache` o equivalente.
+- `Node.js` instalado y disponible para los procesos `Node`.
+- `npm install` ejecutado en la raiz del proyecto.
+- `Microsoft Excel Desktop` disponible en el host que ejecuta `Servicios por Marca`.
+- Permisos de escritura en:
+  - `storage/uploads`
+  - `storage/outputs`
+  - `storage/jobs`
+
+## 7. Validacion y pruebas
+
+Comandos disponibles en `package.json`:
+
+- `npm run test:quality:contable`
+- `npm run test:e2e:accion1-4`
+- `npm run test:e2e:accion2-3`
+- `npm run test:e2e:repuestos`
 - `npm run test:e2e:servicios`
-- `node scripts/tests/http_resources_smoke.js`
-- `powershell -ExecutionPolicy Bypass -File .\\scripts\\dev\\test_laravel_app.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\\scripts\\dev\\test_laravel_window1.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\\scripts\\dev\\test_laravel_repuestos.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\\scripts\\dev\\test_laravel_servicios.ps1`
+- `npm run test:smoke:ui`
 
-## 6. Limpieza operativa
-
-La limpieza CLI ya no depende del helper legacy global.
+Limpieza operativa manual:
 
 - `php maintenance_cleanup.php`
 
-Este script conserva:
+## 8. Notas de operacion
 
-- `3` salidas por familia de proceso
-- `20` uploads recientes
+- Las salidas publicas se sirven por `download.php`.
+- `storage/outputs` conserva solo un historico corto por accion o prefijo.
+- `storage/uploads` conserva un buffer corto de archivos recientes.
+- `archive/cxp_manual_outputs` queda como historico, no como fuente operativa.
+- `Repuestos TYTSERV` usa `Node.js` como runtime web oficial.
+- `Servicios por Marca` depende de `PowerShell + Excel COM`; es el flujo mas sensible del sistema.
 
-Tambien elimina staging temporal bajo `storage/outputs`.
+## 9. Documentacion relacionada
 
-## 7. Estado de la migracion
-
-La migracion a `Laravel + Python` queda funcionalmente cerrada para la operacion diaria. Lo que sigue fuera de Python no es la vieja web PHP, sino el worker sensible de:
-
-- `scripts/cxp/servicios_marcas/run.ps1`
-
-Ese flujo permanece asi por estabilidad operativa con `Excel COM`.
-
-## 8. Documentacion relacionada
-
-- `docs/ARQUITECTURA_CXP.md`
-- `docs/MIGRACION_LARAVEL_PYTHON_2026-03-24.md`
-- `docs/SUPERFICIE_LEGACY_WEB_2026-03-24.md`
-- `docs/CHECKLIST_DEPLOY_CONTABLE.md`
-- `docs/OPERACION_CXP.md`
-- `docs/MODULOS_CXP.md`
+- [`docs/PLAN_DOCUMENTACION_CXP.md`](docs/PLAN_DOCUMENTACION_CXP.md)
+- [`docs/ARQUITECTURA_CXP.md`](docs/ARQUITECTURA_CXP.md)
+- [`docs/MODULOS_CXP.md`](docs/MODULOS_CXP.md)
+- [`docs/OPERACION_CXP.md`](docs/OPERACION_CXP.md)
+- [`docs/BITACORA_AVANCES.md`](docs/BITACORA_AVANCES.md)
+- [`docs/CHECKLIST_DEPLOY_CONTABLE.md`](docs/CHECKLIST_DEPLOY_CONTABLE.md)

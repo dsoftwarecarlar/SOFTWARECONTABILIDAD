@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from copy import copy
 from pathlib import Path
 from typing import Any
 
+from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..contracts import ProcessRequest, ProcessResult
@@ -24,11 +26,12 @@ from .my_stage import (
     sum_column,
     write_date_cell,
 )
-from .workbook_tools import load_workbook_quiet
+from .workbook_tools import copy_row_style, load_workbook_quiet
 
 DETAIL_START_ROW = 299
 DETAIL_END_ROW = 366
 LAST_COLUMN = 10
+SUMMARY_ROW_START = 367
 
 
 def get_family_order(detail: str) -> int:
@@ -121,23 +124,53 @@ def clear_dynamic_columns(worksheet: Worksheet, start_row: int, end_row: int) ->
             worksheet.cell(row=row, column=column).value = None if column in (4, 6, 7, 10) else 0
 
 
-def update_summary_rows(worksheet: Worksheet) -> None:
-    debit_all = sum_column(worksheet, 2, DETAIL_END_ROW, 8)
-    credit_all = sum_column(worksheet, 2, DETAIL_END_ROW, 9)
-    debit_window = sum_column(worksheet, 283, DETAIL_END_ROW, 8)
-    credit_window = sum_column(worksheet, 283, DETAIL_END_ROW, 9)
+def copy_row_values(worksheet: Worksheet, source_row: int, target_row: int) -> None:
+    for column in range(1, LAST_COLUMN + 1):
+        source_cell = worksheet.cell(row=source_row, column=column)
+        target_cell = worksheet.cell(row=target_row, column=column)
+        if isinstance(source_cell, MergedCell) or isinstance(target_cell, MergedCell):
+            continue
+        target_cell.value = copy(source_cell.value)
 
-    clear_row_values(worksheet, 367, LAST_COLUMN)
-    clear_row_values(worksheet, 368, LAST_COLUMN)
-    clear_row_values(worksheet, 369, LAST_COLUMN)
-    clear_row_values(worksheet, 370, LAST_COLUMN)
 
-    worksheet.cell(row=367, column=8).value = debit_all
-    worksheet.cell(row=367, column=9).value = credit_all
-    worksheet.cell(row=368, column=9).value = round_amount(credit_all - debit_all, 2)
-    worksheet.cell(row=369, column=8).value = debit_window
-    worksheet.cell(row=369, column=9).value = credit_window
-    worksheet.cell(row=370, column=9).value = round_amount(credit_window - debit_window, 2)
+def ensure_mayor_iva_capacity(worksheet: Worksheet, required_rows: int) -> dict[str, int]:
+    base_capacity = DETAIL_END_ROW - DETAIL_START_ROW + 1
+    extra_rows = max(0, required_rows - base_capacity)
+    if extra_rows > 0:
+        insert_row = DETAIL_END_ROW + 1
+        worksheet.insert_rows(insert_row, amount=extra_rows)
+        for row in range(insert_row, insert_row + extra_rows):
+            copy_row_style(worksheet, worksheet, DETAIL_END_ROW, row, LAST_COLUMN)
+            copy_row_values(worksheet, DETAIL_END_ROW, row)
+
+    return {
+        "detail_end_row": DETAIL_END_ROW + extra_rows,
+        "summary_row_start": SUMMARY_ROW_START + extra_rows,
+    }
+
+
+def update_summary_rows(
+    worksheet: Worksheet,
+    *,
+    detail_end_row: int = DETAIL_END_ROW,
+    summary_start_row: int = SUMMARY_ROW_START,
+) -> None:
+    debit_all = sum_column(worksheet, 2, detail_end_row, 8)
+    credit_all = sum_column(worksheet, 2, detail_end_row, 9)
+    debit_window = sum_column(worksheet, 283, detail_end_row, 8)
+    credit_window = sum_column(worksheet, 283, detail_end_row, 9)
+
+    clear_row_values(worksheet, summary_start_row, LAST_COLUMN)
+    clear_row_values(worksheet, summary_start_row + 1, LAST_COLUMN)
+    clear_row_values(worksheet, summary_start_row + 2, LAST_COLUMN)
+    clear_row_values(worksheet, summary_start_row + 3, LAST_COLUMN)
+
+    worksheet.cell(row=summary_start_row, column=8).value = debit_all
+    worksheet.cell(row=summary_start_row, column=9).value = credit_all
+    worksheet.cell(row=summary_start_row + 1, column=9).value = round_amount(credit_all - debit_all, 2)
+    worksheet.cell(row=summary_start_row + 2, column=8).value = debit_window
+    worksheet.cell(row=summary_start_row + 2, column=9).value = credit_window
+    worksheet.cell(row=summary_start_row + 3, column=9).value = round_amount(credit_window - debit_window, 2)
 
 
 def run(request: ProcessRequest) -> ProcessResult:
@@ -170,13 +203,11 @@ def run(request: ProcessRequest) -> ProcessResult:
     worksheet = workbook["MAYOR IVA"]
     template_values_sheet = template_values["MAYOR IVA"]
     entries = build_mayor_iva_entries(rep_groups_by_key, nc_groups_by_key)
-    capacity = DETAIL_END_ROW - DETAIL_START_ROW + 1
-    if len(entries) > capacity:
-        raise RuntimeError(
-            f"La hoja MAYOR IVA no tiene capacidad suficiente. Capacidad={capacity}, requeridas={len(entries)}."
-        )
+    layout = ensure_mayor_iva_capacity(worksheet, len(entries))
+    detail_end_row = int(layout["detail_end_row"])
+    summary_row_start = int(layout["summary_row_start"])
 
-    clear_dynamic_columns(worksheet, DETAIL_START_ROW, DETAIL_END_ROW)
+    clear_dynamic_columns(worksheet, DETAIL_START_ROW, detail_end_row)
     opening_balance = get_opening_balance(template_values_sheet)
     running_balance = opening_balance
 
@@ -195,10 +226,14 @@ def run(request: ProcessRequest) -> ProcessResult:
         )
         worksheet.cell(row=row_number, column=10).value = running_balance
 
-    for row in range(DETAIL_START_ROW + len(entries), DETAIL_END_ROW + 1):
+    for row in range(DETAIL_START_ROW + len(entries), detail_end_row + 1):
         worksheet.cell(row=row, column=10).value = None
 
-    update_summary_rows(worksheet)
+    update_summary_rows(
+        worksheet,
+        detail_end_row=detail_end_row,
+        summary_start_row=summary_row_start,
+    )
 
     output_path = request.output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,5 +245,7 @@ def run(request: ProcessRequest) -> ProcessResult:
         metadata={
             "runtime": "python-native-mayor-iva-stage",
             "rows": len(entries),
+            "detail_end_row": detail_end_row,
+            "summary_row_start": summary_row_start,
         },
     )

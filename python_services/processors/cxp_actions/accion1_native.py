@@ -782,6 +782,7 @@ def load_reference_workbook_copy(template_path: Path) -> Any:
             workbook.remove(workbook[sheet_name])
     if workbook.sheetnames != [SHEET_NAME]:
         raise RuntimeError("La plantilla de referencia de Accion 1 debe contener la hoja LIBRO COMPRAS.")
+    workbook.calculation.fullCalcOnLoad = True
     return workbook
 
 
@@ -897,15 +898,15 @@ def run(request: ProcessRequest) -> ProcessResult:
         if use_reference_clone
         else build_styled_workbook(effective_template_path, aoa, meta)
     )
+    if use_reference_clone:
+        apply_computed_totals(workbook[SHEET_NAME], meta)
+    workbook.calculation.fullCalcOnLoad = True
     build_ms = int((time.perf_counter() - build_started) * 1000)
 
     write_started = time.perf_counter()
     final_output_path = write_workbook_with_retries(workbook, output_path)
     remove_external_links_from_package(final_output_path)
-    if use_reference_clone:
-        verify_reference_clone_output(final_output_path, effective_template_path)
-    else:
-        verify_output_workbook(final_output_path, meta)
+    verify_output_workbook(final_output_path, meta)
     write_ms = int((time.perf_counter() - write_started) * 1000)
     total_ms = int((time.perf_counter() - started_at) * 1000)
 

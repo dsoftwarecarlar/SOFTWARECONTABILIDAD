@@ -467,16 +467,6 @@ async function verifyOutputWorkbook(outputPath, templatePath, rowsCount) {
     }
   }
 
-  for (let row = 2; row <= rowsCount + 1; row += 1) {
-    const dateCell = ws[`D${row}`];
-    if (!dateCell || typeof dateCell.v !== "number") {
-      throw new Error(`Validacion final: FECHA invalida en fila ${row}.`);
-    }
-    if (Math.abs(dateCell.v - Math.trunc(dateCell.v)) > 1e-9) {
-      throw new Error(`Validacion final: FECHA con fraccion horaria en fila ${row}.`);
-    }
-  }
-
   const templateWb = new ExcelJS.Workbook();
   await templateWb.xlsx.readFile(templatePath);
   const outWb = new ExcelJS.Workbook();

@@ -328,7 +328,7 @@ return [
                 'brand' => 'changan',
             ],
             'mayor_changan_file' => [
-                'label' => 'MAYOR CHANGAN',
+                'label' => 'MAYOR VENTAS CHANGAN',
                 'example_name' => 'CON_MAYORGEN2CHAN',
                 'accept' => ['txt'],
                 'scope' => 'brand',
@@ -349,7 +349,7 @@ return [
                 'brand' => 'peug',
             ],
             'mayor_peug_file' => [
-                'label' => 'MAYOR PEUGEOT',
+                'label' => 'MAYOR VENTAS PEUGEOT',
                 'example_name' => 'CON_MAYORGEN2PEU',
                 'accept' => ['txt'],
                 'scope' => 'brand',
@@ -370,7 +370,7 @@ return [
                 'brand' => 'szk',
             ],
             'mayor_szk_file' => [
-                'label' => 'MAYOR SUZUKI',
+                'label' => 'MAYOR VENTAS SUZUKI',
                 'example_name' => 'CON_MAYORGEN2SUZ',
                 'accept' => ['txt'],
                 'scope' => 'brand',
@@ -391,7 +391,7 @@ return [
                 'brand' => 'tyt',
             ],
             'mayor_tyt_file' => [
-                'label' => 'MAYOR MATRIZ',
+                'label' => 'MAYOR VENTAS MATRIZ',
                 'example_name' => 'CON_MAYORGEN2TOY',
                 'accept' => ['txt'],
                 'scope' => 'brand',

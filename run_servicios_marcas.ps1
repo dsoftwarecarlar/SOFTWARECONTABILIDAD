@@ -1006,6 +1006,75 @@ function Split-MayorUnmappedAccounts {
     }
 }
 
+function Get-MayorAccountDescriptions {
+    param(
+        [object[]]$MayorRows,
+        [string[]]$Accounts
+    )
+
+    $namesByAccount = @{}
+    foreach ($row in @($MayorRows)) {
+        $account = Normalize-Text $row.account
+        if ($account -eq '' -or $namesByAccount.ContainsKey($account)) {
+            continue
+        }
+
+        $namesByAccount[$account] = Normalize-Text $row.name
+    }
+
+    $descriptions = New-Object System.Collections.Generic.List[string]
+    foreach ($account in @($Accounts)) {
+        $normalized = Normalize-Text $account
+        if ($normalized -eq '') {
+            continue
+        }
+
+        $accountName = if ($namesByAccount.ContainsKey($normalized)) { $namesByAccount[$normalized] } else { '' }
+        $descriptions.Add($(if ($accountName -ne '') { "{0} ({1})" -f $normalized, $accountName } else { $normalized })) | Out-Null
+    }
+
+    return $descriptions.ToArray()
+}
+
+function Assert-MayorMatchesTemplate {
+    param(
+        [string]$BrandKey,
+        [string]$MayorPath,
+        [object[]]$MayorRows,
+        [object]$MayorResult,
+        [string]$WorksheetName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MayorPath) -or -not (Test-Path -LiteralPath $MayorPath)) {
+        return
+    }
+
+    $brandLabel = Get-BrandDisplayLabel -BrandKey $BrandKey
+    if (@($MayorRows).Count -eq 0) {
+        throw ("El archivo MAYOR de {0} no contiene movimientos validos para poblar {1}. Verifica que corresponda al mayor de ventas del periodo." -f $brandLabel, $WorksheetName)
+    }
+
+    if ($null -eq $MayorResult) {
+        throw ("No se pudo validar el archivo MAYOR de {0} para {1}." -f $brandLabel, $WorksheetName)
+    }
+
+    $unmappedSplit = Split-MayorUnmappedAccounts -Accounts @($MayorResult.UnmappedAccounts)
+    if (@($unmappedSplit.Warning).Count -gt 0) {
+        Write-Output ("WARN|mayor_unmapped_compatible|{0}|accounts={1}" -f $BrandKey, ((@($unmappedSplit.Warning) | Select-Object -Unique) -join ', '))
+    }
+
+    if ([int]($MayorResult.RowCount) -le 0) {
+        $ignoredAccounts = if (@($unmappedSplit.Fatal).Count -gt 0) { @($unmappedSplit.Fatal | Select-Object -Unique) } else { @($MayorResult.UnmappedAccounts | Select-Object -Unique) }
+        $accountList = (Get-MayorAccountDescriptions -MayorRows $MayorRows -Accounts $ignoredAccounts) -join ', '
+        throw ("El archivo MAYOR de {0} no genero filas utiles en {1}. Cuentas detectadas sin seccion util: {2}. Debes subir el MAYOR VENTAS con cuentas 04.01.01.xx.xxxx." -f $brandLabel, $WorksheetName, $accountList)
+    }
+
+    if (@($unmappedSplit.Fatal).Count -gt 0) {
+        $accountList = (Get-MayorAccountDescriptions -MayorRows $MayorRows -Accounts @($unmappedSplit.Fatal | Select-Object -Unique)) -join ', '
+        Write-Output ("WARN|mayor_accounts_ignored|{0}|accounts={1}" -f $BrandKey, $accountList)
+    }
+}
+
 function Read-TabRows {
     param([string]$Path)
 
@@ -5324,6 +5393,7 @@ try {
         $outputWorkbook = Open-Workbook-WithRetry -Excel $excel -Path $outputPath -ReadOnly $false
         $openOutputStopwatch.Stop()
         Write-Output ("INFO|open_output_ms|{0}|{1}" -f $templateKey, $openOutputStopwatch.ElapsedMilliseconds)
+        $saveOutputWorkbook = $false
         $repSheet = $null
         $noteSheet = $null
         $repVtasSheet = $null
@@ -5379,6 +5449,7 @@ try {
                 }
 
                 $mayorResult = Write-MayorRows-ToWorksheet -Worksheet $mayorSheet -Rows $mayorRows -BrandKey $templateKey
+                Assert-MayorMatchesTemplate -BrandKey $templateKey -MayorPath $mayorPath -MayorRows $mayorRows -MayorResult $mayorResult -WorksheetName $mayorSheet.Name
                 $fillMayorStopwatch.Stop()
                 Write-Output ("INFO|fill_mayor_ms|{0}|{1}" -f $templateKey, $fillMayorStopwatch.ElapsedMilliseconds)
                 if ($mayorRows.Count -gt 0) {
@@ -5542,6 +5613,7 @@ try {
             $saveStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             Write-Output ("INFO|save_begin|{0}" -f $templateKey)
             Save-Workbook-WithRetry -Workbook $outputWorkbook -PathForError $outputPath
+            $saveOutputWorkbook = $true
             Write-Output ("INFO|save_done|{0}" -f $templateKey)
             $saveStopwatch.Stop()
             Write-Output ("INFO|save_ms|{0}|{1}" -f $templateKey, $saveStopwatch.ElapsedMilliseconds)
@@ -5569,8 +5641,13 @@ try {
                 [void][Runtime.Interopservices.Marshal]::ReleaseComObject($repSheet)
                 $repSheet = $null
             }
-            $outputWorkbook.Close($true)
-            [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputWorkbook)
+            if ($null -ne $outputWorkbook) {
+                $outputWorkbook.Close($saveOutputWorkbook)
+                [void][Runtime.Interopservices.Marshal]::ReleaseComObject($outputWorkbook)
+                if (-not $saveOutputWorkbook -and (Test-Path -LiteralPath $outputPath)) {
+                    Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
+                }
+            }
             if ($null -ne $templateWorkbook) {
                 $templateWorkbook.Close($false)
                 [void][Runtime.Interopservices.Marshal]::ReleaseComObject($templateWorkbook)
