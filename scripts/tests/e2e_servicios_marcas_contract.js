@@ -192,29 +192,33 @@ function filterMayorRowsForWorkbook(rows) {
   return rows.filter((row) => !isMayorPxAdjustmentRow(row));
 }
 
-function classifyMayorControlBucket(row) {
-  const account = String(row.account || "").trim();
-  const name = String(row.name || "").trim().toUpperCase();
+function classifyControlBucket(accountValue, nameValue) {
+  const account = String(accountValue || "").trim();
+  const name = String(nameValue || "").trim().toUpperCase();
+  const compact = compactAccountCode(account);
   if (!account && !name) {
     return "";
   }
-  if (/^01\.01\.05\.\d{2}\.\d{4}$/.test(account) || name.includes("GARANT")) {
+  if (/^010105\d{2}\d{4}$/.test(compact) || name.includes("GARANT")) {
     return "guarantee";
   }
-  if (!/^04\.01\.01\.\d{2}\.\d{4}$/.test(account)) {
+  if (!/^040101\d{2}\d{4}$/.test(compact)) {
     return "";
   }
-  const suffix = account.split(".").pop() || "";
+  const suffix = compact.slice(-4);
   if (suffix === "0014" || name.includes("DEVOL")) {
     return "return";
   }
   if (["0010", "0011", "0012"].includes(suffix) || name.includes("DESC")) {
     return "discount";
   }
-  return "sales";
+  if (["0001", "0002", "0003"].includes(suffix) || name.includes("VTAS")) {
+    return "sales";
+  }
+  return "";
 }
 
-function getMayorControlMetrics(rows) {
+function getControlMetrics(rows, { accountKey, nameKey, debitKey, creditKey }) {
   const metrics = {
     InvoiceSales: 0,
     InvoiceDiscounts: 0,
@@ -224,9 +228,9 @@ function getMayorControlMetrics(rows) {
   };
 
   for (const row of rows) {
-    const bucket = classifyMayorControlBucket(row);
-    const debit = Number(row.debit || 0);
-    const credit = Number(row.credit || 0);
+    const bucket = classifyControlBucket(row[accountKey], row[nameKey]);
+    const debit = Number(row[debitKey] || 0);
+    const credit = Number(row[creditKey] || 0);
     if (bucket === "sales") {
       metrics.InvoiceSales += credit;
       metrics.NetSales += credit - debit;
@@ -245,6 +249,15 @@ function getMayorControlMetrics(rows) {
   }
 
   return Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, round2(value)]));
+}
+
+function getMayorControlMetrics(rows) {
+  return getControlMetrics(rows, {
+    accountKey: "account",
+    nameKey: "name",
+    debitKey: "debit",
+    creditKey: "credit",
+  });
 }
 
 function startPhpServer() {
@@ -590,6 +603,45 @@ function cellNumber(sheet, row, column) {
   return round2(parseDecimalLike(cellText(sheet, row, column)));
 }
 
+function sheetRows(sheet) {
+  return XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
+}
+
+function readWorkbookMayorMetrics(workbook) {
+  const mayorSheet = findSheet(workbook, ["MAY VTAS", "VENTAS"]);
+  assertCondition(!!mayorSheet, "Servicios: la salida no contiene MAY VTAS/VENTAS para validar controles.");
+  const rows = sheetRows(mayorSheet)
+    .map((row) => (Array.isArray(row) ? row : []))
+    .map((row) => ({
+      account: String(row[0] || "").trim(),
+      name: String(row[1] || "").trim(),
+      debit: parseDecimalLike(row[8]),
+      credit: parseDecimalLike(row[9]),
+    }))
+    .filter((row) => row.account !== "");
+  return getMayorControlMetrics(rows);
+}
+
+function readWorkbookPrecontMetrics(workbook) {
+  const precontSheet = findSheet(workbook, ["PrecontabilizacionVentas"]);
+  assertCondition(!!precontSheet, "Servicios: la salida no contiene PrecontabilizacionVentas para validar controles.");
+  const rows = sheetRows(precontSheet)
+    .map((row) => (Array.isArray(row) ? row : []))
+    .map((row) => ({
+      Account: String(row[4] || "").trim(),
+      Description: String(row[5] || "").trim(),
+      Debit: parseDecimalLike(row[7]),
+      Credit: parseDecimalLike(row[8]),
+    }))
+    .filter((row) => row.Account !== "");
+  return getControlMetrics(rows, {
+    accountKey: "Account",
+    nameKey: "Description",
+    debitKey: "Debit",
+    creditKey: "Credit",
+  });
+}
+
 function findSheet(workbook, candidates) {
   for (const candidate of candidates) {
     if (workbook.Sheets[candidate]) {
@@ -840,13 +892,16 @@ async function runServiciosContract() {
     assertSeedColumnsMatch(estadisticasSheet, templateEstadisticasSheet, [6, 131, 222, 290, 365], [1, 2, 5, 6, 8], "ESTADISTICAS");
     assertPrecontCostos2Seeds(precontCostos2Sheet, templatePrecontCostos2Sheet);
 
-    const mayorMetrics = getMayorControlMetrics(filterMayorRowsForWorkbook(readMayorRows(serviciosFixturePath("mayor_tyt"))));
-    assertClose(cellNumber(repFactSheet, 9, 4), mayorMetrics.InvoiceSales, "Servicios REP FACTURACION D9");
-    assertClose(cellNumber(repFactSheet, 9, 5), mayorMetrics.InvoiceDiscounts, "Servicios REP FACTURACION E9");
+    const mayorMetrics = readWorkbookMayorMetrics(workbook);
+    const precontMetrics = readWorkbookPrecontMetrics(workbook);
+    assertClose(cellNumber(repFactSheet, 9, 4), precontMetrics.InvoiceSales, "Servicios REP FACTURACION D9");
+    assertClose(cellNumber(repFactSheet, 9, 5), precontMetrics.InvoiceDiscounts, "Servicios REP FACTURACION E9");
+    assertClose(cellNumber(repFactSheet, 9, 10), mayorMetrics.InvoiceSales, "Servicios REP FACTURACION J9");
+    assertClose(cellNumber(repFactSheet, 9, 11), mayorMetrics.InvoiceDiscounts, "Servicios REP FACTURACION K9");
     assertClose(cellNumber(notaSheet, 4, 4), mayorMetrics.NoteSales, "Servicios NOTA DE CREDITO D4");
     assertClose(cellNumber(notaSheet, 4, 5), mayorMetrics.NoteDiscounts, "Servicios NOTA DE CREDITO E4");
-    assertClose(cellNumber(notaSheet, 4, 6), mayorMetrics.NoteSales, "Servicios NOTA DE CREDITO F4");
-    assertClose(cellNumber(notaSheet, 4, 7), mayorMetrics.NoteDiscounts, "Servicios NOTA DE CREDITO G4");
+    assertClose(cellNumber(notaSheet, 4, 6), precontMetrics.NoteSales, "Servicios NOTA DE CREDITO F4");
+    assertClose(cellNumber(notaSheet, 4, 7), precontMetrics.NoteDiscounts, "Servicios NOTA DE CREDITO G4");
     assertClose(cellNumber(repVtasSheet, 6, 4), mayorMetrics.NetSales, "Servicios REP VTAS D6");
     assertClose(cellNumber(repVtasSheet, 6, 5), cellNumber(costoSheet, 4, 10), "Servicios REP VTAS E6");
 

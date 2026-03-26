@@ -189,6 +189,13 @@ def get_compact_account_code(value: Any) -> str:
     return digits
 
 
+def format_account_code(value: Any) -> str:
+    compact = get_compact_account_code(value)
+    if re.fullmatch(r"\d{12}", compact or "") is not None:
+        return f"{compact[0:2]}.{compact[2:4]}.{compact[4:6]}.{compact[6:8]}.{compact[8:12]}"
+    return normalize_text(value)
+
+
 def get_normalized_center_code(value: Any) -> str:
     text = normalize_text(value)
     if text == "":
@@ -309,6 +316,8 @@ def get_iva_buckets(row: dict[str, Any], net_base: float) -> dict[str, float]:
 
 
 def get_invoice_source_amounts(row: dict[str, Any]) -> dict[str, float]:
+    subtotal_source = abs(to_number(row.get("Subtotal")))
+    discount_source = abs(to_number(row.get("Discount"))) or abs(to_number(row.get("NoteCredit")))
     subtotal_raw = (
         abs(to_number(row.get("TotalManoObra")))
         + abs(to_number(row.get("TotalSubcontratos")))
@@ -316,14 +325,17 @@ def get_invoice_source_amounts(row: dict[str, Any]) -> dict[str, float]:
         + abs(to_number(row.get("TotalAccesorios")))
         + abs(to_number(row.get("TotalRepuestos")))
     )
-    subtotal = round_amount(subtotal_raw)
-    discount = round_amount(abs(to_number(row.get("NoteCredit"))))
-    neto_con_iva = round_amount(subtotal - discount)
+    subtotal = round_amount(subtotal_source if subtotal_source > 0 else subtotal_raw)
+    discount = round_amount(discount_source)
+    neto_con_iva_source = abs(to_number(row.get("NetoConIva")))
+    neto_con_iva = round_amount(neto_con_iva_source if neto_con_iva_source > 0 else subtotal - discount)
     iva_buckets = get_iva_buckets(row, neto_con_iva)
     iva_amount = float(iva_buckets["Total"])
-    interest_amount = round_amount(abs(to_number(row.get("Interes"))))
-    total_amount = round_amount(neto_con_iva + iva_amount + interest_amount)
-    neto_iva0 = neto_con_iva if round_amount(abs(iva_amount)) == 0 else 0.0
+    interest_amount = round_amount(abs(to_number(row.get("Interest"))) or abs(to_number(row.get("Interes"))))
+    total_source = abs(to_number(row.get("Total")))
+    total_amount = round_amount(total_source if total_source > 0 else neto_con_iva + iva_amount + interest_amount)
+    neto_iva0_source = abs(to_number(row.get("NetoIva0")))
+    neto_iva0 = round_amount(neto_iva0_source if neto_iva0_source > 0 else (neto_con_iva if round_amount(abs(iva_amount)) == 0 else 0.0))
     return {
         "Total": float(total_amount),
         "Iva": float(iva_amount),
@@ -338,6 +350,8 @@ def get_invoice_source_amounts(row: dict[str, Any]) -> dict[str, float]:
 
 
 def get_note_source_amounts(row: dict[str, Any]) -> dict[str, float]:
+    subtotal_source = abs(to_number(row.get("Subtotal")))
+    discount_source = abs(to_number(row.get("Discount"))) or abs(to_number(row.get("NoteCredit")))
     subtotal_raw = (
         abs(to_number(row.get("TotalManoObra")))
         + abs(to_number(row.get("TotalSubcontratos")))
@@ -345,14 +359,17 @@ def get_note_source_amounts(row: dict[str, Any]) -> dict[str, float]:
         + abs(to_number(row.get("TotalAccesorios")))
         + abs(to_number(row.get("TotalRepuestos")))
     )
-    subtotal = round_amount(subtotal_raw)
-    discount = round_amount(abs(to_number(row.get("NoteCredit"))))
-    neto_con_iva = round_amount(subtotal - discount)
+    subtotal = round_amount(subtotal_source if subtotal_source > 0 else subtotal_raw)
+    discount = round_amount(discount_source)
+    neto_con_iva_source = abs(to_number(row.get("NetoConIva")))
+    neto_con_iva = round_amount(neto_con_iva_source if neto_con_iva_source > 0 else subtotal - discount)
     iva_buckets = get_iva_buckets(row, neto_con_iva)
     iva_amount = float(iva_buckets["Total"])
-    interest_amount = round_amount(abs(to_number(row.get("Interes"))))
-    total_amount = round_amount(neto_con_iva + iva_amount + interest_amount)
-    neto_sin_iva = neto_con_iva if round_amount(abs(iva_amount)) == 0 else 0.0
+    interest_amount = round_amount(abs(to_number(row.get("Interest"))) or abs(to_number(row.get("Interes"))))
+    total_source = abs(to_number(row.get("Total")))
+    total_amount = round_amount(total_source if total_source > 0 else neto_con_iva + iva_amount + interest_amount)
+    neto_sin_iva_source = abs(to_number(row.get("NetoSinIva")))
+    neto_sin_iva = round_amount(neto_sin_iva_source if neto_sin_iva_source > 0 else (neto_con_iva if round_amount(abs(iva_amount)) == 0 else 0.0))
     anticipo = round_amount(abs(to_number(row.get("Anticipo"))))
     neto = round_amount(abs(to_number(row.get("Neto"))))
     if neto == 0.0:
@@ -428,8 +445,11 @@ def parse_tab_file(path: Path | None, kind: str = "") -> list[dict[str, Any]]:
                     "Cliente": normalize_text(columns[24]),
                     "Sub total": normalize_text(columns[25]),
                     "Des-cuento": normalize_text(columns[26]),
+                    "Neto con IVA": normalize_text(columns[27]),
+                    "Neto Iva 0": normalize_text(columns[28]),
                     "Iva 12%": normalize_text(columns[29]),
                     "Iva 15%": normalize_text(columns[30]),
+                    "Inte-reses": normalize_text(columns[31]),
                     "Total": normalize_text(columns[32]),
                     "Asiento": normalize_text(columns[33]),
                     "Gar.Ext.": normalize_text(columns[34]),
@@ -456,8 +476,11 @@ def parse_tab_file(path: Path | None, kind: str = "") -> list[dict[str, Any]]:
                     "Cliente": normalize_text(columns[27]),
                     "Sub total": normalize_text(columns[28]),
                     "Des-cuento": normalize_text(columns[29]),
+                    "Netosin Iva": normalize_text(columns[30]),
+                    "Netocon Iva": normalize_text(columns[31]),
                     "Iva 15%": normalize_text(columns[32]),
                     "Iva 12 %": normalize_text(columns[33]),
+                    "Interes": normalize_text(columns[34]),
                     "Total": normalize_text(columns[35]),
                     "Anticipo": normalize_text(columns[36]),
                     "NETO": normalize_text(columns[37]),
@@ -561,6 +584,11 @@ def build_source_rows_from_brand_inputs(brand_file_map: dict[str, dict[str, Path
                     "Authorization": "",
                     "DateFactValue": date_fact_value,
                     "DateNoteValue": date_note_value,
+                    "Subtotal": subtotal or 0.0,
+                    "Discount": discount or 0.0,
+                    "NetoConIva": neto_con_iva or 0.0,
+                    "NetoSinIva": neto_sin_iva or 0.0,
+                    "NetoIva0": neto_iva0 or 0.0,
                     "NoteCredit": note_credit or 0.0,
                     "TotalManoObra": mano_obra or subtotal or 0.0,
                     "TotalSubcontratos": 0.0,
@@ -668,6 +696,13 @@ def normalize_source_rows(rows: list[dict[str, Any]], consolidate_invoice_docume
 
     if consolidate_invoice_documents:
         sum_fields = [
+            "Subtotal",
+            "Discount",
+            "NetoConIva",
+            "NetoSinIva",
+            "NetoIva0",
+            "Anticipo",
+            "Neto",
             "NoteCredit",
             "TotalManoObra",
             "TotalSubcontratos",
@@ -1233,30 +1268,106 @@ def get_px_detail_ranges(worksheet: Any) -> list[dict[str, int]]:
     return sorted(ranges, key=lambda item: item["StartRow"])
 
 
-def get_mayor_account_family_key(account: str) -> str:
-    normalized = normalize_text(account)
-    match = re.fullmatch(r"(\d{2}\.\d{2}\.\d{2}\.\d{2})\.(\d{4})", normalized)
+def mayor_brand_allows_flexible_account_mapping(brand_key: str) -> bool:
+    return normalize_text(brand_key).lower() in {"tyt"}
+
+
+def get_sales_account_family_key(account: Any, ignore_prefix: bool = False) -> str:
+    compact = get_compact_account_code(account)
+    match = re.fullmatch(r"(040101\d{2})(\d{4})", compact)
     if match is None:
-        return normalized
+        return normalize_text(account)
     prefix, suffix = match.groups()
+    family_prefix = "*" if ignore_prefix else prefix
     if suffix in {"0001", "0002", "0003"}:
-        return f"{prefix}|VENTA"
-    if suffix in {"0010", "0012"}:
-        return f"{prefix}|DESCUENTO"
+        return f"{family_prefix}|VENTA"
+    if suffix in {"0010", "0011", "0012"}:
+        return f"{family_prefix}|DESCUENTO"
     if suffix == "0014":
-        return f"{prefix}|DEVOLUCION"
-    return f"{prefix}|{suffix}"
+        return f"{family_prefix}|DEVOLUCION"
+    return f"{family_prefix}|{suffix}"
 
 
-def resolve_mayor_compatible_layout(account: str, layouts: list[dict[str, Any]], rows_by_layout_key: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
-    family_key = get_mayor_account_family_key(account)
-    if family_key == "":
-        return None
-    candidates = [
-        layout
-        for layout in layouts
-        if get_mayor_account_family_key(str(layout["Account"])) == family_key
-    ]
+def get_mayor_account_family_key(account: str, ignore_prefix: bool = False) -> str:
+    return get_sales_account_family_key(account, ignore_prefix=ignore_prefix)
+
+
+def get_sales_account_suffix_key(account: Any, ignore_prefix: bool = False) -> str:
+    compact = get_compact_account_code(account)
+    match = re.fullmatch(r"(040101\d{2})(\d{4})", compact)
+    if match is None:
+        return normalize_text(account)
+    prefix, suffix = match.groups()
+    return f"{'*' if ignore_prefix else prefix}|{suffix}"
+
+
+def get_mayor_account_suffix_key(account: str, ignore_prefix: bool = False) -> str:
+    return get_sales_account_suffix_key(account, ignore_prefix=ignore_prefix)
+
+
+def classify_sales_control_bucket(account: Any, name: Any) -> str:
+    account_text = normalize_text(account)
+    name_text = normalize_text(name).upper()
+    compact = get_compact_account_code(account_text)
+    if account_text == "" and name_text == "":
+        return ""
+    if re.fullmatch(r"010105\d{2}\d{4}", compact) or "GARANT" in name_text:
+        return "guarantee"
+    if re.fullmatch(r"040101\d{2}\d{4}", compact) is None:
+        return ""
+    suffix = compact[-4:]
+    if suffix == "0014" or "DEVOL" in name_text:
+        return "return"
+    if suffix in {"0010", "0011", "0012"} or "DESC" in name_text:
+        return "discount"
+    if suffix in {"0001", "0002", "0003"} or "VTAS" in name_text:
+        return "sales"
+    return ""
+
+
+def get_mayor_account_layout_bucket(account: Any, name: Any) -> str:
+    bucket = classify_sales_control_bucket(account, name)
+    return bucket if bucket in {"sales", "discount", "return"} else ""
+
+
+def get_control_metrics_from_rows(
+    rows: list[dict[str, Any]],
+    *,
+    account_key: str,
+    name_key: str,
+    debit_key: str,
+    credit_key: str,
+) -> dict[str, float]:
+    metrics = {
+        "InvoiceSales": 0.0,
+        "InvoiceDiscounts": 0.0,
+        "NoteSales": 0.0,
+        "NoteDiscounts": 0.0,
+        "NetSales": 0.0,
+    }
+    for row in rows:
+        bucket = classify_sales_control_bucket(row.get(account_key), row.get(name_key))
+        debit = to_number(row.get(debit_key))
+        credit = to_number(row.get(credit_key))
+        if bucket == "sales":
+            metrics["InvoiceSales"] += credit
+            metrics["NetSales"] += credit - debit
+            continue
+        if bucket == "discount":
+            metrics["InvoiceDiscounts"] += debit
+            metrics["NoteDiscounts"] += credit
+            metrics["NetSales"] += credit - debit
+            continue
+        if bucket == "return":
+            metrics["NoteSales"] += debit
+            metrics["NetSales"] += credit - debit
+    return {key: float(round_amount(value)) for key, value in metrics.items()}
+
+
+def select_mayor_layout_candidate(
+    candidates: list[dict[str, Any]],
+    rows_by_layout_key: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
     candidates.sort(key=lambda item: (-(int(item["EndRow"]) - int(item["StartRow"]) + 1), int(item["StartRow"])))
     if not candidates:
         return None
@@ -1267,6 +1378,49 @@ def resolve_mayor_compatible_layout(account: str, layouts: list[dict[str, Any]],
         if existing < capacity:
             return candidate
     return candidates[0]
+
+
+def resolve_mayor_compatible_layout(
+    account: str,
+    name: Any,
+    layouts: list[dict[str, Any]],
+    rows_by_layout_key: dict[str, list[dict[str, Any]]],
+    allow_cross_prefix_family: bool = False,
+) -> dict[str, Any] | None:
+    family_key = get_mayor_account_family_key(account)
+    if family_key != "":
+        exact_family_candidates = [
+            layout
+            for layout in layouts
+            if get_mayor_account_family_key(str(layout["Account"])) == family_key
+        ]
+        selected = select_mayor_layout_candidate(exact_family_candidates, rows_by_layout_key)
+        if selected is not None:
+            return selected
+
+    if not allow_cross_prefix_family:
+        return None
+
+    suffix_key = get_mayor_account_suffix_key(account, ignore_prefix=True)
+    if suffix_key != "":
+        cross_prefix_suffix_candidates = [
+            layout
+            for layout in layouts
+            if get_mayor_account_suffix_key(str(layout["Account"]), ignore_prefix=True) == suffix_key
+        ]
+        selected = select_mayor_layout_candidate(cross_prefix_suffix_candidates, rows_by_layout_key)
+        if selected is not None:
+            return selected
+
+    layout_bucket = get_mayor_account_layout_bucket(account, name)
+    if layout_bucket == "":
+        return None
+    cross_prefix_bucket_candidates = [
+        layout
+        for layout in layouts
+        if get_mayor_account_layout_bucket(layout.get("Account"), layout.get("Name")) == layout_bucket
+    ]
+    return select_mayor_layout_candidate(cross_prefix_bucket_candidates, rows_by_layout_key)
 
 
 def test_mayor_px_adjustment_row(row: dict[str, Any]) -> bool:
@@ -1379,6 +1533,175 @@ def get_brand_period_date_value(rows: list[dict[str, Any]], mayor_rows: list[dic
     return float(max_date)
 
 
+def get_period_year_month(period_date_value: Any) -> tuple[int, int]:
+    try:
+        period_date = datetime(1899, 12, 30) + timedelta(days=float(period_date_value))
+    except Exception:
+        period_date = datetime.now()
+    return period_date.year, period_date.month
+
+
+def build_posting_document_meta(rows_posting: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    metadata: dict[str, dict[str, str]] = {}
+    for row in rows_posting:
+        doc_type = normalize_text(row.get("DocType")).upper()
+        if doc_type not in {"FA", "FC"}:
+            continue
+        document_key = trim_document(row.get("DocumentTrim"))
+        if document_key == "" or document_key in metadata:
+            continue
+        metadata[document_key] = {
+            "DocType": doc_type,
+            "Center": get_normalized_center_code(row.get("Center")) or "00",
+        }
+    return metadata
+
+
+def build_supplemental_mayor_rows_from_source(
+    layouts: list[dict[str, Any]],
+    mayor_rows: list[dict[str, Any]],
+    rows_display: list[dict[str, Any]],
+    rows_posting: list[dict[str, Any]],
+    px_rows: list[list[Any]],
+    period_date_value: Any,
+) -> list[dict[str, Any]]:
+    existing_accounts = {get_compact_account_code(row.get("account")) for row in mayor_rows}
+    target_layouts: dict[str, dict[str, Any]] = {}
+    for layout in layouts:
+        compact = get_compact_account_code(layout.get("Account"))
+        suffix = compact[-4:] if len(compact) >= 4 else ""
+        if suffix in {"0010", "0012", "0014"} and compact not in existing_accounts:
+            target_layouts[suffix] = layout
+    if not target_layouts:
+        return []
+
+    invoice_meta_by_document = build_posting_document_meta(rows_posting)
+    invoice_discount_totals: dict[str, dict[str, float]] = {"0010": {}, "0012": {}}
+    note_discount_credit_totals: dict[str, dict[str, float]] = {"0010": {}, "0012": {}}
+    note_sales_totals: dict[str, float] = {}
+
+    for row in rows_display:
+        doc_type = normalize_text(row.get("DocType")).upper()
+        if doc_type in {"FA", "FC"}:
+            document_key = trim_document(row.get("DocumentTrim"))
+            metadata = invoice_meta_by_document.get(document_key, {})
+            actual_doc_type = normalize_text(metadata.get("DocType")).upper() or doc_type
+            center = get_normalized_center_code(metadata.get("Center")) or get_normalized_center_code(row.get("Center")) or "00"
+            account_suffix = "0010" if actual_doc_type == "FA" else "0012" if actual_doc_type == "FC" else ""
+            if account_suffix not in target_layouts:
+                continue
+            discount_amount = float(round_amount(get_invoice_source_amounts(row)["Discount"]))
+            if discount_amount == 0.0:
+                continue
+            invoice_discount_totals[account_suffix][center] = float(invoice_discount_totals[account_suffix].get(center, 0.0)) + discount_amount
+            continue
+
+        if doc_type not in {"DC", "DE"}:
+            continue
+        affected_key = trim_document(row.get("AffectedDocumentTrim"))
+        metadata = invoice_meta_by_document.get(affected_key, {})
+        affected_doc_type = normalize_text(metadata.get("DocType")).upper()
+        center = get_normalized_center_code(metadata.get("Center")) or get_normalized_center_code(row.get("Center")) or "00"
+        amounts = get_note_source_amounts(row)
+        note_sales_amount = float(round_amount(amounts["Discount"] + amounts["NetoSinIva"] + amounts["NetoConIva"]))
+        if note_sales_amount != 0.0 and "0014" in target_layouts:
+            note_sales_totals[center] = float(note_sales_totals.get(center, 0.0)) + note_sales_amount
+        discount_suffix = "0010" if affected_doc_type == "FA" else "0012"
+        if discount_suffix in target_layouts:
+            discount_credit = float(round_amount(amounts["Discount"]))
+            if discount_credit != 0.0:
+                note_discount_credit_totals[discount_suffix][center] = float(note_discount_credit_totals[discount_suffix].get(center, 0.0)) + discount_credit
+
+    px_discount_totals: dict[str, dict[str, float]] = {"FA": {}, "FC": {}}
+    for px_row in convert_px_rows_to_detail_rows(px_rows):
+        document_key = trim_document(px_row.get("Factura"))
+        metadata = invoice_meta_by_document.get(document_key)
+        if not metadata:
+            continue
+        actual_doc_type = normalize_text(metadata.get("DocType")).upper()
+        if actual_doc_type not in {"FA", "FC"}:
+            continue
+        center = get_normalized_center_code(metadata.get("Center")) or "00"
+        px_discount_totals[actual_doc_type][center] = float(px_discount_totals[actual_doc_type].get(center, 0.0)) + float(to_number(px_row.get("DescValor")))
+
+    for suffix, doc_type in (("0010", "FA"), ("0012", "FC")):
+        if suffix not in target_layouts:
+            continue
+        for center, discount_total in px_discount_totals[doc_type].items():
+            adjusted_total = float(invoice_discount_totals[suffix].get(center, 0.0)) - float(discount_total)
+            invoice_discount_totals[suffix][center] = float(round_amount(adjusted_total))
+
+    year_value, month_value = get_period_year_month(period_date_value)
+    generated: list[dict[str, Any]] = []
+    for suffix in ("0010", "0012", "0014"):
+        layout = target_layouts.get(suffix)
+        if layout is None:
+            continue
+        account_rows: list[dict[str, Any]] = []
+        if suffix in {"0010", "0012"}:
+            for center in sorted(invoice_discount_totals[suffix].keys()):
+                amount = float(round_amount(invoice_discount_totals[suffix][center]))
+                if amount == 0.0:
+                    continue
+                account_rows.append(
+                    {
+                        "account": format_account_code(layout.get("Account")),
+                        "name": normalize_text(layout.get("Name")),
+                        "ext": "N",
+                        "date_value": float(period_date_value),
+                        "origin": "VENSE",
+                        "seat": "400",
+                        "reference": "",
+                        "detail": f"CONTA VENTAS - CENTRO{center} PERIODO {year_value} - {month_value:02d}",
+                        "debit": amount,
+                        "credit": 0.0,
+                    }
+                )
+            for center in sorted(note_discount_credit_totals[suffix].keys()):
+                amount = float(round_amount(note_discount_credit_totals[suffix][center]))
+                if amount == 0.0:
+                    continue
+                account_rows.append(
+                    {
+                        "account": format_account_code(layout.get("Account")),
+                        "name": normalize_text(layout.get("Name")),
+                        "ext": "N",
+                        "date_value": float(period_date_value),
+                        "origin": "VENSE",
+                        "seat": "401",
+                        "reference": "",
+                        "detail": f"CONTABILIZACION VENTAS - CENTRO{center} PERIODO {year_value} - {month_value:02d}",
+                        "debit": 0.0,
+                        "credit": amount,
+                    }
+                )
+        else:
+            for center in sorted(note_sales_totals.keys()):
+                amount = float(round_amount(note_sales_totals[center]))
+                if amount == 0.0:
+                    continue
+                account_rows.append(
+                    {
+                        "account": format_account_code(layout.get("Account")),
+                        "name": normalize_text(layout.get("Name")),
+                        "ext": "N",
+                        "date_value": float(period_date_value),
+                        "origin": "VENSE",
+                        "seat": "401",
+                        "reference": "",
+                        "detail": f"CONTABILIZACION VENTAS - CENTRO{center} PERIODO {year_value} - {month_value:02d}",
+                        "debit": amount,
+                        "credit": 0.0,
+                    }
+                )
+        running_balance = 0.0
+        for item in account_rows:
+            running_balance = float(round_amount(running_balance + float(to_number(item.get("debit"))) - float(to_number(item.get("credit")))))
+            item["balance"] = running_balance
+            generated.append(item)
+    return generated
+
+
 def add_generated_template_row(target: list[dict[str, Any]], prototype: dict[str, Any] | None, debit: float = 0.0, credit: float = 0.0) -> None:
     if prototype is None:
         return
@@ -1425,11 +1748,132 @@ def add_template_sequential_rows_from_mayor(target: list[dict[str, Any]], protot
         add_generated_template_row(target, prototype, to_number(item.get("debit")), to_number(item.get("credit")))
 
 
+def select_precont_target_account(
+    candidates: list[str],
+    assigned_group_counts: dict[str, int],
+    assigned_row_counts: dict[str, int],
+) -> str | None:
+    if not candidates:
+        return None
+    ordered = sorted(
+        candidates,
+        key=lambda account: (
+            int(assigned_group_counts.get(account, 0)),
+            int(assigned_row_counts.get(account, 0)),
+            account,
+        ),
+    )
+    return ordered[0]
+
+
+def resolve_precont_mayor_target_account(
+    source_account: str,
+    source_name: Any,
+    critical_accounts: list[str],
+    assigned_group_counts: dict[str, int],
+    assigned_row_counts: dict[str, int],
+    allow_cross_prefix_family: bool = False,
+) -> str | None:
+    if source_account in critical_accounts:
+        return source_account
+
+    exact_family_key = get_sales_account_family_key(source_account)
+    if exact_family_key != "":
+        exact_family_candidates = [
+            account
+            for account in critical_accounts
+            if get_sales_account_family_key(account) == exact_family_key
+        ]
+        selected = select_precont_target_account(exact_family_candidates, assigned_group_counts, assigned_row_counts)
+        if selected is not None:
+            return selected
+
+    if allow_cross_prefix_family:
+        suffix_key = get_sales_account_suffix_key(source_account, ignore_prefix=True)
+        if suffix_key != "":
+            suffix_candidates = [
+                account
+                for account in critical_accounts
+                if get_sales_account_suffix_key(account, ignore_prefix=True) == suffix_key
+            ]
+            selected = select_precont_target_account(suffix_candidates, assigned_group_counts, assigned_row_counts)
+            if selected is not None:
+                return selected
+
+        family_key = get_sales_account_family_key(source_account, ignore_prefix=True)
+        if family_key != "":
+            family_candidates = [
+                account
+                for account in critical_accounts
+                if get_sales_account_family_key(account, ignore_prefix=True) == family_key
+            ]
+            selected = select_precont_target_account(family_candidates, assigned_group_counts, assigned_row_counts)
+            if selected is not None:
+                return selected
+
+    source_bucket = classify_sales_control_bucket(source_account, source_name)
+    if source_bucket == "":
+        return None
+    bucket_candidates = [
+        account
+        for account in critical_accounts
+        if classify_sales_control_bucket(account, "") == source_bucket
+    ]
+    return select_precont_target_account(bucket_candidates, assigned_group_counts, assigned_row_counts)
+
+
+def map_mayor_rows_to_precont_critical_accounts(
+    critical_accounts: list[str],
+    mayor_rows: list[dict[str, Any]],
+    brand_key: str = "",
+) -> dict[str, Any]:
+    rows_by_source_account: dict[str, list[dict[str, Any]]] = {}
+    for mayor_row in mayor_rows:
+        account = get_compact_account_code(mayor_row.get("account"))
+        if account == "":
+            continue
+        rows_by_source_account.setdefault(account, []).append(mayor_row)
+
+    target_rows: dict[str, list[dict[str, Any]]] = {account: [] for account in critical_accounts}
+    assigned_group_counts: dict[str, int] = {account: 0 for account in critical_accounts}
+    assigned_row_counts: dict[str, int] = {account: 0 for account in critical_accounts}
+    compatible_mapped_accounts: list[str] = []
+    unmapped_accounts: list[str] = []
+    allow_cross_prefix_family = mayor_brand_allows_flexible_account_mapping(brand_key)
+
+    for source_account in sorted(rows_by_source_account.keys()):
+        source_rows = rows_by_source_account.get(source_account, [])
+        source_name = source_rows[0].get("name") if source_rows else ""
+        target_account = resolve_precont_mayor_target_account(
+            source_account,
+            source_name,
+            critical_accounts,
+            assigned_group_counts,
+            assigned_row_counts,
+            allow_cross_prefix_family=allow_cross_prefix_family,
+        )
+        if target_account is None:
+            unmapped_accounts.append(source_account)
+            continue
+        if target_account != source_account:
+            compatible_mapped_accounts.append(source_account)
+        target_rows.setdefault(target_account, []).extend(source_rows)
+        assigned_group_counts[target_account] = int(assigned_group_counts.get(target_account, 0)) + 1
+        assigned_row_counts[target_account] = int(assigned_row_counts.get(target_account, 0)) + len(source_rows)
+
+    return {
+        "RowsByAccount": target_rows,
+        "CompatibleMappedAccounts": compatible_mapped_accounts,
+        "UnmappedAccounts": unmapped_accounts,
+    }
+
+
 def new_precont_ventas_generated_rows(
     prototypes: list[dict[str, Any]],
     rows_posting: list[dict[str, Any]],
     mayor_rows: list[dict[str, Any]],
     px_rows: list[list[Any]],
+    brand_key: str = "",
 ) -> list[dict[str, Any]]:
     generated: list[dict[str, Any]] = []
     invoice_totals_by_doc_center: dict[str, dict[str, float]] = {"FA": {}, "FC": {}}
@@ -1472,13 +1916,6 @@ def new_precont_ventas_generated_rows(
         px_gross_by_doc_center[doc_type][center] = float(px_gross_by_doc_center[doc_type].get(center, 0.0)) + float(to_number(px_row.get("PvpBruto")))
         px_discount_by_doc_center[doc_type][center] = float(px_discount_by_doc_center[doc_type].get(center, 0.0)) + float(to_number(px_row.get("DescValor")))
 
-    sales_mayor_by_account: dict[str, list[dict[str, Any]]] = {}
-    for mayor_row in mayor_rows:
-        account = get_compact_account_code(mayor_row.get("account"))
-        if account == "":
-            continue
-        sales_mayor_by_account.setdefault(account, []).append(mayor_row)
-
     client_fa_prototypes = [item for item in prototypes if item["Doc"] == "FA" and re.search(r"^CLIENTES SERV", item["Description"] or "")]
     client_fc_prototypes = [item for item in prototypes if item["Doc"] == "FC" and re.search(r"^CLIENTES SERV", item["Description"] or "")]
     client_ca_prototypes = [item for item in prototypes if item["Doc"] == "CA" and re.search(r"^CLIENTES SERV", item["Description"] or "")]
@@ -1508,9 +1945,15 @@ def new_precont_ventas_generated_rows(
             if re.fullmatch(r"040101\d{2}(0001|0003|0010|0012|0014)", item.get("Account", "") or "")
         }
     )
+    mayor_mapping = map_mayor_rows_to_precont_critical_accounts(critical_accounts, mayor_rows, brand_key)
+    for source_account in mayor_mapping["CompatibleMappedAccounts"]:
+        print(f"WARN|precont_ventas_mayor_compatible_account|{brand_key}|source={source_account}")
+    for source_account in mayor_mapping["UnmappedAccounts"]:
+        print(f"WARN|precont_ventas_mayor_unmapped_account|{brand_key}|source={source_account}")
+
     for account in critical_accounts:
         account_prototypes = sorted([item for item in prototypes if item["Account"] == account], key=lambda item: int(item["TemplateRow"]))
-        mayor_group = sales_mayor_by_account.get(account, [])
+        mayor_group = list((mayor_mapping["RowsByAccount"] or {}).get(account, []))
         add_template_sequential_rows_from_mayor(generated, account_prototypes, mayor_group, ensure_at_least_one_row=True)
 
     return generated
@@ -1726,47 +2169,27 @@ def update_precont_ventas_control_formulas(worksheet: Any, rows: list[dict[str, 
 
 
 def classify_mayor_control_bucket(account: Any, name: Any) -> str:
-    account_text = normalize_text(account)
-    name_text = normalize_text(name).upper()
-    if account_text == "" and name_text == "":
-        return ""
-    if re.fullmatch(r"01\.01\.05\.\d{2}\.\d{4}", account_text) or "GARANT" in name_text:
-        return "guarantee"
-    if re.fullmatch(r"04\.01\.01\.\d{2}\.\d{4}", account_text) is None:
-        return ""
-    suffix = account_text.split(".")[-1]
-    if suffix == "0014" or "DEVOL" in name_text:
-        return "return"
-    if suffix in {"0010", "0011", "0012"} or "DESC" in name_text:
-        return "discount"
-    return "sales"
+    return classify_sales_control_bucket(account, name)
 
 
 def get_mayor_control_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
-    metrics = {
-        "InvoiceSales": 0.0,
-        "InvoiceDiscounts": 0.0,
-        "NoteSales": 0.0,
-        "NoteDiscounts": 0.0,
-        "NetSales": 0.0,
-    }
-    for row in rows:
-        bucket = classify_mayor_control_bucket(row.get("account"), row.get("name"))
-        debit = to_number(row.get("debit"))
-        credit = to_number(row.get("credit"))
-        if bucket == "sales":
-            metrics["InvoiceSales"] += credit
-            metrics["NetSales"] += credit - debit
-            continue
-        if bucket == "discount":
-            metrics["InvoiceDiscounts"] += debit
-            metrics["NoteDiscounts"] += credit
-            metrics["NetSales"] += credit - debit
-            continue
-        if bucket == "return":
-            metrics["NoteSales"] += debit
-            metrics["NetSales"] += credit - debit
-    return {key: float(round_amount(value)) for key, value in metrics.items()}
+    return get_control_metrics_from_rows(
+        rows,
+        account_key="account",
+        name_key="name",
+        debit_key="debit",
+        credit_key="credit",
+    )
+
+
+def get_precont_ventas_control_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
+    return get_control_metrics_from_rows(
+        rows,
+        account_key="Account",
+        name_key="Description",
+        debit_key="Debit",
+        credit_key="Credit",
+    )
 
 
 def get_rep_vtas_control_cost_total(metrics: dict[str, float]) -> float:
@@ -1781,6 +2204,101 @@ def get_rep_vtas_control_cost_total(metrics: dict[str, float]) -> float:
     )
 
 
+def get_rows_numeric_total(worksheet: Any, rows: list[dict[str, Any]], column: int) -> float:
+    total = 0.0
+    if worksheet is None:
+        return total
+    for item in rows:
+        row_number = int(item.get("RowNumber", 0) or 0)
+        if row_number <= 0:
+            continue
+        total += to_number(cell(worksheet, row_number, column).Value2)
+    return float(round_amount(total))
+
+
+def get_note_visible_sales_total(worksheet: Any, rows: list[dict[str, Any]]) -> float:
+    total = 0.0
+    if worksheet is None:
+        return total
+    for item in rows or []:
+        row_number = int(item.get("RowNumber") or 0)
+        if row_number <= 0:
+            continue
+        total += (
+            to_number(cell(worksheet, row_number, 11).Value2)
+            + to_number(cell(worksheet, row_number, 12).Value2)
+            + to_number(cell(worksheet, row_number, 13).Value2)
+        )
+    return float(round_amount(total))
+
+
+def get_px_visible_adjustment_totals(worksheet: Any) -> dict[str, float]:
+    if worksheet is None:
+        return {"Gross": 0.0, "Discount": 0.0}
+    ranges = get_px_detail_ranges(worksheet)
+    if len(ranges) < 2:
+        return {"Gross": 0.0, "Discount": 0.0}
+    bottom_range = ranges[1]
+    gross_total = 0.0
+    discount_total = 0.0
+    for row in range(int(bottom_range["StartRow"]), int(bottom_range["EndRow"]) + 1):
+        invoice_text = normalize_text(cell(worksheet, row, 5).Text)
+        if invoice_text == "":
+            continue
+        gross_total += to_number(cell(worksheet, row, 12).Value2)
+        discount_total += to_number(cell(worksheet, row, 14).Value2)
+    return {
+        "Gross": float(round_amount(gross_total)),
+        "Discount": float(round_amount(discount_total)),
+    }
+
+
+def get_source_control_metrics_from_visible_sheets(
+    rep_worksheet: Any,
+    invoice_rows: list[dict[str, Any]],
+    note_worksheet: Any,
+    note_rows: list[dict[str, Any]],
+    px_worksheet: Any,
+) -> dict[str, float]:
+    invoice_sales = get_rows_numeric_total(rep_worksheet, invoice_rows, 8)
+    invoice_discounts = get_rows_numeric_total(rep_worksheet, invoice_rows, 9)
+    note_sales = get_note_visible_sales_total(note_worksheet, note_rows)
+    note_discounts = get_rows_numeric_total(note_worksheet, note_rows, 11)
+    px_totals = get_px_visible_adjustment_totals(px_worksheet)
+    invoice_sales = float(round_amount(invoice_sales - px_totals["Gross"]))
+    invoice_discounts = float(round_amount(invoice_discounts - px_totals["Discount"]))
+    return {
+        "InvoiceSales": invoice_sales,
+        "InvoiceDiscounts": invoice_discounts,
+        "NoteSales": float(round_amount(note_sales)),
+        "NoteDiscounts": float(round_amount(note_discounts)),
+        "NetSales": float(round_amount(invoice_sales - invoice_discounts - note_sales + note_discounts)),
+    }
+
+
+def should_use_source_control_metrics(source_metrics: dict[str, float], mayor_metrics: dict[str, float]) -> bool:
+    keys = ("InvoiceSales", "InvoiceDiscounts", "NoteSales", "NoteDiscounts")
+    for key in keys:
+        if abs(to_number(source_metrics.get(key)) - to_number(mayor_metrics.get(key))) > 1.0:
+            return True
+    return False
+
+
+def log_control_metrics(tag: str, brand_key: str, metrics: dict[str, float]) -> None:
+    print(
+        "INFO|{tag}|{brand}|invoice_sales={invoice_sales}|invoice_discounts={invoice_discounts}|"
+        "note_sales={note_sales}|note_discounts={note_discounts}|net_sales={net_sales}".format(
+            tag=tag,
+            brand=brand_key,
+            invoice_sales=float(round_amount(to_number(metrics.get("InvoiceSales")))),
+            invoice_discounts=float(round_amount(to_number(metrics.get("InvoiceDiscounts")))),
+            note_sales=float(round_amount(to_number(metrics.get("NoteSales")))),
+            note_discounts=float(round_amount(to_number(metrics.get("NoteDiscounts")))),
+            net_sales=float(round_amount(to_number(metrics.get("NetSales")))),
+        )
+    )
+
+
 def set_control_numeric_value(worksheet: Any, row: int, column: int, value: Any) -> None:
     if worksheet is None:
         return
@@ -1791,25 +2309,45 @@ def update_sales_control_blocks(
     rep_worksheet: Any,
     note_worksheet: Any,
     rep_vtas_worksheet: Any,
-    mayor_rows: list[dict[str, Any]],
+    mayor_metrics: dict[str, float],
+    precont_metrics: dict[str, float],
     cost_metrics: dict[str, float],
+    preserve_rep_vtas_cost_formula: bool = False,
 ) -> None:
-    mayor_metrics = get_mayor_control_metrics(mayor_rows)
     if rep_worksheet is not None:
-        set_control_numeric_value(rep_worksheet, 9, 4, mayor_metrics["InvoiceSales"])
-        set_control_numeric_value(rep_worksheet, 9, 5, mayor_metrics["InvoiceDiscounts"])
+        set_control_numeric_value(rep_worksheet, 9, 4, precont_metrics["InvoiceSales"])
+        set_control_numeric_value(rep_worksheet, 9, 5, precont_metrics["InvoiceDiscounts"])
         set_control_numeric_value(rep_worksheet, 9, 10, mayor_metrics["InvoiceSales"])
         set_control_numeric_value(rep_worksheet, 9, 11, mayor_metrics["InvoiceDiscounts"])
 
     if note_worksheet is not None:
         set_control_numeric_value(note_worksheet, 4, 4, mayor_metrics["NoteSales"])
         set_control_numeric_value(note_worksheet, 4, 5, mayor_metrics["NoteDiscounts"])
-        set_control_numeric_value(note_worksheet, 4, 6, mayor_metrics["NoteSales"])
-        set_control_numeric_value(note_worksheet, 4, 7, mayor_metrics["NoteDiscounts"])
+        set_control_numeric_value(note_worksheet, 4, 6, precont_metrics["NoteSales"])
+        set_control_numeric_value(note_worksheet, 4, 7, precont_metrics["NoteDiscounts"])
 
     if rep_vtas_worksheet is not None:
         set_control_numeric_value(rep_vtas_worksheet, 6, 4, mayor_metrics["NetSales"])
-        set_control_numeric_value(rep_vtas_worksheet, 6, 5, get_rep_vtas_control_cost_total(cost_metrics))
+        if not preserve_rep_vtas_cost_formula:
+            set_control_numeric_value(rep_vtas_worksheet, 6, 5, get_rep_vtas_control_cost_total(cost_metrics))
+
+
+def should_preserve_template_costo_sheet(worksheet: Any) -> bool:
+    if worksheet is None:
+        return False
+    try:
+        formula_h4 = normalize_text(cell(worksheet, 4, 8).Formula)
+        formula_i4 = normalize_text(cell(worksheet, 4, 9).Formula)
+        formula_j4 = normalize_text(cell(worksheet, 4, 10).Formula)
+    except Exception:
+        return False
+    return "SUBTOTAL" in formula_h4.upper() and "SUBTOTAL" in formula_i4.upper() and formula_j4 != ""
+
+
+def get_costo_control_total(worksheet: Any) -> float:
+    if worksheet is None:
+        return 0.0
+    return float(round_amount(to_number(cell(worksheet, 4, 10).Value2)))
 
 
 def write_px_rows_to_worksheet(worksheet: Any, rows: list[list[Any]], brand_key: str = "") -> dict[str, Any]:
@@ -1872,10 +2410,20 @@ def write_mayor_rows_to_worksheet(worksheet: Any, rows: list[dict[str, Any]], br
     rows_by_layout_key: dict[str, list[dict[str, Any]]] = {}
     compatible_mapped_accounts: list[str] = []
     unmapped_accounts: list[str] = []
+    allow_cross_prefix_family = mayor_brand_allows_flexible_account_mapping(brand_key)
+    written_rows_for_metrics: list[dict[str, Any]] = []
     for account in rows_by_account.keys():
         layout = next((item for item in layouts if item["Account"] == account), None)
         if layout is None:
-            layout = resolve_mayor_compatible_layout(account, layouts, rows_by_layout_key)
+            account_rows = rows_by_account.get(account, [])
+            sample_name = account_rows[0].get("name") if account_rows else ""
+            layout = resolve_mayor_compatible_layout(
+                account,
+                sample_name,
+                layouts,
+                rows_by_layout_key,
+                allow_cross_prefix_family=allow_cross_prefix_family,
+            )
             if layout is None:
                 print(f"WARN|mayor_account_unmapped|{brand_key}|{account}|sheet={worksheet.Name}")
                 unmapped_accounts.append(account)
@@ -1913,6 +2461,7 @@ def write_mayor_rows_to_worksheet(worksheet: Any, rows: list[dict[str, Any]], br
                         get_numeric_matrix_value(balance_value),
                     ]
                 )
+                written_rows_for_metrics.append(account_row)
             write_rows_to_worksheet(worksheet, sheet_rows, int(layout["StartRow"]), 1)
             written_count += len(account_rows)
     return {
@@ -1920,6 +2469,7 @@ def write_mayor_rows_to_worksheet(worksheet: Any, rows: list[dict[str, Any]], br
         "SectionCount": len(layouts),
         "UnmappedAccounts": unmapped_accounts,
         "CompatibleMappedAccounts": compatible_mapped_accounts,
+        "ControlMetrics": get_mayor_control_metrics(written_rows_for_metrics),
     }
 
 
@@ -2347,10 +2897,13 @@ def run_runtime(args: RuntimeArgs) -> int:
 
                 mayor_rows: list[dict[str, Any]] = []
                 mayor_sheet = None
+                mayor_layouts: list[dict[str, Any]] = []
                 try:
                     mayor_sheet = get_worksheet_safe(output_workbook, ["VENTAS", "MAY VTAS"])
+                    mayor_layouts = get_mayor_sheet_section_layouts(mayor_sheet)
                 except RuntimeError:
                     mayor_sheet = None
+                    mayor_layouts = []
                 if mayor_sheet is not None:
                     fill_start = time.perf_counter()
                     mayor_path = args.mayor_paths.get(template_key)
@@ -2364,17 +2917,47 @@ def run_runtime(args: RuntimeArgs) -> int:
                     assert_mayor_matches_template(template_key, mayor_path, mayor_rows, mayor_result, str(mayor_sheet.Name))
                     print(f"INFO|fill_mayor_ms|{template_key}|{int((time.perf_counter() - fill_start) * 1000)}")
                     print(f"INFO|mayor|{template_key}|rows={mayor_result['RowCount']}|sections={mayor_result['SectionCount']}")
+                mayor_control_metrics = dict((mayor_result or {}).get("ControlMetrics") or get_mayor_control_metrics(mayor_rows))
 
                 cost_metrics = get_brand_cost_metrics(rows_rep_vtas)
                 period_date_value = get_brand_period_date_value(rows_rep_vtas, mayor_rows)
+                if mayor_sheet is not None:
+                    supplemental_mayor_rows = build_supplemental_mayor_rows_from_source(
+                        mayor_layouts,
+                        mayor_rows,
+                        rows_display,
+                        rows_posting,
+                        px_rows,
+                        period_date_value,
+                    )
+                    if supplemental_mayor_rows:
+                        mayor_rows = list(mayor_rows) + supplemental_mayor_rows
+                        mayor_result = write_mayor_rows_to_worksheet(mayor_sheet, mayor_rows, template_key)
+                        mayor_control_metrics = dict((mayor_result or {}).get("ControlMetrics") or get_mayor_control_metrics(mayor_rows))
+                        print(f"INFO|mayor_source_supplement|{template_key}|rows={len(supplemental_mayor_rows)}")
                 precont_ventas_sheet = get_worksheet_safe(output_workbook, ["PrecontabilizacionVentas"])
                 precont_costos2_sheet = get_worksheet_safe(output_workbook, ["PrecontabilizacionCostos (2)"])
                 precont_costos_sheet = get_worksheet_safe(output_workbook, ["PrecontabilizacionCostos"])
                 costo_sheet = get_worksheet_safe(output_workbook, ["COSTO"])
                 estadisticas_sheet = get_worksheet_safe(output_workbook, ["ESTADISTICAS"])
+                source_control_metrics = get_source_control_metrics_from_visible_sheets(
+                    rep_sheet,
+                    invoice_result.get("Rows", []),
+                    note_sheet,
+                    note_result.get("Rows", []),
+                    px_sheet,
+                )
+                precont_ventas_control_metrics = {
+                    "InvoiceSales": 0.0,
+                    "InvoiceDiscounts": 0.0,
+                    "NoteSales": 0.0,
+                    "NoteDiscounts": 0.0,
+                    "NetSales": 0.0,
+                }
 
                 fill_start = time.perf_counter()
-                precont_ventas_rows = new_precont_ventas_generated_rows(precont_ventas_prototypes, rows_posting, mayor_rows, px_rows)
+                precont_ventas_rows = new_precont_ventas_generated_rows(precont_ventas_prototypes, rows_posting, mayor_rows, px_rows, template_key)
+                precont_ventas_control_metrics = get_precont_ventas_control_metrics(precont_ventas_rows)
                 precont_ventas_count = write_precont_ventas_generated_rows(precont_ventas_sheet, precont_ventas_rows)
                 refresh_worksheet_pivot_tables_safe(precont_ventas_sheet, "PrecontabilizacionVentas")
                 update_precont_ventas_control_formulas(precont_ventas_sheet, precont_ventas_rows)
@@ -2390,10 +2973,31 @@ def run_runtime(args: RuntimeArgs) -> int:
                 clear_precont_costos_worksheet(precont_costos_sheet)
                 print(f"INFO|precont_costos_legacy_neutralized|{template_key}")
                 write_estadisticas_generated_rows(estadisticas_sheet, cost_metrics, period_date_value)
-                write_costo_generated_rows(costo_sheet, cost_metrics, period_date_value)
-                refresh_worksheet_pivot_tables_safe(costo_sheet, "COSTO")
+                preserve_rep_vtas_cost_formula = should_preserve_template_costo_sheet(costo_sheet)
+                if preserve_rep_vtas_cost_formula:
+                    print(f"INFO|costo_mode|{template_key}|template_preserved")
+                else:
+                    write_costo_generated_rows(costo_sheet, cost_metrics, period_date_value)
+                    refresh_worksheet_pivot_tables_safe(costo_sheet, "COSTO")
+                    print(f"INFO|costo_mode|{template_key}|generated")
                 update_px_period_anchor(px_sheet, period_date_value)
-                update_sales_control_blocks(rep_sheet, note_sheet, rep_vtas_sheet, mayor_rows, cost_metrics)
+                effective_control_metrics = source_control_metrics if should_use_source_control_metrics(source_control_metrics, mayor_control_metrics) else mayor_control_metrics
+                mode_label = "source_fallback" if effective_control_metrics is source_control_metrics else "mayor_aligned"
+                log_control_metrics("mayor_control_metrics", template_key, mayor_control_metrics)
+                log_control_metrics("source_control_metrics", template_key, source_control_metrics)
+                log_control_metrics("precont_control_metrics", template_key, precont_ventas_control_metrics)
+                print(f"INFO|sales_control_mode|{template_key}|mode={mode_label}")
+                rep_vtas_cost_total = get_costo_control_total(costo_sheet) if preserve_rep_vtas_cost_formula else get_rep_vtas_control_cost_total(cost_metrics)
+                print(f"INFO|rep_vtas_cost_total|{template_key}|value={float(round_amount(rep_vtas_cost_total))}")
+                update_sales_control_blocks(
+                    rep_sheet,
+                    note_sheet,
+                    rep_vtas_sheet,
+                    effective_control_metrics,
+                    effective_control_metrics,
+                    cost_metrics,
+                    preserve_rep_vtas_cost_formula=preserve_rep_vtas_cost_formula,
+                )
 
                 try:
                     output_workbook.Application.CalculateFull()

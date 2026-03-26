@@ -55,18 +55,18 @@ Hallazgos estructurales ya confirmados en las plantillas 2026:
 
 7. Regla critica para bloques `SEGUN MAYOR`
 - no usar referencias fijas heredadas del template como `VENTAS!I353`, `VENTAS!J172`, `MAY VTAS!J4` ni descripciones duras de pivots para poblar los controles
-- `REP FACTURACION` debe tomar `SEGUN MAYOR VENTAS` desde el mayor cargado del mes:
-  - ventas = suma de creditos de cuentas de ventas `0001 + 0003` del mayor ya filtrado
-  - descuentos = suma de debitos de cuentas de descuentos `0010 + 0012` del mayor ya filtrado
-- `NOTA DE CREDITO` debe tomar `SEGUN MAYOR` desde el mayor cargado del mes:
-  - ventas = suma de debitos de devoluciones `0014` del mayor ya filtrado
-  - descuentos = suma de creditos de descuentos `0010 + 0012` del mayor ya filtrado
+- `REP FACTURACION` tiene dos bloques visibles y deben respetar su fuente real:
+  - `D9/E9` = control desde `PrecontabilizacionVentas` generado del mes
+  - `J9/K9` = control desde `VENTAS` o `MAY VTAS` ya escrito en la plantilla
+- `NOTA DE CREDITO` tambien mezcla dos fuentes:
+  - `D4/E4` = control desde `VENTAS` o `MAY VTAS`
+  - `F4/G4` = control desde `PrecontabilizacionVentas`
 - `REP VTAS` debe tomar `SEGUN MAYOR (VENTAS)` desde el mayor cargado del mes:
   - ventas = neto del mayor de ventas del mes
     formula semantica: `creditos ventas + creditos descuentos - debitos descuentos - debitos devoluciones`
   - costos = costo actual calculado del mes, no saldo historico del template
 - antes de calcular estos bloques, filtrar del mayor los ajustes PX que el runtime ya detecta para no inflar ni vaciar los subtotales visibles
-- si `MAY VTAS` o `VENTAS` queda correcta pero los bloques de control salen mal, revisar primero si se estan tomando los acumulados correctos por cuenta y no solo una seccion parcial
+- si `MAY VTAS` o `VENTAS` queda correcta pero los bloques de control salen mal, revisar primero si el control se esta calculando desde la misma fuente que usa la plantilla y no desde una mezcla incorrecta de mayor crudo vs precontabilizacion
 - si cambian las cuentas o el orden interno de filas, los controles deben seguir saliendo bien con lo que realmente se cargo al sistema
 
 Validacion final obligatoria:

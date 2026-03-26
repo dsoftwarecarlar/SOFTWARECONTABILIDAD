@@ -47,6 +47,10 @@ source = Path(r"""${sourcePath}""")
 target = Path(r"""${outputPath}""")
 workbook = load_workbook(source, data_only=False, keep_links=True)
 worksheet = workbook["RepLibroDevolucionesGeneral"]
+row9_merges = [str(rng) for rng in list(worksheet.merged_cells.ranges) if rng.min_row <= 9 <= rng.max_row]
+row10_merges = [str(rng) for rng in list(worksheet.merged_cells.ranges) if rng.min_row <= 10 <= rng.max_row]
+for range_ref in row9_merges:
+    worksheet.unmerge_cells(range_ref)
 for column in range(1, 43):
     source_cell = worksheet.cell(row=10, column=column)
     target_cell = worksheet.cell(row=9, column=column)
@@ -54,6 +58,8 @@ for column in range(1, 43):
         continue
     target_cell.value = copy(source_cell.value)
     source_cell.value = None
+for range_ref in row10_merges:
+    worksheet.unmerge_cells(range_ref)
 workbook.save(target)
 print(target)
 `;
@@ -127,6 +133,11 @@ function findRowContaining(sheet, needle, lastColumn = 42) {
 
 function main() {
   const compactSzkPath = buildCompactSzkSource();
+  const compactWorkbook = XLSX.readFile(compactSzkPath, { cellFormula: true, cellText: true, sheetStubs: true });
+  const compactSheet = compactWorkbook.Sheets.RepLibroDevolucionesGeneral;
+  const compactTotalRow = findRowContaining(compactSheet, "TOTAL GENERAL");
+  assertCondition(compactTotalRow === 9, `La fuente compacta NC SZK no quedo en fila 9; llego ${compactTotalRow}.`);
+
   const outputPath = buildOutputPath();
   const manifestPath = buildManifestPath();
   fs.writeFileSync(manifestPath, JSON.stringify(buildManifest(outputPath, compactSzkPath), null, 2));

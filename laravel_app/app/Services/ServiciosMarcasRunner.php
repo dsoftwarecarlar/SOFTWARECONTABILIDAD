@@ -17,6 +17,8 @@ final class ServiciosMarcasRunner
         'szk' => '/04\.01\.01\.14\.(0001|0002|0003|0010|0012|0014)/',
         'tyt' => '/04\.01\.01\.11\.(0001|0002|0003|0010|0012|0014)/',
     ];
+    private const FLEXIBLE_MAYOR_VENTAS_BRANDS = ['tyt'];
+    private const GENERIC_MAYOR_VENTAS_PATTERN = '/04\.01\.01\.\d{2}\.\d{4}/';
 
     public function __construct(
         private ExternalProcessService $processes,
@@ -603,7 +605,7 @@ final class ServiciosMarcasRunner
 
     private function assertMayorVentasUploadMatchesBrand(string $brandKey, string $path, string $label): void
     {
-        $pattern = self::MAYOR_VENTAS_PATTERNS[$brandKey] ?? null;
+        $pattern = $this->expectedMayorVentasPattern($brandKey);
         if ($pattern === null) {
             return;
         }
@@ -631,6 +633,15 @@ final class ServiciosMarcasRunner
             $suffix .
             ' Debe incluir cuentas 04.01.01.xx.xxxx.'
         );
+    }
+
+    private function expectedMayorVentasPattern(string $brandKey): ?string
+    {
+        if (in_array($brandKey, self::FLEXIBLE_MAYOR_VENTAS_BRANDS, true)) {
+            return self::GENERIC_MAYOR_VENTAS_PATTERN;
+        }
+
+        return self::MAYOR_VENTAS_PATTERNS[$brandKey] ?? null;
     }
 
     /**

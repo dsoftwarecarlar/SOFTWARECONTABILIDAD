@@ -703,6 +703,98 @@ def shift_section(section: dict[str, Any], row_offset: int) -> dict[str, Any]:
     return shifted
 
 
+def posting_entry_key(
+    account: Any,
+    date_text: Any,
+    seat: Any,
+    detail: Any,
+    side: str,
+    amount: Any,
+) -> tuple[str, str, str, str, str, float]:
+    return (
+        normalize_text(account),
+        normalize_text(date_text),
+        normalize_text(seat),
+        normalize_text(detail),
+        normalize_text(side),
+        round_amount(amount, 2),
+    )
+
+
+def build_expected_my_entry_keys(
+    rep_groups: dict[str, dict[str, dict[str, Any]]],
+    nc_groups: dict[str, dict[str, dict[str, Any]]],
+) -> set[tuple[str, str, str, str, str, float]]:
+    expected_entries = (
+        build_posting_entries(rep_groups.get("sales", {}), "credit")
+        + build_posting_entries(rep_groups.get("discount", {}), "debit")
+        + build_posting_entries(nc_groups.get("discount_credit", {}), "credit")
+        + build_posting_entries(nc_groups.get("devol", {}), "debit")
+    )
+    return {
+        posting_entry_key(
+            entry.get("account", ""),
+            entry.get("date_text", ""),
+            entry.get("seat", ""),
+            entry.get("detail", ""),
+            str(entry.get("side", "")),
+            entry.get("amount", 0),
+        )
+        for entry in expected_entries
+        if normalize_text(entry.get("account", "")) != ""
+    }
+
+
+def collect_output_my_entry_keys(
+    worksheet: Worksheet,
+    layout: dict[str, Any],
+) -> set[tuple[str, str, str, str, str, float]]:
+    rows: set[tuple[str, str, str, str, str, float]] = set()
+    for row in range(1, worksheet.max_row + 1):
+        account = worksheet_cell_text(worksheet, row, 1)
+        if not account.startswith("04."):
+            continue
+
+        debit = round_amount(worksheet_cell_number(worksheet, row, int(layout["debit_column"])), 2)
+        credit = round_amount(worksheet_cell_number(worksheet, row, int(layout["credit_column"])), 2)
+        if abs(debit) < 0.0000001 and abs(credit) < 0.0000001:
+            continue
+
+        side = "debit" if abs(debit) >= 0.0000001 else "credit"
+        amount = debit if side == "debit" else credit
+        rows.add(
+            posting_entry_key(
+                account,
+                literal_text(worksheet.cell(row=row, column=int(layout["date_column"])).value),
+                worksheet_cell_text(worksheet, row, int(layout["seat_column"])),
+                worksheet_cell_text(worksheet, row, int(layout["detail_column"])),
+                side,
+                amount,
+            )
+        )
+
+    return rows
+
+
+def verify_my_sheet_entries(
+    worksheet: Worksheet,
+    layout: dict[str, Any],
+    rep_groups: dict[str, dict[str, dict[str, Any]]],
+    nc_groups: dict[str, dict[str, dict[str, Any]]],
+) -> None:
+    expected = build_expected_my_entry_keys(rep_groups, nc_groups)
+    actual = collect_output_my_entry_keys(worksheet, layout)
+    if expected == actual:
+        return
+
+    missing = sorted(expected - actual)[:5]
+    extra = sorted(actual - expected)[:5]
+    raise RuntimeError(
+        f"La hoja {worksheet.title} no conserva todas las partidas MY esperadas. "
+        f"Esperadas={len(expected)} actuales={len(actual)} missing={missing} extra={extra}."
+    )
+
+
 def resolve_saved_input(saved_inputs: dict[str, Any], field: str) -> Path | None:
     payload = saved_inputs.get(field)
     candidate = payload.get("path") if isinstance(payload, dict) else payload
@@ -805,6 +897,7 @@ def run(request: ProcessRequest) -> ProcessResult:
             "discount_total_row": discount_result["total_row"],
             "devol_total_row": None if devol_result is None else devol_result["total_row"],
         }
+        verify_my_sheet_entries(output_sheet, layout, rep_groups, nc_groups)
         summary.append(
             {
                 "label": str(config["label"]),

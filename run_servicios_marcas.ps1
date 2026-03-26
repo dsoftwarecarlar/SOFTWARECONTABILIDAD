@@ -175,8 +175,11 @@ function Parse-TabFile {
                 'Cliente' = Normalize-Text $columns[24]
                 'Sub total' = Normalize-Text $columns[25]
                 'Des-cuento' = Normalize-Text $columns[26]
+                'Neto con IVA' = Normalize-Text $columns[27]
+                'Neto Iva 0' = Normalize-Text $columns[28]
                 'Iva 12%' = Normalize-Text $columns[29]
                 'Iva 15%' = Normalize-Text $columns[30]
+                'Inte-reses' = Normalize-Text $columns[31]
                 'Total' = Normalize-Text $columns[32]
                 'Asiento' = Normalize-Text $columns[33]
                 'Gar.Ext.' = Normalize-Text $columns[34]
@@ -206,8 +209,11 @@ function Parse-TabFile {
                 'Cliente' = Normalize-Text $columns[27]
                 'Sub total' = Normalize-Text $columns[28]
                 'Des-cuento' = Normalize-Text $columns[29]
+                'Netosin Iva' = Normalize-Text $columns[30]
+                'Netocon Iva' = Normalize-Text $columns[31]
                 'Iva 15%' = Normalize-Text $columns[32]
                 'Iva 12 %' = Normalize-Text $columns[33]
+                'Interes' = Normalize-Text $columns[34]
                 'Total' = Normalize-Text $columns[35]
                 'Anticipo' = Normalize-Text $columns[36]
                 'NETO' = Normalize-Text $columns[37]
@@ -826,7 +832,44 @@ function Update-PrecontVentasControlFormulas {
     }
 }
 
-function Get-MayorControlBucket {
+function Get-SalesAccountFamilyKey {
+    param(
+        [object]$Account,
+        [switch]$IgnorePrefix
+    )
+
+    $compact = Get-CompactAccountCode $Account
+    if ($compact -notmatch '^(040101\d{2})(\d{4})$') {
+        return (Normalize-Text $Account)
+    }
+
+    $prefix = if ($IgnorePrefix) { '*' } else { $Matches[1] }
+    $suffix = $Matches[2]
+    switch ($suffix) {
+        { $_ -in @('0001', '0002', '0003') } { return "$prefix|VENTA" }
+        { $_ -in @('0010', '0011', '0012') } { return "$prefix|DESCUENTO" }
+        '0014' { return "$prefix|DEVOLUCION" }
+        default { return "$prefix|$suffix" }
+    }
+}
+
+function Get-SalesAccountSuffixKey {
+    param(
+        [object]$Account,
+        [switch]$IgnorePrefix
+    )
+
+    $compact = Get-CompactAccountCode $Account
+    if ($compact -notmatch '^(040101\d{2})(\d{4})$') {
+        return (Normalize-Text $Account)
+    }
+
+    $prefix = if ($IgnorePrefix) { '*' } else { $Matches[1] }
+    $suffix = $Matches[2]
+    return "$prefix|$suffix"
+}
+
+function Get-SalesControlBucket {
     param(
         [object]$Account,
         [object]$Name
@@ -834,28 +877,48 @@ function Get-MayorControlBucket {
 
     $accountText = Normalize-Text $Account
     $nameText = (Normalize-Text $Name).ToUpperInvariant()
+    $compact = Get-CompactAccountCode $accountText
     if ($accountText -eq '' -and $nameText -eq '') {
         return ''
     }
-    if ($accountText -match '^01\.01\.05\.\d{2}\.\d{4}$' -or $nameText.Contains('GARANT')) {
+    if ($compact -match '^010105\d{2}\d{4}$' -or $nameText.Contains('GARANT')) {
         return 'guarantee'
     }
-    if ($accountText -notmatch '^04\.01\.01\.\d{2}\.\d{4}$') {
+    if ($compact -notmatch '^040101\d{2}\d{4}$') {
         return ''
     }
 
-    $suffix = ($accountText -split '\.')[-1]
+    $suffix = $compact.Substring($compact.Length - 4)
     if ($suffix -eq '0014' -or $nameText.Contains('DEVOL')) {
         return 'return'
     }
     if ($suffix -in @('0010', '0011', '0012') -or $nameText.Contains('DESC')) {
         return 'discount'
     }
-    return 'sales'
+    if ($suffix -in @('0001', '0002', '0003') -or $nameText.Contains('VTAS')) {
+        return 'sales'
+    }
+
+    return ''
 }
 
-function Get-MayorControlMetrics {
-    param([object[]]$Rows)
+function Get-MayorControlBucket {
+    param(
+        [object]$Account,
+        [object]$Name
+    )
+
+    return Get-SalesControlBucket -Account $Account -Name $Name
+}
+
+function Get-ControlMetricsFromRows {
+    param(
+        [object[]]$Rows,
+        [string]$AccountProperty,
+        [string]$NameProperty,
+        [string]$DebitProperty,
+        [string]$CreditProperty
+    )
 
     $metrics = [ordered]@{
         InvoiceSales = 0.0
@@ -866,9 +929,9 @@ function Get-MayorControlMetrics {
     }
 
     foreach ($row in @($Rows)) {
-        $bucket = Get-MayorControlBucket -Account $row.account -Name $row.name
-        $debit = To-Number $row.debit
-        $credit = To-Number $row.credit
+        $bucket = Get-SalesControlBucket -Account $row.$AccountProperty -Name $row.$NameProperty
+        $debit = To-Number $row.$DebitProperty
+        $credit = To-Number $row.$CreditProperty
         switch ($bucket) {
             'sales' {
                 $metrics.InvoiceSales += $credit
@@ -895,6 +958,18 @@ function Get-MayorControlMetrics {
     }
 }
 
+function Get-MayorControlMetrics {
+    param([object[]]$Rows)
+
+    return Get-ControlMetricsFromRows -Rows $Rows -AccountProperty 'account' -NameProperty 'name' -DebitProperty 'debit' -CreditProperty 'credit'
+}
+
+function Get-PrecontVentasControlMetrics {
+    param([object[]]$Rows)
+
+    return Get-ControlMetricsFromRows -Rows $Rows -AccountProperty 'Account' -NameProperty 'Description' -DebitProperty 'Debit' -CreditProperty 'Credit'
+}
+
 function Get-RepVtasControlCostTotal {
     param([hashtable]$CostMetrics)
 
@@ -905,6 +980,120 @@ function Get-RepVtasControlCostTotal {
         (To-Number $CostMetrics.CostoSubconNc) +
         (To-Number $CostMetrics.CostoAccesorios)
     ))
+}
+
+function Get-RowsNumericTotal {
+    param(
+        [object]$Worksheet,
+        [object[]]$Rows,
+        [int]$Column
+    )
+
+    $total = 0.0
+    if ($null -eq $Worksheet) {
+        return [double]$total
+    }
+
+    foreach ($item in @($Rows)) {
+        $rowNumber = [int]($item.RowNumber)
+        if ($rowNumber -le 0) {
+            continue
+        }
+
+        $total += (To-Number $Worksheet.Cells.Item($rowNumber, $Column).Value2)
+    }
+
+    return [double](Round-Amount $total)
+}
+
+function Get-PxVisibleAdjustmentTotals {
+    param([object]$Worksheet)
+
+    if ($null -eq $Worksheet) {
+        return @{ Gross = 0.0; Discount = 0.0 }
+    }
+
+    $ranges = @(Get-PxDetailRanges -Worksheet $Worksheet)
+    if ($ranges.Count -lt 2) {
+        return @{ Gross = 0.0; Discount = 0.0 }
+    }
+
+    $bottomRange = $ranges[1]
+    $grossTotal = 0.0
+    $discountTotal = 0.0
+    for ($row = [int]$bottomRange.StartRow; $row -le [int]$bottomRange.EndRow; $row++) {
+        $invoiceText = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
+        if ($invoiceText -eq '') {
+            continue
+        }
+
+        $grossTotal += (To-Number $Worksheet.Cells.Item($row, 12).Value2)
+        $discountTotal += (To-Number $Worksheet.Cells.Item($row, 14).Value2)
+    }
+
+    return @{
+        Gross = [double](Round-Amount $grossTotal)
+        Discount = [double](Round-Amount $discountTotal)
+    }
+}
+
+function Get-SourceControlMetricsFromVisibleSheets {
+    param(
+        [object]$RepWorksheet,
+        [object[]]$InvoiceRows,
+        [object]$NoteWorksheet,
+        [object[]]$NoteRows,
+        [object]$PxWorksheet
+    )
+
+    $invoiceSales = Get-RowsNumericTotal -Worksheet $RepWorksheet -Rows $InvoiceRows -Column 8
+    $invoiceDiscounts = Get-RowsNumericTotal -Worksheet $RepWorksheet -Rows $InvoiceRows -Column 9
+    $noteSales = Get-NoteVisibleSalesTotal -Worksheet $NoteWorksheet -Rows $NoteRows
+    $noteDiscounts = Get-RowsNumericTotal -Worksheet $NoteWorksheet -Rows $NoteRows -Column 11
+    $pxTotals = Get-PxVisibleAdjustmentTotals -Worksheet $PxWorksheet
+
+    $invoiceSales = [double](Round-Amount ($invoiceSales - [double]$pxTotals.Gross))
+    $invoiceDiscounts = [double](Round-Amount ($invoiceDiscounts - [double]$pxTotals.Discount))
+
+    return [pscustomobject]@{
+        InvoiceSales = $invoiceSales
+        InvoiceDiscounts = $invoiceDiscounts
+        NoteSales = [double](Round-Amount $noteSales)
+        NoteDiscounts = [double](Round-Amount $noteDiscounts)
+        NetSales = [double](Round-Amount ($invoiceSales - $invoiceDiscounts - $noteSales + $noteDiscounts))
+    }
+}
+
+function Test-UseSourceControlMetrics {
+    param(
+        [object]$SourceMetrics,
+        [object]$MayorMetrics
+    )
+
+    foreach ($key in @('InvoiceSales', 'InvoiceDiscounts', 'NoteSales', 'NoteDiscounts')) {
+        if ([Math]::Abs((To-Number $SourceMetrics.$key) - (To-Number $MayorMetrics.$key)) -gt 1.0) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Write-ControlMetricsLog {
+    param(
+        [string]$Tag,
+        [string]$BrandKey,
+        [object]$Metrics
+    )
+
+    Write-Output ("INFO|{0}|{1}|invoice_sales={2}|invoice_discounts={3}|note_sales={4}|note_discounts={5}|net_sales={6}" -f `
+        $Tag, `
+        $BrandKey, `
+        ([double](Round-Amount (To-Number $Metrics.InvoiceSales))), `
+        ([double](Round-Amount (To-Number $Metrics.InvoiceDiscounts))), `
+        ([double](Round-Amount (To-Number $Metrics.NoteSales))), `
+        ([double](Round-Amount (To-Number $Metrics.NoteDiscounts))), `
+        ([double](Round-Amount (To-Number $Metrics.NetSales))))
 }
 
 function Set-ControlNumericValue {
@@ -922,20 +1111,73 @@ function Set-ControlNumericValue {
     Set-NumericCellSafe -Worksheet $Worksheet -Row $Row -Column $Column -Value (To-Number $Value) -BlankIfZero
 }
 
+function Get-NoteVisibleSalesTotal {
+    param(
+        [object]$Worksheet,
+        [object[]]$Rows
+    )
+
+    if ($null -eq $Worksheet) {
+        return [double]0
+    }
+
+    $total = 0.0
+    foreach ($item in @($Rows)) {
+        $rowNumber = [int]($item.RowNumber)
+        if ($rowNumber -le 0) {
+            continue
+        }
+
+        $total += (To-Number $Worksheet.Cells.Item($rowNumber, 11).Value2)
+        $total += (To-Number $Worksheet.Cells.Item($rowNumber, 12).Value2)
+        $total += (To-Number $Worksheet.Cells.Item($rowNumber, 13).Value2)
+    }
+
+    return [double](Round-Amount $total)
+}
+
+function Test-PreserveTemplateCostoSheet {
+    param([object]$Worksheet)
+
+    if ($null -eq $Worksheet) {
+        return $false
+    }
+
+    try {
+        $formulaH4 = Normalize-Text $Worksheet.Cells.Item(4, 8).Formula
+        $formulaI4 = Normalize-Text $Worksheet.Cells.Item(4, 9).Formula
+        $formulaJ4 = Normalize-Text $Worksheet.Cells.Item(4, 10).Formula
+    } catch {
+        return $false
+    }
+
+    return $formulaH4.ToUpperInvariant().Contains('SUBTOTAL') -and $formulaI4.ToUpperInvariant().Contains('SUBTOTAL') -and $formulaJ4 -ne ''
+}
+
+function Get-CostoControlTotal {
+    param([object]$Worksheet)
+
+    if ($null -eq $Worksheet) {
+        return [double]0
+    }
+
+    return [double](Round-Amount (To-Number $Worksheet.Cells.Item(4, 10).Value2))
+}
+
 function Update-SalesControlBlocks {
     param(
         [object]$RepWorksheet,
         [object]$NoteWorksheet,
         [object]$RepVtasWorksheet,
-        [object[]]$MayorRows,
-        [hashtable]$CostMetrics
+        [object]$MayorMetrics,
+        [object]$PrecontMetrics,
+        [hashtable]$CostMetrics,
+        [bool]$PreserveRepVtasCostFormula = $false
     )
 
-    $mayorMetrics = Get-MayorControlMetrics -Rows $MayorRows
-
     if ($null -ne $RepWorksheet) {
-        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 4 -Value $mayorMetrics.InvoiceSales
-        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 5 -Value $mayorMetrics.InvoiceDiscounts
+        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 4 -Value $PrecontMetrics.InvoiceSales
+        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 5 -Value $PrecontMetrics.InvoiceDiscounts
         Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 10 -Value $mayorMetrics.InvoiceSales
         Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 11 -Value $mayorMetrics.InvoiceDiscounts
     }
@@ -943,13 +1185,15 @@ function Update-SalesControlBlocks {
     if ($null -ne $NoteWorksheet) {
         Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 4 -Value $mayorMetrics.NoteSales
         Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 5 -Value $mayorMetrics.NoteDiscounts
-        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 6 -Value $mayorMetrics.NoteSales
-        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 7 -Value $mayorMetrics.NoteDiscounts
+        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 6 -Value $PrecontMetrics.NoteSales
+        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 7 -Value $PrecontMetrics.NoteDiscounts
     }
 
     if ($null -ne $RepVtasWorksheet) {
         Set-ControlNumericValue -Worksheet $RepVtasWorksheet -Row 6 -Column 4 -Value $mayorMetrics.NetSales
-        Set-ControlNumericValue -Worksheet $RepVtasWorksheet -Row 6 -Column 5 -Value (Get-RepVtasControlCostTotal -CostMetrics $CostMetrics)
+        if (-not $PreserveRepVtasCostFormula) {
+            Set-ControlNumericValue -Worksheet $RepVtasWorksheet -Row 6 -Column 5 -Value (Get-RepVtasControlCostTotal -CostMetrics $CostMetrics)
+        }
     }
 }
 
@@ -2785,6 +3029,13 @@ function Normalize-SourceRows {
         # consolidar montos en una sola fila con orden en blanco.
         $first = @($group | Sort-Object @{ Expression = { [int]$_.RowIndex } })[0]
         $sumFields = @(
+            'Subtotal',
+            'Discount',
+            'NetoConIva',
+            'NetoSinIva',
+            'NetoIva0',
+            'Anticipo',
+            'Neto',
             'NoteCredit',
             'TotalManoObra',
             'TotalSubcontratos',
@@ -3158,46 +3409,65 @@ function Get-MayorSheetSectionLayouts {
     return $layouts.ToArray()
 }
 
+function Test-MayorBrandAllowsFlexibleAccountMapping {
+    param([string]$BrandKey)
+
+    return (Normalize-Text $BrandKey).ToLowerInvariant() -in @('tyt')
+}
+
 function Get-MayorAccountFamilyKey {
     param([string]$Account)
 
-    $normalized = Normalize-Text $Account
-    if ($normalized -notmatch '^(\d{2}\.\d{2}\.\d{2}\.\d{2})\.(\d{4})$') {
-        return $normalized
-    }
-
-    $prefix = $Matches[1]
-    $suffix = $Matches[2]
-    switch ($suffix) {
-        { $_ -in @('0001', '0002', '0003') } { return "$prefix|VENTA" }
-        { $_ -in @('0010', '0012') } { return "$prefix|DESCUENTO" }
-        '0014' { return "$prefix|DEVOLUCION" }
-        default { return "$prefix|$suffix" }
-    }
+    return Get-MayorAccountFamilyKeyInternal -Account $Account -IgnorePrefix:$false
 }
 
-function Resolve-MayorCompatibleLayout {
+function Get-MayorAccountFamilyKeyInternal {
     param(
         [string]$Account,
-        [object[]]$Layouts,
+        [switch]$IgnorePrefix
+    )
+
+    return Get-SalesAccountFamilyKey -Account $Account -IgnorePrefix:$IgnorePrefix
+}
+
+function Get-MayorAccountSuffixKey {
+    param(
+        [string]$Account,
+        [switch]$IgnorePrefix
+    )
+
+    return Get-SalesAccountSuffixKey -Account $Account -IgnorePrefix:$IgnorePrefix
+}
+
+function Get-MayorAccountLayoutBucket {
+    param(
+        [object]$Account,
+        [object]$Name
+    )
+
+    $bucket = Get-MayorControlBucket -Account $Account -Name $Name
+    if ($bucket -in @('sales', 'discount', 'return')) {
+        return $bucket
+    }
+
+    return ''
+}
+
+function Select-MayorLayoutCandidate {
+    param(
+        [object[]]$Candidates,
         [hashtable]$RowsByLayoutKey
     )
 
-    $familyKey = Get-MayorAccountFamilyKey -Account $Account
-    if ($familyKey -eq '') {
-        return $null
-    }
-
-    $candidates = @(
-        @($Layouts) |
-            Where-Object { (Get-MayorAccountFamilyKey -Account $_.Account) -eq $familyKey } |
+    $ordered = @(
+        @($Candidates) |
             Sort-Object @{ Expression = { [int]$_.EndRow - [int]$_.StartRow + 1 }; Descending = $true }, @{ Expression = { [int]$_.StartRow } }
     )
-    if ($candidates.Count -eq 0) {
+    if ($ordered.Count -eq 0) {
         return $null
     }
 
-    foreach ($candidate in $candidates) {
+    foreach ($candidate in $ordered) {
         $layoutKey = "{0}:{1}-{2}" -f $candidate.Account, [int]$candidate.StartRow, [int]$candidate.EndRow
         $existing = 0
         if ($RowsByLayoutKey.ContainsKey($layoutKey)) {
@@ -3210,7 +3480,53 @@ function Resolve-MayorCompatibleLayout {
         }
     }
 
-    return $candidates[0]
+    return $ordered[0]
+}
+
+function Resolve-MayorCompatibleLayout {
+    param(
+        [string]$Account,
+        [object]$Name,
+        [object[]]$Layouts,
+        [hashtable]$RowsByLayoutKey,
+        [switch]$AllowCrossPrefixFamily
+    )
+
+    $familyKey = Get-MayorAccountFamilyKey -Account $Account
+    if ($familyKey -ne '') {
+        $selected = Select-MayorLayoutCandidate -Candidates @(
+            @($Layouts) |
+                Where-Object { (Get-MayorAccountFamilyKey -Account $_.Account) -eq $familyKey }
+        ) -RowsByLayoutKey $RowsByLayoutKey
+        if ($null -ne $selected) {
+            return $selected
+        }
+    }
+
+    if (-not $AllowCrossPrefixFamily) {
+        return $null
+    }
+
+    $suffixKey = Get-MayorAccountSuffixKey -Account $Account -IgnorePrefix
+    if ($suffixKey -ne '') {
+        $selected = Select-MayorLayoutCandidate -Candidates @(
+            @($Layouts) |
+                Where-Object { (Get-MayorAccountSuffixKey -Account $_.Account -IgnorePrefix) -eq $suffixKey }
+        ) -RowsByLayoutKey $RowsByLayoutKey
+        if ($null -ne $selected) {
+            return $selected
+        }
+    }
+
+    $layoutBucket = Get-MayorAccountLayoutBucket -Account $Account -Name $Name
+    if ($layoutBucket -eq '') {
+        return $null
+    }
+
+    return Select-MayorLayoutCandidate -Candidates @(
+        @($Layouts) |
+            Where-Object { (Get-MayorAccountLayoutBucket -Account $_.Account -Name $_.Name) -eq $layoutBucket }
+    ) -RowsByLayoutKey $RowsByLayoutKey
 }
 
 function Write-MayorDataRow {
@@ -3264,11 +3580,15 @@ function Write-MayorRows-ToWorksheet {
     $rowsByLayoutKey = @{}
     $compatibleMappedAccounts = New-Object System.Collections.Generic.List[string]
     $unmappedAccounts = New-Object System.Collections.Generic.List[string]
+    $allowCrossPrefixFamily = Test-MayorBrandAllowsFlexibleAccountMapping -BrandKey $BrandKey
+    $writtenRowsForMetrics = New-Object System.Collections.Generic.List[object]
 
     foreach ($account in @($rowsByAccount.Keys)) {
         $layout = @($layouts | Where-Object { $_.Account -eq $account } | Select-Object -First 1)[0]
         if ($null -eq $layout) {
-            $layout = Resolve-MayorCompatibleLayout -Account $account -Layouts $layouts -RowsByLayoutKey $rowsByLayoutKey
+            $sampleRows = @($rowsByAccount[$account].ToArray())
+            $sampleName = if ($sampleRows.Count -gt 0) { $sampleRows[0].name } else { '' }
+            $layout = Resolve-MayorCompatibleLayout -Account $account -Name $sampleName -Layouts $layouts -RowsByLayoutKey $rowsByLayoutKey -AllowCrossPrefixFamily:$allowCrossPrefixFamily
             if ($null -eq $layout) {
                 Write-Output ("WARN|mayor_account_unmapped|{0}|{1}|sheet={2}" -f $BrandKey, $account, $Worksheet.Name)
                 $unmappedAccounts.Add([string]$account) | Out-Null
@@ -3321,6 +3641,7 @@ function Write-MayorRows-ToWorksheet {
                     (Get-NumericMatrixValue -Value $accountRow.credit),
                     (Get-NumericMatrixValue -Value $balanceValue)
                 )) | Out-Null
+                $writtenRowsForMetrics.Add($accountRow) | Out-Null
             }
 
             Write-Rows-ToWorksheet -Worksheet $Worksheet -Rows $sheetRows.ToArray() -StartRow ([int]$layout.StartRow) -StartColumn 1
@@ -3361,6 +3682,7 @@ function Write-MayorRows-ToWorksheet {
         SectionCount = $layouts.Count
         UnmappedAccounts = $unmappedAccounts.ToArray()
         CompatibleMappedAccounts = $compatibleMappedAccounts.ToArray()
+        ControlMetrics = (Get-MayorControlMetrics -Rows $writtenRowsForMetrics.ToArray())
     }
 }
 
@@ -3624,6 +3946,17 @@ function Get-CompactAccountCode {
     return $digits
 }
 
+function Format-AccountCode {
+    param([object]$Value)
+
+    $compact = Get-CompactAccountCode $Value
+    if ($compact -match '^\d{12}$') {
+        return ('{0}.{1}.{2}.{3}.{4}' -f $compact.Substring(0, 2), $compact.Substring(2, 2), $compact.Substring(4, 2), $compact.Substring(6, 2), $compact.Substring(8, 4))
+    }
+
+    return (Normalize-Text $Value)
+}
+
 function Get-NormalizedCenterCode {
     param([object]$Value)
 
@@ -3677,6 +4010,246 @@ function Get-Brand-PeriodDateValue {
     }
 
     return [double]$maxDate
+}
+
+function Get-PeriodYearMonth {
+    param([object]$PeriodDateValue)
+
+    try {
+        $periodDate = ([datetime]'1899-12-30').AddDays([double]$PeriodDateValue)
+    } catch {
+        $periodDate = Get-Date
+    }
+
+    return [pscustomobject]@{
+        Year = [int]$periodDate.Year
+        Month = [int]$periodDate.Month
+    }
+}
+
+function Build-PostingDocumentMeta {
+    param([object[]]$RowsPosting)
+
+    $metadata = @{}
+    foreach ($row in @($RowsPosting)) {
+        $docType = (Normalize-Text $row.DocType).ToUpperInvariant()
+        if (@('FA', 'FC') -notcontains $docType) {
+            continue
+        }
+
+        $documentKey = Trim-Document $row.DocumentTrim
+        if ($documentKey -eq '' -or $metadata.ContainsKey($documentKey)) {
+            continue
+        }
+
+        $metadata[$documentKey] = [pscustomobject]@{
+            DocType = $docType
+            Center = (Get-NormalizedCenterCode $row.Center)
+        }
+    }
+
+    return $metadata
+}
+
+function Build-SupplementalMayorRowsFromSource {
+    param(
+        [object[]]$Layouts,
+        [object[]]$MayorRows,
+        [object[]]$RowsDisplay,
+        [object[]]$RowsPosting,
+        [object[]]$PxRows,
+        [object]$PeriodDateValue
+    )
+
+    $existingAccounts = @{}
+    foreach ($row in @($MayorRows)) {
+        $compact = Get-CompactAccountCode $row.account
+        if ($compact -ne '') {
+            $existingAccounts[$compact] = $true
+        }
+    }
+
+    $targetLayouts = @{}
+    foreach ($layout in @($Layouts)) {
+        $compact = Get-CompactAccountCode $layout.Account
+        if ($compact -notmatch '^\d{12}$') {
+            continue
+        }
+        $suffix = $compact.Substring(8, 4)
+        if ((@('0010', '0012', '0014') -contains $suffix) -and -not $existingAccounts.ContainsKey($compact)) {
+            $targetLayouts[$suffix] = $layout
+        }
+    }
+
+    if ($targetLayouts.Count -eq 0) {
+        return @()
+    }
+
+    $invoiceMetaByDocument = Build-PostingDocumentMeta -RowsPosting $RowsPosting
+    $invoiceDiscountTotals = @{ '0010' = @{}; '0012' = @{} }
+    $noteDiscountCreditTotals = @{ '0010' = @{}; '0012' = @{} }
+    $noteSalesTotals = @{}
+
+    foreach ($row in @($RowsDisplay)) {
+        $docType = (Normalize-Text $row.DocType).ToUpperInvariant()
+        if (@('FA', 'FC') -contains $docType) {
+            $documentKey = Trim-Document $row.DocumentTrim
+            $metadata = if ($invoiceMetaByDocument.ContainsKey($documentKey)) { $invoiceMetaByDocument[$documentKey] } else { $null }
+            $actualDocType = if ($null -ne $metadata -and (Normalize-Text $metadata.DocType) -ne '') { (Normalize-Text $metadata.DocType).ToUpperInvariant() } else { $docType }
+            $center = if ($null -ne $metadata) { Get-NormalizedCenterCode $metadata.Center } else { Get-NormalizedCenterCode $row.Center }
+            if ($center -eq '') { $center = '00' }
+            $accountSuffix = if ($actualDocType -eq 'FA') { '0010' } elseif ($actualDocType -eq 'FC') { '0012' } else { '' }
+            if ($accountSuffix -eq '' -or -not $targetLayouts.ContainsKey($accountSuffix)) {
+                continue
+            }
+            $amounts = Get-Invoice-SourceAmounts -Row $row
+            $discountAmount = [double](Round-Amount $amounts.Discount)
+            if ($discountAmount -eq 0.0) {
+                continue
+            }
+            if (-not $invoiceDiscountTotals[$accountSuffix].ContainsKey($center)) {
+                $invoiceDiscountTotals[$accountSuffix][$center] = [double]0
+            }
+            $invoiceDiscountTotals[$accountSuffix][$center] = [double]$invoiceDiscountTotals[$accountSuffix][$center] + $discountAmount
+            continue
+        }
+
+        if (@('DC', 'DE') -notcontains $docType) {
+            continue
+        }
+
+        $affectedKey = Trim-Document $row.AffectedDocumentTrim
+        $metadata = if ($invoiceMetaByDocument.ContainsKey($affectedKey)) { $invoiceMetaByDocument[$affectedKey] } else { $null }
+        $affectedDocType = if ($null -ne $metadata) { (Normalize-Text $metadata.DocType).ToUpperInvariant() } else { '' }
+        $center = if ($null -ne $metadata) { Get-NormalizedCenterCode $metadata.Center } else { Get-NormalizedCenterCode $row.Center }
+        if ($center -eq '') { $center = '00' }
+        $amounts = Get-Note-SourceAmounts -Row $row
+        $noteSalesAmount = [double](Round-Amount ((To-Number $amounts.Discount) + (To-Number $amounts.NetoSinIva) + (To-Number $amounts.NetoConIva)))
+        if ($noteSalesAmount -ne 0.0 -and $targetLayouts.ContainsKey('0014')) {
+            if (-not $noteSalesTotals.ContainsKey($center)) {
+                $noteSalesTotals[$center] = [double]0
+            }
+            $noteSalesTotals[$center] = [double]$noteSalesTotals[$center] + $noteSalesAmount
+        }
+        $discountSuffix = if ($affectedDocType -eq 'FA') { '0010' } else { '0012' }
+        if ($targetLayouts.ContainsKey($discountSuffix)) {
+            $discountCredit = [double](Round-Amount $amounts.Discount)
+            if ($discountCredit -ne 0.0) {
+                if (-not $noteDiscountCreditTotals[$discountSuffix].ContainsKey($center)) {
+                    $noteDiscountCreditTotals[$discountSuffix][$center] = [double]0
+                }
+                $noteDiscountCreditTotals[$discountSuffix][$center] = [double]$noteDiscountCreditTotals[$discountSuffix][$center] + $discountCredit
+            }
+        }
+    }
+
+    $pxDiscountTotals = @{ 'FA' = @{}; 'FC' = @{} }
+    foreach ($pxRow in @(Convert-PxRowsToDetailRows -Rows $PxRows)) {
+        $documentKey = Trim-Document $pxRow.Factura
+        if (-not $invoiceMetaByDocument.ContainsKey($documentKey)) {
+            continue
+        }
+        $metadata = $invoiceMetaByDocument[$documentKey]
+        $actualDocType = (Normalize-Text $metadata.DocType).ToUpperInvariant()
+        if (@('FA', 'FC') -notcontains $actualDocType) {
+            continue
+        }
+        $center = Get-NormalizedCenterCode $metadata.Center
+        if ($center -eq '') { $center = '00' }
+        if (-not $pxDiscountTotals[$actualDocType].ContainsKey($center)) {
+            $pxDiscountTotals[$actualDocType][$center] = [double]0
+        }
+        $pxDiscountTotals[$actualDocType][$center] = [double]$pxDiscountTotals[$actualDocType][$center] + [double](To-Number $pxRow.DescValor)
+    }
+
+    foreach ($pair in @(@('0010', 'FA'), @('0012', 'FC'))) {
+        $suffix = [string]$pair[0]
+        $docType = [string]$pair[1]
+        if (-not $targetLayouts.ContainsKey($suffix)) {
+            continue
+        }
+        foreach ($center in @($pxDiscountTotals[$docType].Keys)) {
+            $currentValue = if ($invoiceDiscountTotals[$suffix].ContainsKey($center)) { [double]$invoiceDiscountTotals[$suffix][$center] } else { 0.0 }
+            $invoiceDiscountTotals[$suffix][$center] = [double](Round-Amount ($currentValue - [double]$pxDiscountTotals[$docType][$center]))
+        }
+    }
+
+    $periodParts = Get-PeriodYearMonth -PeriodDateValue $PeriodDateValue
+    $generated = New-Object System.Collections.Generic.List[object]
+    foreach ($suffix in @('0010', '0012', '0014')) {
+        if (-not $targetLayouts.ContainsKey($suffix)) {
+            continue
+        }
+        $layout = $targetLayouts[$suffix]
+        $accountRows = New-Object System.Collections.Generic.List[object]
+
+        if (@('0010', '0012') -contains $suffix) {
+            foreach ($center in @($invoiceDiscountTotals[$suffix].Keys | Sort-Object)) {
+                $amount = [double](Round-Amount $invoiceDiscountTotals[$suffix][$center])
+                if ($amount -eq 0.0) {
+                    continue
+                }
+                $accountRows.Add([pscustomobject]@{
+                    account = (Format-AccountCode $layout.Account)
+                    name = (Normalize-Text $layout.Name)
+                    ext = 'N'
+                    date_value = [double]$PeriodDateValue
+                    origin = 'VENSE'
+                    seat = '400'
+                    reference = ''
+                    detail = ('CONTA VENTAS - CENTRO{0} PERIODO {1} - {2:00}' -f $center, [int]$periodParts.Year, [int]$periodParts.Month)
+                    debit = [double]$amount
+                    credit = [double]0
+                }) | Out-Null
+            }
+            foreach ($center in @($noteDiscountCreditTotals[$suffix].Keys | Sort-Object)) {
+                $amount = [double](Round-Amount $noteDiscountCreditTotals[$suffix][$center])
+                if ($amount -eq 0.0) {
+                    continue
+                }
+                $accountRows.Add([pscustomobject]@{
+                    account = (Format-AccountCode $layout.Account)
+                    name = (Normalize-Text $layout.Name)
+                    ext = 'N'
+                    date_value = [double]$PeriodDateValue
+                    origin = 'VENSE'
+                    seat = '401'
+                    reference = ''
+                    detail = ('CONTABILIZACION VENTAS - CENTRO{0} PERIODO {1} - {2:00}' -f $center, [int]$periodParts.Year, [int]$periodParts.Month)
+                    debit = [double]0
+                    credit = [double]$amount
+                }) | Out-Null
+            }
+        } else {
+            foreach ($center in @($noteSalesTotals.Keys | Sort-Object)) {
+                $amount = [double](Round-Amount $noteSalesTotals[$center])
+                if ($amount -eq 0.0) {
+                    continue
+                }
+                $accountRows.Add([pscustomobject]@{
+                    account = (Format-AccountCode $layout.Account)
+                    name = (Normalize-Text $layout.Name)
+                    ext = 'N'
+                    date_value = [double]$PeriodDateValue
+                    origin = 'VENSE'
+                    seat = '401'
+                    reference = ''
+                    detail = ('CONTABILIZACION VENTAS - CENTRO{0} PERIODO {1} - {2:00}' -f $center, [int]$periodParts.Year, [int]$periodParts.Month)
+                    debit = [double]$amount
+                    credit = [double]0
+                }) | Out-Null
+            }
+        }
+
+        $runningBalance = [double]0
+        foreach ($item in @($accountRows.ToArray())) {
+            $runningBalance = [double](Round-Amount ($runningBalance + [double](To-Number $item.debit) - [double](To-Number $item.credit)))
+            $item | Add-Member -NotePropertyName balance -NotePropertyValue $runningBalance -Force
+            $generated.Add($item) | Out-Null
+        }
+    }
+
+    return $generated.ToArray()
 }
 
 function Add-GeneratedTemplateRow {
@@ -3843,12 +4416,162 @@ function Read-PrecontCostos2Prototypes {
     return $prototypes.ToArray()
 }
 
+function Select-PrecontTargetAccount {
+    param(
+        [string[]]$Candidates,
+        [hashtable]$AssignedGroupCounts,
+        [hashtable]$AssignedRowCounts
+    )
+
+    $ordered = @(
+        @($Candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique) |
+            Sort-Object `
+                @{ Expression = { if ($AssignedGroupCounts.ContainsKey($_)) { [int]$AssignedGroupCounts[$_] } else { 0 } } }, `
+                @{ Expression = { if ($AssignedRowCounts.ContainsKey($_)) { [int]$AssignedRowCounts[$_] } else { 0 } } }, `
+                @{ Expression = { [string]$_ } }
+    )
+    if ($ordered.Count -eq 0) {
+        return $null
+    }
+
+    return [string]$ordered[0]
+}
+
+function Resolve-PrecontMayorTargetAccount {
+    param(
+        [string]$SourceAccount,
+        [object]$SourceName,
+        [string[]]$CriticalAccounts,
+        [hashtable]$AssignedGroupCounts,
+        [hashtable]$AssignedRowCounts,
+        [switch]$AllowCrossPrefixFamily
+    )
+
+    if ($SourceAccount -in @($CriticalAccounts)) {
+        return $SourceAccount
+    }
+
+    $exactFamilyKey = Get-SalesAccountFamilyKey -Account $SourceAccount
+    if ($exactFamilyKey -ne '') {
+        $selected = Select-PrecontTargetAccount -Candidates @(
+            @($CriticalAccounts) |
+                Where-Object { (Get-SalesAccountFamilyKey -Account $_) -eq $exactFamilyKey }
+        ) -AssignedGroupCounts $AssignedGroupCounts -AssignedRowCounts $AssignedRowCounts
+        if ($null -ne $selected) {
+            return $selected
+        }
+    }
+
+    if ($AllowCrossPrefixFamily) {
+        $suffixKey = Get-SalesAccountSuffixKey -Account $SourceAccount -IgnorePrefix
+        if ($suffixKey -ne '') {
+            $selected = Select-PrecontTargetAccount -Candidates @(
+                @($CriticalAccounts) |
+                    Where-Object { (Get-SalesAccountSuffixKey -Account $_ -IgnorePrefix) -eq $suffixKey }
+            ) -AssignedGroupCounts $AssignedGroupCounts -AssignedRowCounts $AssignedRowCounts
+            if ($null -ne $selected) {
+                return $selected
+            }
+        }
+
+        $familyKey = Get-SalesAccountFamilyKey -Account $SourceAccount -IgnorePrefix
+        if ($familyKey -ne '') {
+            $selected = Select-PrecontTargetAccount -Candidates @(
+                @($CriticalAccounts) |
+                    Where-Object { (Get-SalesAccountFamilyKey -Account $_ -IgnorePrefix) -eq $familyKey }
+            ) -AssignedGroupCounts $AssignedGroupCounts -AssignedRowCounts $AssignedRowCounts
+            if ($null -ne $selected) {
+                return $selected
+            }
+        }
+    }
+
+    $sourceBucket = Get-SalesControlBucket -Account $SourceAccount -Name $SourceName
+    if ($sourceBucket -eq '') {
+        return $null
+    }
+
+    return Select-PrecontTargetAccount -Candidates @(
+        @($CriticalAccounts) |
+            Where-Object { (Get-SalesControlBucket -Account $_ -Name '') -eq $sourceBucket }
+    ) -AssignedGroupCounts $AssignedGroupCounts -AssignedRowCounts $AssignedRowCounts
+}
+
+function Map-MayorRowsToPrecontCriticalAccounts {
+    param(
+        [string[]]$CriticalAccounts,
+        [object[]]$MayorRows,
+        [string]$BrandKey = ''
+    )
+
+    $rowsBySourceAccount = @{}
+    foreach ($mayorRow in @($MayorRows)) {
+        $account = Get-CompactAccountCode $mayorRow.account
+        if ($account -eq '') {
+            continue
+        }
+
+        if (-not $rowsBySourceAccount.ContainsKey($account)) {
+            $rowsBySourceAccount[$account] = New-Object System.Collections.Generic.List[object]
+        }
+
+        $rowsBySourceAccount[$account].Add($mayorRow) | Out-Null
+    }
+
+    $targetRows = @{}
+    $assignedGroupCounts = @{}
+    $assignedRowCounts = @{}
+    foreach ($account in @($CriticalAccounts)) {
+        $targetRows[$account] = New-Object System.Collections.Generic.List[object]
+        $assignedGroupCounts[$account] = 0
+        $assignedRowCounts[$account] = 0
+    }
+
+    $compatibleMappedAccounts = New-Object System.Collections.Generic.List[string]
+    $unmappedAccounts = New-Object System.Collections.Generic.List[string]
+    $allowCrossPrefixFamily = Test-MayorBrandAllowsFlexibleAccountMapping -BrandKey $BrandKey
+
+    foreach ($sourceAccount in @($rowsBySourceAccount.Keys | Sort-Object)) {
+        $sourceRows = @($rowsBySourceAccount[$sourceAccount].ToArray())
+        $sourceName = if ($sourceRows.Count -gt 0) { $sourceRows[0].name } else { '' }
+        $targetAccount = Resolve-PrecontMayorTargetAccount `
+            -SourceAccount $sourceAccount `
+            -SourceName $sourceName `
+            -CriticalAccounts @($CriticalAccounts) `
+            -AssignedGroupCounts $assignedGroupCounts `
+            -AssignedRowCounts $assignedRowCounts `
+            -AllowCrossPrefixFamily:$allowCrossPrefixFamily
+
+        if ($null -eq $targetAccount -or $targetAccount -eq '') {
+            $unmappedAccounts.Add([string]$sourceAccount) | Out-Null
+            continue
+        }
+
+        if ($targetAccount -ne $sourceAccount) {
+            $compatibleMappedAccounts.Add([string]$sourceAccount) | Out-Null
+        }
+
+        foreach ($sourceRow in $sourceRows) {
+            $targetRows[$targetAccount].Add($sourceRow) | Out-Null
+        }
+        $assignedGroupCounts[$targetAccount] = [int]$assignedGroupCounts[$targetAccount] + 1
+        $assignedRowCounts[$targetAccount] = [int]$assignedRowCounts[$targetAccount] + $sourceRows.Count
+    }
+
+    return [pscustomobject]@{
+        RowsByAccount = $targetRows
+        CompatibleMappedAccounts = $compatibleMappedAccounts.ToArray()
+        UnmappedAccounts = $unmappedAccounts.ToArray()
+    }
+}
+
 function New-PrecontVentasGeneratedRows {
     param(
         [object[]]$Prototypes,
         [object[]]$RowsPosting,
         [object[]]$MayorRows,
-        [object[]]$PxRows
+        [object[]]$PxRows,
+        [string]$BrandKey = ''
     )
 
     $generated = New-Object System.Collections.Generic.List[object]
@@ -3954,20 +4677,6 @@ function New-PrecontVentasGeneratedRows {
         $pxDiscountByDocCenter[$docType][$center] = [double]$pxDiscountByDocCenter[$docType][$center] + [double](To-Number $pxRow.DescValor)
     }
 
-    $salesMayorByAccount = @{}
-    foreach ($mayorRow in @($MayorRows)) {
-        $account = Get-CompactAccountCode $mayorRow.account
-        if ($account -eq '') {
-            continue
-        }
-
-        if (-not $salesMayorByAccount.ContainsKey($account)) {
-            $salesMayorByAccount[$account] = New-Object System.Collections.Generic.List[object]
-        }
-
-        $salesMayorByAccount[$account].Add($mayorRow) | Out-Null
-    }
-
     $clientFaPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'FA' -and $_.Description -match '^CLIENTES SERV' })
     $clientFcPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'FC' -and $_.Description -match '^CLIENTES SERV' })
     $clientCaPrototypes = @($Prototypes | Where-Object { $_.Doc -eq 'CA' -and $_.Description -match '^CLIENTES SERV' })
@@ -3998,10 +4707,18 @@ function New-PrecontVentasGeneratedRows {
         $Prototypes | Where-Object { $_.Account -match '^040101\d{2}0014$' } | Select-Object -ExpandProperty Account
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ } | Sort-Object -Unique
 
+    $mayorMapping = Map-MayorRowsToPrecontCriticalAccounts -CriticalAccounts @($criticalAccounts) -MayorRows $MayorRows -BrandKey $BrandKey
+    foreach ($sourceAccount in @($mayorMapping.CompatibleMappedAccounts)) {
+        Write-Output ("WARN|precont_ventas_mayor_compatible_account|{0}|source={1}" -f $BrandKey, $sourceAccount)
+    }
+    foreach ($sourceAccount in @($mayorMapping.UnmappedAccounts)) {
+        Write-Output ("WARN|precont_ventas_mayor_unmapped_account|{0}|source={1}" -f $BrandKey, $sourceAccount)
+    }
+
     foreach ($account in $criticalAccounts) {
         $accountPrototypes = @($Prototypes | Where-Object { $_.Account -eq $account } | Sort-Object @{ Expression = { [int]$_.TemplateRow } })
-        $mayorGroup = if ($salesMayorByAccount.ContainsKey($account)) {
-            @($salesMayorByAccount[$account].ToArray())
+        $mayorGroup = if ($mayorMapping.RowsByAccount.ContainsKey($account)) {
+            @($mayorMapping.RowsByAccount[$account].ToArray())
         } else {
             @()
         }
@@ -5501,7 +6218,11 @@ try {
             $mayorRows = @()
             $mayorResult = $null
             $mayorSheet = $null
+            $mayorLayouts = @()
             try { $mayorSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('VENTAS', 'MAY VTAS') } catch {}
+            if ($null -ne $mayorSheet) {
+                $mayorLayouts = @(Get-MayorSheetSectionLayouts -Worksheet $mayorSheet)
+            }
             if ($null -ne $mayorSheet) {
                 $fillMayorStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 $mayorPath = Resolve-MayorPathForBrand -BrandKey $templateKey -MayorPaths $mayorPaths
@@ -5524,9 +6245,19 @@ try {
                     Write-Output ("WARN|mayor_missing|{0}|sheet_cleared" -f $templateKey)
                 }
             }
+            $mayorControlMetrics = if ($null -ne $mayorResult -and $null -ne $mayorResult.ControlMetrics) { $mayorResult.ControlMetrics } else { Get-MayorControlMetrics -Rows $mayorRows }
 
             $costMetrics = Get-BrandCostMetrics -Rows $rowsRepVtas
             $periodDateValue = Get-Brand-PeriodDateValue -Rows $rowsRepVtas -MayorRows $mayorRows
+            if ($null -ne $mayorSheet) {
+                $supplementalMayorRows = @(Build-SupplementalMayorRowsFromSource -Layouts $mayorLayouts -MayorRows $mayorRows -RowsDisplay $rowsDisplay -RowsPosting $rowsPosting -PxRows $pxRows -PeriodDateValue $periodDateValue)
+                if ($supplementalMayorRows.Count -gt 0) {
+                    $mayorRows = @($mayorRows + $supplementalMayorRows)
+                    $mayorResult = Write-MayorRows-ToWorksheet -Worksheet $mayorSheet -Rows $mayorRows -BrandKey $templateKey
+                    $mayorControlMetrics = if ($null -ne $mayorResult -and $null -ne $mayorResult.ControlMetrics) { $mayorResult.ControlMetrics } else { Get-MayorControlMetrics -Rows $mayorRows }
+                    Write-Output ("INFO|mayor_source_supplement|{0}|rows={1}" -f $templateKey, $supplementalMayorRows.Count)
+                }
+            }
 
             $precontVentasSheet = $null
             $precontCostos2Sheet = $null
@@ -5535,6 +6266,20 @@ try {
             $estadisticasSheet = $null
             $precontVentasCount = 0
             $precontCostos2Count = 0
+            $precontVentasControlMetrics = [pscustomobject]@{
+                InvoiceSales = 0.0
+                InvoiceDiscounts = 0.0
+                NoteSales = 0.0
+                NoteDiscounts = 0.0
+                NetSales = 0.0
+            }
+            $sourceControlMetrics = [pscustomobject]@{
+                InvoiceSales = 0.0
+                InvoiceDiscounts = 0.0
+                NoteSales = 0.0
+                NoteDiscounts = 0.0
+                NetSales = 0.0
+            }
             try { $precontVentasSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionVentas') } catch {}
             try { $precontCostos2Sheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionCostos (2)') } catch {}
             try { $precontCostosSheet = Get-Worksheet-Safe -Workbook $outputWorkbook -CandidateNames @('PrecontabilizacionCostos') } catch {}
@@ -5548,7 +6293,8 @@ try {
                     if ($precontVentasPrototypes.Count -eq 0) {
                         $precontVentasPrototypes = @(Read-PrecontVentasPrototypes -Worksheet $precontVentasSheet)
                     }
-                    $precontVentasRows = New-PrecontVentasGeneratedRows -Prototypes $precontVentasPrototypes -RowsPosting $rowsPosting -MayorRows $mayorRows -PxRows $pxRows
+                    $precontVentasRows = New-PrecontVentasGeneratedRows -Prototypes $precontVentasPrototypes -RowsPosting $rowsPosting -MayorRows $mayorRows -PxRows $pxRows -BrandKey $templateKey
+                    $precontVentasControlMetrics = Get-PrecontVentasControlMetrics -Rows $precontVentasRows
                     $precontVentasCount = Write-PrecontVentasGeneratedRows -Worksheet $precontVentasSheet -Rows $precontVentasRows
                     Refresh-WorksheetPivotTablesSafe -Worksheet $precontVentasSheet -Label 'PrecontabilizacionVentas'
                     Update-PrecontVentasControlFormulas -Worksheet $precontVentasSheet -Rows $precontVentasRows
@@ -5583,18 +6329,34 @@ try {
                     Write-Output ("INFO|estadisticas|{0}|repuestos={1}|lub={2}|subcont={3}|accesorios={4}" -f $templateKey, $costMetrics.CostoRepuestos, $costMetrics.CostoLubricantes, ([double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc), $costMetrics.CostoAccesorios)
                 }
 
+                $preserveRepVtasCostFormula = $false
                 if ($null -ne $costoSheet) {
-                    $costoStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-                    Write-CostoGeneratedRows -Worksheet $costoSheet -Metrics $costMetrics -PeriodDateValue $periodDateValue
-                    Refresh-WorksheetPivotTablesSafe -Worksheet $costoSheet -Label 'COSTO'
-                    $costoStopwatch.Stop()
-                    Write-Output ("INFO|fill_costo_ms|{0}|{1}" -f $templateKey, $costoStopwatch.ElapsedMilliseconds)
-                    Write-Output ("INFO|costo|{0}|total={1}" -f $templateKey, ([double]$costMetrics.CostoRepuestos + [double]$costMetrics.CostoLubricantes + [double]$costMetrics.CostoAccesorios + [double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc))
+                    $preserveRepVtasCostFormula = Test-PreserveTemplateCostoSheet -Worksheet $costoSheet
+                    if ($preserveRepVtasCostFormula) {
+                        Write-Output ("INFO|costo_mode|{0}|template_preserved" -f $templateKey)
+                    } else {
+                        $costoStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                        Write-CostoGeneratedRows -Worksheet $costoSheet -Metrics $costMetrics -PeriodDateValue $periodDateValue
+                        Refresh-WorksheetPivotTablesSafe -Worksheet $costoSheet -Label 'COSTO'
+                        $costoStopwatch.Stop()
+                        Write-Output ("INFO|fill_costo_ms|{0}|{1}" -f $templateKey, $costoStopwatch.ElapsedMilliseconds)
+                        Write-Output ("INFO|costo_mode|{0}|generated" -f $templateKey)
+                        Write-Output ("INFO|costo|{0}|total={1}" -f $templateKey, ([double]$costMetrics.CostoRepuestos + [double]$costMetrics.CostoLubricantes + [double]$costMetrics.CostoAccesorios + [double]$costMetrics.Costo + [double]$costMetrics.CostoSubconNc))
+                    }
                 }
                 if ($null -ne $pxSheet) {
                     Update-PxPeriodAnchor -Worksheet $pxSheet -PeriodDateValue $periodDateValue
                 }
-                Update-SalesControlBlocks -RepWorksheet $repSheet -NoteWorksheet $noteSheet -RepVtasWorksheet $repVtasSheet -MayorRows $mayorRows -CostMetrics $costMetrics
+                $sourceControlMetrics = Get-SourceControlMetricsFromVisibleSheets -RepWorksheet $repSheet -InvoiceRows @($invoiceResult.Rows) -NoteWorksheet $noteSheet -NoteRows @($noteResult.Rows) -PxWorksheet $pxSheet
+                $effectiveControlMetrics = if (Test-UseSourceControlMetrics -SourceMetrics $sourceControlMetrics -MayorMetrics $mayorControlMetrics) { $sourceControlMetrics } else { $mayorControlMetrics }
+                $salesControlMode = if ($effectiveControlMetrics -eq $sourceControlMetrics) { 'source_fallback' } else { 'mayor_aligned' }
+                Write-ControlMetricsLog -Tag 'mayor_control_metrics' -BrandKey $templateKey -Metrics $mayorControlMetrics
+                Write-ControlMetricsLog -Tag 'source_control_metrics' -BrandKey $templateKey -Metrics $sourceControlMetrics
+                Write-ControlMetricsLog -Tag 'precont_control_metrics' -BrandKey $templateKey -Metrics $precontVentasControlMetrics
+                Write-Output ("INFO|sales_control_mode|{0}|mode={1}" -f $templateKey, $salesControlMode)
+                $repVtasCostTotal = if ($preserveRepVtasCostFormula) { Get-CostoControlTotal -Worksheet $costoSheet } else { [double](Round-Amount (Get-RepVtasControlCostTotal -CostMetrics $costMetrics)) }
+                Write-Output ("INFO|rep_vtas_cost_total|{0}|value={1}" -f $templateKey, $repVtasCostTotal)
+                Update-SalesControlBlocks -RepWorksheet $repSheet -NoteWorksheet $noteSheet -RepVtasWorksheet $repVtasSheet -MayorMetrics $effectiveControlMetrics -PrecontMetrics $effectiveControlMetrics -CostMetrics $costMetrics -PreserveRepVtasCostFormula:$preserveRepVtasCostFormula
             } finally {
                 if ($null -ne $estadisticasSheet) {
                     [void][Runtime.Interopservices.Marshal]::ReleaseComObject($estadisticasSheet)
