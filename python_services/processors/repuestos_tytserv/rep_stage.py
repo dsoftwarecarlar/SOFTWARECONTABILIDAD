@@ -168,6 +168,19 @@ def load_source_workbook(path: Path, label: str) -> SourceWorkbook:
     )
 
 
+def ensure_rep_sheet_capacity(
+    target: Worksheet,
+    template_total_row: int,
+    template_mayor_row: int,
+    required_total_row: int,
+) -> tuple[int, int, int]:
+    added_rows = max(0, required_total_row - template_total_row)
+    if added_rows > 0:
+        target.insert_rows(template_total_row, amount=added_rows)
+
+    return template_total_row + added_rows, template_mayor_row + added_rows, added_rows
+
+
 def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple[int, int, int]:
     template_total_row = find_row_containing(
         target,
@@ -194,6 +207,13 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
         max(REP_DETAIL_START_ROW, template_total_row - 1),
         REP_MAX_COLUMN,
     )
+    shifted_total_row, shifted_mayor_row, added_rows = ensure_rep_sheet_capacity(
+        target,
+        template_total_row,
+        template_mayor_row,
+        source.total_row,
+    )
+    old_last_row = max(target.max_row, shifted_mayor_row, 200)
     affected_rows = unmerge_ranges_in_band(
         target,
         REP_DETAIL_START_ROW,
@@ -205,8 +225,8 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
         if row >= REP_DETAIL_START_ROW:
             if row < source.total_row and (row >= template_total_row or row in affected_rows):
                 copy_row_style(target, target, detail_style_row, row, REP_MAX_COLUMN)
-            elif row == source.total_row and (row != template_total_row or row in affected_rows):
-                copy_row_style(target, target, template_total_row, row, REP_MAX_COLUMN)
+            elif row == source.total_row and (row != shifted_total_row or row in affected_rows):
+                copy_row_style(target, target, shifted_total_row, row, REP_MAX_COLUMN)
 
         for column in range(1, REP_MAX_COLUMN + 1):
             cell = target.cell(row=row, column=column)
@@ -225,7 +245,7 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
 
     actual_mayor_row = prepare_marker_row(
         target,
-        template_mayor_row,
+        shifted_mayor_row,
         source.total_row + 1,
         REP_MAX_COLUMN,
         14,
@@ -233,7 +253,7 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
     clear_rows(
         target,
         actual_mayor_row + 1,
-        max(old_last_row, source.last_row + 10),
+        max(old_last_row, source.last_row + added_rows + 10),
         REP_MAX_COLUMN,
     )
 

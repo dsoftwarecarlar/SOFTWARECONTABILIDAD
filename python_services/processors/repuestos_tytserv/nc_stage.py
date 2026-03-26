@@ -242,6 +242,19 @@ def copy_template_value_row(source: Worksheet, target: Worksheet, source_row: in
             target_cell.value = 0
 
 
+def ensure_nc_sheet_capacity(
+    target: Worksheet,
+    template_total_row: int,
+    template_mayor_row: int,
+    required_total_row: int,
+) -> tuple[int, int, int]:
+    added_rows = max(0, required_total_row - template_total_row)
+    if added_rows > 0:
+        target.insert_rows(template_total_row, amount=added_rows)
+
+    return template_total_row + added_rows, template_mayor_row + added_rows, added_rows
+
+
 def copy_source_to_nc_sheet_with_template(
     source: NcSourceWorkbook,
     target: Worksheet,
@@ -281,20 +294,26 @@ def copy_source_to_nc_sheet_with_template(
             template_values_sheet,
         )
 
+    shifted_total_row, shifted_mayor_row, added_rows = ensure_nc_sheet_capacity(
+        target,
+        template_total_row,
+        template_mayor_row,
+        source.total_row,
+    )
     affected_rows = unmerge_ranges_in_band(
         target,
         NC_DETAIL_START_ROW,
         source.total_row,
         NC_MAX_COLUMN,
     )
-    old_last_row = max(target.max_row, template_mayor_row, 200)
+    old_last_row = max(target.max_row, shifted_mayor_row, 200)
 
     for row in range(1, source.total_row + 1):
         if row >= NC_DETAIL_START_ROW:
             if row < source.total_row and (row >= template_total_row or row in affected_rows):
                 copy_row_style(target, target, detail_style_row, row, NC_MAX_COLUMN)
-            elif row == source.total_row and (row != template_total_row or row in affected_rows):
-                copy_row_style(target, target, template_total_row, row, NC_MAX_COLUMN)
+            elif row == source.total_row and (row != shifted_total_row or row in affected_rows):
+                copy_row_style(target, target, shifted_total_row, row, NC_MAX_COLUMN)
 
         for column in range(1, NC_MAX_COLUMN + 1):
             cell = target.cell(row=row, column=column)
@@ -310,7 +329,7 @@ def copy_source_to_nc_sheet_with_template(
 
     actual_mayor_row = prepare_marker_row(
         target,
-        template_mayor_row,
+        shifted_mayor_row,
         source.total_row + 1,
         NC_MAX_COLUMN,
         22,
@@ -318,7 +337,7 @@ def copy_source_to_nc_sheet_with_template(
     clear_rows(
         target,
         actual_mayor_row + 1,
-        max(old_last_row, source.total_row + 10),
+        max(old_last_row, source.total_row + added_rows + 10),
         NC_MAX_COLUMN,
     )
 
