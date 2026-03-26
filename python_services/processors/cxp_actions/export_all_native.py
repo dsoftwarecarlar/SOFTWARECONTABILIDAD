@@ -113,9 +113,9 @@ def clone_sheet_layout(source: Worksheet, target: Worksheet) -> None:
     target.page_setup = copy(source.page_setup)
     target.print_options = copy(source.print_options)
     target.sheet_format = copy(source.sheet_format)
-    target.freeze_panes = source.freeze_panes
     target.auto_filter.ref = source.auto_filter.ref
     target.sheet_state = source.sheet_state
+    target.views = deepcopy(source.views)
 
     for key, dimension in source.column_dimensions.items():
         target_dimension = target.column_dimensions[key]

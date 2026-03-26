@@ -86,6 +86,7 @@ final class RepuestosRunner
             'excel_name' => basename($generatedPath),
             'download_url' => AppUrl::route('downloads.show', ['file' => basename($generatedPath)]),
             'summary' => is_array($result['metadata']['summary'] ?? null) ? $result['metadata']['summary'] : [],
+            'integrity_checks' => is_array($result['metadata']['integrity_checks'] ?? null) ? $result['metadata']['integrity_checks'] : [],
             'console' => (string) ($result['metadata']['console'] ?? ''),
             'generated_at' => date('Y-m-d H:i:s'),
             'output_origin' => (string) ($result['metadata']['output_origin'] ?? 'default_path'),

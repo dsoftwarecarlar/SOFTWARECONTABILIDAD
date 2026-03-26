@@ -1725,43 +1725,91 @@ def update_precont_ventas_control_formulas(worksheet: Any, rows: list[dict[str, 
     )
 
 
-def update_rep_and_note_control_formulas(rep_worksheet: Any, note_worksheet: Any, rows: list[dict[str, Any]]) -> None:
-    sales_contado_account = first_generated_account(rows, r"040101\d{2}0001")
-    sales_credito_account = first_generated_account(rows, r"040101\d{2}0003")
-    discount_contado_account = first_generated_account(rows, r"040101\d{2}0010")
-    discount_credito_account = first_generated_account(rows, r"040101\d{2}0012")
-    return_contado_account = first_generated_account(rows, r"040101\d{2}0014")
+def classify_mayor_control_bucket(account: Any, name: Any) -> str:
+    account_text = normalize_text(account)
+    name_text = normalize_text(name).upper()
+    if account_text == "" and name_text == "":
+        return ""
+    if re.fullmatch(r"01\.01\.05\.\d{2}\.\d{4}", account_text) or "GARANT" in name_text:
+        return "guarantee"
+    if re.fullmatch(r"04\.01\.01\.\d{2}\.\d{4}", account_text) is None:
+        return ""
+    suffix = account_text.split(".")[-1]
+    if suffix == "0014" or "DEVOL" in name_text:
+        return "return"
+    if suffix in {"0010", "0011", "0012"} or "DESC" in name_text:
+        return "discount"
+    return "sales"
+
+
+def get_mayor_control_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
+    metrics = {
+        "InvoiceSales": 0.0,
+        "InvoiceDiscounts": 0.0,
+        "NoteSales": 0.0,
+        "NoteDiscounts": 0.0,
+        "NetSales": 0.0,
+    }
+    for row in rows:
+        bucket = classify_mayor_control_bucket(row.get("account"), row.get("name"))
+        debit = to_number(row.get("debit"))
+        credit = to_number(row.get("credit"))
+        if bucket == "sales":
+            metrics["InvoiceSales"] += credit
+            metrics["NetSales"] += credit - debit
+            continue
+        if bucket == "discount":
+            metrics["InvoiceDiscounts"] += debit
+            metrics["NoteDiscounts"] += credit
+            metrics["NetSales"] += credit - debit
+            continue
+        if bucket == "return":
+            metrics["NoteSales"] += debit
+            metrics["NetSales"] += credit - debit
+    return {key: float(round_amount(value)) for key, value in metrics.items()}
+
+
+def get_rep_vtas_control_cost_total(metrics: dict[str, float]) -> float:
+    return float(
+        round_amount(
+            to_number(metrics.get("CostoRepuestos"))
+            + to_number(metrics.get("CostoLubricantes"))
+            + to_number(metrics.get("Costo"))
+            + to_number(metrics.get("CostoSubconNc"))
+            + to_number(metrics.get("CostoAccesorios"))
+        )
+    )
+
+
+def set_control_numeric_value(worksheet: Any, row: int, column: int, value: Any) -> None:
+    if worksheet is None:
+        return
+    set_numeric_cell_safe(worksheet, row, column, to_number(value), blank_if_zero=True)
+
+
+def update_sales_control_blocks(
+    rep_worksheet: Any,
+    note_worksheet: Any,
+    rep_vtas_worksheet: Any,
+    mayor_rows: list[dict[str, Any]],
+    cost_metrics: dict[str, float],
+) -> None:
+    mayor_metrics = get_mayor_control_metrics(mayor_rows)
     if rep_worksheet is not None:
-        rep_sales_formula = "=0"
-        rep_discount_formula = "=0"
-        if sales_contado_account or sales_credito_account:
-            rep_sales_formula = "="
-            if sales_contado_account:
-                rep_sales_formula += new_sumif_account_formula("PrecontabilizacionVentas", "I", sales_contado_account, "+")
-            if sales_credito_account:
-                rep_sales_formula += new_sumif_account_formula("PrecontabilizacionVentas", "I", sales_credito_account, "+")
-        if discount_contado_account or discount_credito_account:
-            rep_discount_formula = "="
-            if discount_contado_account:
-                rep_discount_formula += new_sumif_account_formula("PrecontabilizacionVentas", "H", discount_contado_account, "+")
-            if discount_credito_account:
-                rep_discount_formula += new_sumif_account_formula("PrecontabilizacionVentas", "H", discount_credito_account, "+")
-        rep_worksheet.Range("D9").Formula = rep_sales_formula
-        rep_worksheet.Range("E9").Formula = rep_discount_formula
+        set_control_numeric_value(rep_worksheet, 9, 4, mayor_metrics["InvoiceSales"])
+        set_control_numeric_value(rep_worksheet, 9, 5, mayor_metrics["InvoiceDiscounts"])
+        set_control_numeric_value(rep_worksheet, 9, 10, mayor_metrics["InvoiceSales"])
+        set_control_numeric_value(rep_worksheet, 9, 11, mayor_metrics["InvoiceDiscounts"])
 
     if note_worksheet is not None:
-        note_return_formula = "=0"
-        note_discount_formula = "=0"
-        if return_contado_account:
-            note_return_formula = "=" + new_sumif_account_formula("PrecontabilizacionVentas", "H", return_contado_account, "+")
-        if discount_contado_account or discount_credito_account:
-            note_discount_formula = "="
-            if discount_contado_account:
-                note_discount_formula += new_sumif_account_formula("PrecontabilizacionVentas", "I", discount_contado_account, "+")
-            if discount_credito_account:
-                note_discount_formula += new_sumif_account_formula("PrecontabilizacionVentas", "I", discount_credito_account, "+")
-        note_worksheet.Range("F4").Formula = note_return_formula
-        note_worksheet.Range("G4").Formula = note_discount_formula
+        set_control_numeric_value(note_worksheet, 4, 4, mayor_metrics["NoteSales"])
+        set_control_numeric_value(note_worksheet, 4, 5, mayor_metrics["NoteDiscounts"])
+        set_control_numeric_value(note_worksheet, 4, 6, mayor_metrics["NoteSales"])
+        set_control_numeric_value(note_worksheet, 4, 7, mayor_metrics["NoteDiscounts"])
+
+    if rep_vtas_worksheet is not None:
+        set_control_numeric_value(rep_vtas_worksheet, 6, 4, mayor_metrics["NetSales"])
+        set_control_numeric_value(rep_vtas_worksheet, 6, 5, get_rep_vtas_control_cost_total(cost_metrics))
 
 
 def write_px_rows_to_worksheet(worksheet: Any, rows: list[list[Any]], brand_key: str = "") -> dict[str, Any]:
@@ -2330,7 +2378,6 @@ def run_runtime(args: RuntimeArgs) -> int:
                 precont_ventas_count = write_precont_ventas_generated_rows(precont_ventas_sheet, precont_ventas_rows)
                 refresh_worksheet_pivot_tables_safe(precont_ventas_sheet, "PrecontabilizacionVentas")
                 update_precont_ventas_control_formulas(precont_ventas_sheet, precont_ventas_rows)
-                update_rep_and_note_control_formulas(rep_sheet, note_sheet, precont_ventas_rows)
                 print(f"INFO|fill_precont_ventas_ms|{template_key}|{int((time.perf_counter() - fill_start) * 1000)}")
                 print(f"INFO|precont_ventas|{template_key}|rows={precont_ventas_count}")
 
@@ -2346,6 +2393,7 @@ def run_runtime(args: RuntimeArgs) -> int:
                 write_costo_generated_rows(costo_sheet, cost_metrics, period_date_value)
                 refresh_worksheet_pivot_tables_safe(costo_sheet, "COSTO")
                 update_px_period_anchor(px_sheet, period_date_value)
+                update_sales_control_blocks(rep_sheet, note_sheet, rep_vtas_sheet, mayor_rows, cost_metrics)
 
                 try:
                     output_workbook.Application.CalculateFull()

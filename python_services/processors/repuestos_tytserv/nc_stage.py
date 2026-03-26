@@ -12,13 +12,14 @@ from openpyxl.worksheet.worksheet import Worksheet
 from ..contracts import ProcessRequest, ProcessResult
 from ..cxp_actions.accion3_native import write_workbook_with_retries
 from .workbook_tools import (
+    apply_row_merge_definitions,
+    clear_merges_in_row_range,
     clear_rows,
     clear_row_values,
     copy_row_style,
-    find_style_source_row,
+    get_row_merge_definitions,
     load_workbook_quiet,
     prepare_marker_row,
-    unmerge_ranges_in_band,
     write_literal_string,
 )
 
@@ -42,6 +43,7 @@ HEADER_CHECKS = (
     (7, 36, "TOT. NC"),
     (7, 41, "ASIENTO"),
 )
+TOTAL_SIGNATURE_COLUMNS = (13, 22, 23, 24, 25, 26, 27, 28, 30, 33, 34, 36, 37, 39, 40)
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class NcSourceWorkbook:
     worksheet: Worksheet | None
     total_row: int
     detail_signature: tuple[int, str]
+    total_signature: tuple[int, str]
     is_empty: bool = False
 
 
@@ -128,7 +131,7 @@ def build_detail_signature(worksheet: Worksheet, total_row: int) -> tuple[int, s
     import hashlib
 
     rows: list[str] = []
-    for row in range(NC_DETAIL_START_ROW, total_row + 1):
+    for row in range(NC_DETAIL_START_ROW, total_row):
         values = [worksheet_text(worksheet, row, column) for column in range(1, NC_MAX_COLUMN + 1)]
         if all(value == "" for value in values):
             continue
@@ -136,6 +139,17 @@ def build_detail_signature(worksheet: Worksheet, total_row: int) -> tuple[int, s
 
     digest = hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
     return len(rows), digest
+
+
+def build_total_signature(worksheet: Worksheet, total_row: int) -> tuple[int, str]:
+    import hashlib
+
+    if total_row < NC_DETAIL_START_ROW:
+        return 0, hashlib.sha256(b"").hexdigest()
+
+    values = [worksheet_text(worksheet, total_row, column) for column in TOTAL_SIGNATURE_COLUMNS]
+    digest = hashlib.sha256("|".join(values).encode("utf-8")).hexdigest()
+    return len(values), digest
 
 
 def empty_detail_signature() -> tuple[int, str]:
@@ -152,15 +166,9 @@ def apply_empty_source_to_nc_sheet(
     template_values_sheet: Worksheet,
 ) -> tuple[int, int, int]:
     old_last_row = max(target.max_row, template_mayor_row, 200)
-    affected_rows = unmerge_ranges_in_band(
-        target,
-        NC_DETAIL_START_ROW,
-        template_mayor_row,
-        NC_MAX_COLUMN,
-    )
 
     for row in range(NC_DETAIL_START_ROW, template_total_row):
-        if row != detail_style_row or row in affected_rows:
+        if row != detail_style_row:
             copy_row_style(target, target, detail_style_row, row, NC_MAX_COLUMN)
         clear_row_values(target, row, NC_MAX_COLUMN)
 
@@ -201,6 +209,7 @@ def load_source_workbook(path: Path, label: str) -> NcSourceWorkbook:
                 worksheet=None,
                 total_row=NC_DETAIL_START_ROW - 1,
                 detail_signature=empty_detail_signature(),
+                total_signature=empty_detail_signature(),
                 is_empty=True,
             )
         raise RuntimeError(
@@ -220,6 +229,7 @@ def load_source_workbook(path: Path, label: str) -> NcSourceWorkbook:
         worksheet=worksheet,
         total_row=total_row,
         detail_signature=build_detail_signature(worksheet, total_row),
+        total_signature=build_total_signature(worksheet, total_row),
     )
 
 
@@ -248,9 +258,17 @@ def ensure_nc_sheet_capacity(
     template_mayor_row: int,
     required_total_row: int,
 ) -> tuple[int, int, int]:
-    added_rows = max(0, required_total_row - template_total_row)
+    current_last_detail_row = template_total_row - 1
+    required_last_detail_row = required_total_row - 1
+    added_rows = max(0, required_last_detail_row - current_last_detail_row)
     if added_rows > 0:
+        detail_template_row = max(NC_DETAIL_START_ROW, current_last_detail_row)
+        detail_merges = get_row_merge_definitions(target, detail_template_row, NC_MAX_COLUMN)
         target.insert_rows(template_total_row, amount=added_rows)
+        for offset in range(added_rows):
+            row_number = template_total_row + offset
+            copy_row_style(target, target, detail_template_row, row_number, NC_MAX_COLUMN)
+            apply_row_merge_definitions(target, row_number, detail_merges)
 
     return template_total_row + added_rows, template_mayor_row + added_rows, added_rows
 
@@ -278,12 +296,8 @@ def copy_source_to_nc_sheet_with_template(
     if template_total_row is None or template_mayor_row is None:
         raise RuntimeError(f"La hoja {target.title} no tiene filas base TOTAL GENERAL/MAYOR.")
 
-    detail_style_row = find_style_source_row(
-        target,
-        NC_DETAIL_START_ROW,
-        max(NC_DETAIL_START_ROW, template_total_row - 1),
-        NC_MAX_COLUMN,
-    )
+    detail_style_row = max(NC_DETAIL_START_ROW, template_total_row - 1)
+    total_merges = get_row_merge_definitions(target, template_total_row, NC_MAX_COLUMN)
 
     if source.is_empty:
         return apply_empty_source_to_nc_sheet(
@@ -300,21 +314,14 @@ def copy_source_to_nc_sheet_with_template(
         template_mayor_row,
         source.total_row,
     )
-    affected_rows = unmerge_ranges_in_band(
-        target,
-        NC_DETAIL_START_ROW,
-        source.total_row,
-        NC_MAX_COLUMN,
-    )
     old_last_row = max(target.max_row, shifted_mayor_row, 200)
 
-    for row in range(1, source.total_row + 1):
-        if row >= NC_DETAIL_START_ROW:
-            if row < source.total_row and (row >= template_total_row or row in affected_rows):
-                copy_row_style(target, target, detail_style_row, row, NC_MAX_COLUMN)
-            elif row == source.total_row and (row != shifted_total_row or row in affected_rows):
-                copy_row_style(target, target, shifted_total_row, row, NC_MAX_COLUMN)
+    if source.total_row != shifted_total_row:
+        copy_row_style(target, target, shifted_total_row, source.total_row, NC_MAX_COLUMN)
+        clear_merges_in_row_range(target, source.total_row, source.total_row, NC_MAX_COLUMN)
+        apply_row_merge_definitions(target, source.total_row, total_merges)
 
+    for row in range(1, source.total_row + 1):
         for column in range(1, NC_MAX_COLUMN + 1):
             cell = target.cell(row=row, column=column)
             if isinstance(cell, MergedCell):
@@ -381,6 +388,19 @@ def run(request: ProcessRequest) -> ProcessResult:
                 f"La hoja {target.title} no conserva el detalle NC del archivo subido. "
                 f"Filas fuente={source.detail_signature[0]}, filas salida={target_signature[0]}."
             )
+        if not source.is_empty:
+            output_total_row = find_row_containing(
+                target,
+                "TOTAL GENERAL",
+                1,
+                max(target.max_row, 200),
+                NC_MAX_COLUMN,
+            )
+            output_total_signature = build_total_signature(target, output_total_row or source.total_row)
+            if output_total_signature != source.total_signature:
+                raise RuntimeError(
+                    f"La hoja {target.title} no conserva la fila TOTAL GENERAL del archivo subido."
+                )
 
         summary.append({"label": str(config["label"]), "rows": source.detail_signature[0]})
         nc_metadata[str(config["key"])] = {

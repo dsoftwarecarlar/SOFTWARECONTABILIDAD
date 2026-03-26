@@ -11,6 +11,12 @@ use RuntimeException;
 final class ServiciosMarcasRunner
 {
     private const ACTIVE_STATUSES = ['queued', 'running', 'cancel_requested'];
+    private const MAYOR_VENTAS_PATTERNS = [
+        'changan' => '/04\.01\.01\.12\.(0001|0002|0003|0010|0012|0014)/',
+        'peug' => '/04\.01\.01\.13\.(0001|0002|0003|0010|0012|0014)/',
+        'szk' => '/04\.01\.01\.14\.(0001|0002|0003|0010|0012|0014)/',
+        'tyt' => '/04\.01\.01\.11\.(0001|0002|0003|0010|0012|0014)/',
+    ];
 
     public function __construct(
         private ExternalProcessService $processes,
@@ -162,6 +168,7 @@ final class ServiciosMarcasRunner
         }
 
         $storedFiles = $this->persistUploadedInputs($uploadedFiles, $brandKey, $config);
+        $this->validateMayorVentasUploads($storedFiles, $config, $brandKey);
         $inputPath = (string) ($storedFiles['repventas_file'] ?? '');
         if ($inputPath === '' || !is_file($inputPath)) {
             throw new RuntimeException('No se pudo preparar el archivo REP VENTAS para el worker.');
@@ -554,6 +561,76 @@ final class ServiciosMarcasRunner
         }
 
         return $storedFiles;
+    }
+
+    /**
+     * @param array<string, string> $storedFiles
+     * @param array<string, mixed> $config
+     */
+    private function validateMayorVentasUploads(array $storedFiles, array $config, string $brandKey): void
+    {
+        foreach ((array) ($config['upload_definitions'] ?? []) as $field => $meta) {
+            if (!is_array($meta)) {
+                continue;
+            }
+
+            $scope = (string) ($meta['scope'] ?? 'common');
+            if ($scope !== 'brand') {
+                continue;
+            }
+
+            $definitionBrand = trim((string) ($meta['brand'] ?? ''));
+            if ($definitionBrand === '' || !str_contains((string) $field, 'mayor_')) {
+                continue;
+            }
+
+            if ($brandKey !== '' && $definitionBrand !== $brandKey) {
+                continue;
+            }
+
+            $path = (string) ($storedFiles[$field] ?? '');
+            if ($path === '' || !is_file($path)) {
+                continue;
+            }
+
+            $this->assertMayorVentasUploadMatchesBrand(
+                $definitionBrand,
+                $path,
+                (string) ($meta['label'] ?? $field)
+            );
+        }
+    }
+
+    private function assertMayorVentasUploadMatchesBrand(string $brandKey, string $path, string $label): void
+    {
+        $pattern = self::MAYOR_VENTAS_PATTERNS[$brandKey] ?? null;
+        if ($pattern === null) {
+            return;
+        }
+
+        $contents = @file_get_contents($path);
+        if ($contents === false || trim($contents) === '') {
+            throw new RuntimeException('El archivo de ' . $label . ' esta vacio o no se pudo leer.');
+        }
+
+        if (preg_match($pattern, $contents) === 1) {
+            return;
+        }
+
+        $firstDetectedAccount = '';
+        if (preg_match('/\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{4}/', $contents, $matches) === 1) {
+            $firstDetectedAccount = (string) ($matches[0] ?? '');
+        }
+
+        $suffix = $firstDetectedAccount !== ''
+            ? ' Se detecto la cuenta ' . $firstDetectedAccount . '.'
+            : '';
+
+        throw new RuntimeException(
+            'El archivo de ' . $label . ' no corresponde al MAYOR VENTAS de la marca seleccionada.' .
+            $suffix .
+            ' Debe incluir cuentas 04.01.01.xx.xxxx.'
+        );
     }
 
     /**

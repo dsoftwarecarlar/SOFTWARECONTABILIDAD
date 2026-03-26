@@ -54,6 +54,66 @@ def copy_row_style(
         copy_cell_style(source_cell, target_cell)
 
 
+def get_row_merge_definitions(
+    worksheet: Worksheet,
+    row_number: int,
+    last_column: int | None = None,
+    start_column: int = 1,
+) -> list[tuple[int, int]]:
+    definitions: list[tuple[int, int]] = []
+    max_column = None if last_column is None else int(last_column)
+    for merged_range in worksheet.merged_cells.ranges:
+        if merged_range.min_row != row_number or merged_range.max_row != row_number:
+            continue
+        if merged_range.max_col < start_column:
+            continue
+        if max_column is not None and merged_range.min_col > max_column:
+            continue
+        definitions.append((int(merged_range.min_col), int(merged_range.max_col)))
+    definitions.sort()
+    return definitions
+
+
+def clear_merges_in_row_range(
+    worksheet: Worksheet,
+    start_row: int,
+    end_row: int,
+    last_column: int | None = None,
+    start_column: int = 1,
+) -> None:
+    if start_row > end_row:
+        return
+
+    max_column = None if last_column is None else int(last_column)
+    to_unmerge: list[str] = []
+    for merged_range in list(worksheet.merged_cells.ranges):
+        if merged_range.min_row < start_row or merged_range.max_row > end_row:
+            continue
+        if merged_range.max_col < start_column:
+            continue
+        if max_column is not None and merged_range.min_col > max_column:
+            continue
+        to_unmerge.append(str(merged_range))
+
+    for range_ref in to_unmerge:
+        worksheet.unmerge_cells(range_ref)
+
+
+def apply_row_merge_definitions(
+    worksheet: Worksheet,
+    row_number: int,
+    merge_definitions: list[tuple[int, int]],
+) -> None:
+    clear_merges_in_row_range(worksheet, row_number, row_number)
+    for left, right in merge_definitions:
+        worksheet.merge_cells(
+            start_row=row_number,
+            start_column=int(left),
+            end_row=row_number,
+            end_column=int(right),
+        )
+
+
 def row_has_merged_cells(
     worksheet: Worksheet,
     row_number: int,

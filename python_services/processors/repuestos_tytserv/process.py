@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from openpyxl.cell.cell import MergedCell
+from openpyxl.worksheet.views import Selection
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..contracts import ProcessRequest, ProcessResult
@@ -26,6 +27,20 @@ REP_MAYOR_SPECS = {
     "peug": {"sheet": "REP PEUGT", "my_sheet": "MY REP PEUG", "sales_column": 9, "discount_column": 8, "discount_target_column": 18},
     "chgn": {"sheet": "REP CHGN", "my_sheet": "MY REP CHGN", "sales_column": 10, "discount_column": 9, "discount_target_column": 19},
     "szk": {"sheet": "REP SZK", "my_sheet": "MY REP SZK", "sales_column": 9, "discount_column": 8, "discount_target_column": 18},
+}
+OPEN_VIEW_SPECS = {
+    "REP TYT": {"active_cell": "A11", "top_left_cell": "A9", "tab_selected": True},
+    "REP PEUGT": {"active_cell": "A11", "top_left_cell": "A9"},
+    "REP CHGN": {"active_cell": "A11", "top_left_cell": "A9"},
+    "REP SZK": {"active_cell": "A11", "top_left_cell": "A9"},
+    "NC REP TYT": {"active_cell": "A8", "top_left_cell": "A5"},
+    "NC REP PEUG": {"active_cell": "A8", "top_left_cell": "A5"},
+    "NC REP SZK": {"active_cell": "A8", "top_left_cell": "A5"},
+    "MY REP TYT": {"active_cell": "A1", "top_left_cell": "A1"},
+    "MY REP PEUG": {"active_cell": "A1", "top_left_cell": "A1"},
+    "MY REP CHGN": {"active_cell": "A1", "top_left_cell": "A1"},
+    "MY REP SZK": {"active_cell": "A1", "top_left_cell": "A1"},
+    "MAYOR IVA": {"active_cell": "A299", "top_left_cell": "A295"},
 }
 
 
@@ -56,7 +71,13 @@ def run(request: ProcessRequest) -> ProcessResult:
         my_sections = my_result.metadata.get("sections")
         update_nc_mayor_rows(workbook, template_reference, my_sections if isinstance(my_sections, dict) else None)
         update_rep_mayor_rows(workbook, my_sections if isinstance(my_sections, dict) else None)
+        apply_open_presentation(workbook)
         final_output = write_workbook_with_retries(workbook, output_path)
+        try:
+            integrity_checks = validate_final_output(final_output, rep_result, nc_result, my_result, mayor_result)
+        except Exception:
+            final_output.unlink(missing_ok=True)
+            raise
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
 
@@ -76,6 +97,7 @@ def run(request: ProcessRequest) -> ProcessResult:
                 "my": my_result.metadata,
                 "mayor_iva": mayor_result.metadata,
             },
+            "integrity_checks": integrity_checks,
         },
     )
 
@@ -111,14 +133,16 @@ def build_console(*results: ProcessResult) -> str:
     return "\n".join(lines)
 
 
-def worksheet_text(worksheet: Worksheet, row: int, column: int) -> str:
+def worksheet_value(worksheet: Worksheet, row: int, column: int) -> Any:
     cell = worksheet.cell(row=row, column=column)
     if isinstance(cell, MergedCell):
-        return ""
-    value = cell.value
-    if value is None:
-        return ""
-    return str(value).strip()
+        return None
+    return cell.value
+
+
+def worksheet_text(worksheet: Worksheet, row: int, column: int) -> str:
+    value = worksheet_value(worksheet, row, column)
+    return string_value(value)
 
 
 def worksheet_number(worksheet: Worksheet, row: int, column: int) -> float:
@@ -143,6 +167,39 @@ def round_amount(value: Any, decimals: int = 2) -> float:
     return round(float(value or 0) + 1e-12, decimals)
 
 
+def string_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def parse_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = string_value(value).replace(",", "")
+    if text == "":
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def values_match(expected: Any, actual: Any, *, force_text: bool = False) -> bool:
+    if force_text:
+        return string_value(expected) == string_value(actual)
+
+    expected_number = parse_number(expected)
+    actual_number = parse_number(actual)
+    if expected_number is not None and actual_number is not None:
+        tolerance = max(1e-9, max(abs(expected_number), abs(actual_number)) * 1e-12)
+        return abs(expected_number - actual_number) <= tolerance
+
+    return string_value(expected) == string_value(actual)
+
+
 def find_row_containing(
     worksheet: Worksheet,
     needle: str,
@@ -157,6 +214,201 @@ def find_row_containing(
             if expected in worksheet_text(worksheet, row, column).upper():
                 return row
     return None
+
+
+def apply_open_presentation(workbook: Any) -> None:
+    if "REP TYT" in workbook.sheetnames:
+        workbook.active = workbook.sheetnames.index("REP TYT")
+
+    for worksheet in workbook.worksheets:
+        sheet_name = worksheet.title
+        spec = OPEN_VIEW_SPECS.get(sheet_name, {})
+        active_cell = str(spec.get("active_cell", "A1"))
+        top_left_cell = str(spec.get("top_left_cell", "A1"))
+        worksheet.sheet_view.tabSelected = bool(spec.get("tab_selected", False))
+        worksheet.sheet_view.topLeftCell = top_left_cell
+        if worksheet.sheet_view.selection:
+            selection = worksheet.sheet_view.selection[0]
+            selection.activeCell = active_cell
+            selection.sqref = active_cell
+        else:
+            worksheet.sheet_view.selection = [Selection(activeCell=active_cell, sqref=active_cell)]
+
+
+def first_mismatch(
+    expected_sheet: Worksheet,
+    actual_sheet: Worksheet,
+    *,
+    end_row: int,
+    last_column: int,
+    text_columns: set[int] | None = None,
+) -> tuple[int, int, str, str] | None:
+    forced_text = text_columns or set()
+    for row in range(1, end_row + 1):
+        for column in range(1, last_column + 1):
+            expected_value = worksheet_value(expected_sheet, row, column)
+            actual_value = worksheet_value(actual_sheet, row, column)
+            if values_match(expected_value, actual_value, force_text=column in forced_text):
+                continue
+            return row, column, string_value(expected_value), string_value(actual_value)
+    return None
+
+
+def merge_signature(
+    worksheet: Worksheet,
+    *,
+    start_row: int = 1,
+    end_row: int | None = None,
+    last_column: int | None = None,
+) -> tuple[tuple[int, int, int, int], ...]:
+    max_row = end_row if end_row is not None else worksheet.max_row
+    max_column = last_column if last_column is not None else worksheet.max_column
+    signature: list[tuple[int, int, int, int]] = []
+    for merged_range in worksheet.merged_cells.ranges:
+        if merged_range.max_row < start_row or merged_range.min_row > max_row:
+            continue
+        if merged_range.max_col < 1 or merged_range.min_col > max_column:
+            continue
+        signature.append(
+            (
+                int(merged_range.min_row),
+                int(merged_range.max_row),
+                int(merged_range.min_col),
+                int(merged_range.max_col),
+            )
+        )
+    signature.sort()
+    return tuple(signature)
+
+
+def validate_final_output(
+    final_output: Path,
+    rep_result: ProcessResult,
+    nc_result: ProcessResult,
+    my_result: ProcessResult,
+    mayor_result: ProcessResult,
+) -> dict[str, str]:
+    final_workbook = load_workbook_quiet(final_output, data_only=False, keep_links=True)
+    rep_workbook = load_workbook_quiet(rep_result.output_path, data_only=False, keep_links=True)
+    nc_workbook = load_workbook_quiet(nc_result.output_path, data_only=False, keep_links=True)
+    my_workbook = load_workbook_quiet(my_result.output_path, data_only=False, keep_links=True)
+    mayor_workbook = load_workbook_quiet(mayor_result.output_path, data_only=False, keep_links=True)
+
+    rep_metadata = rep_result.metadata.get("rep_stage", {})
+    if not isinstance(rep_metadata, dict):
+        raise RuntimeError("La etapa REP no devolvio metadata verificable.")
+
+    for config in rep_stage.SHEET_CONFIGS:
+        key = str(config["key"])
+        sheet_name = str(config["target_sheet"])
+        expected_sheet = rep_workbook[sheet_name]
+        actual_sheet = final_workbook[sheet_name]
+        sheet_meta = rep_metadata.get(key, {})
+        if not isinstance(sheet_meta, dict):
+            raise RuntimeError(f"La etapa REP no devolvio metadata para {sheet_name}.")
+        end_row = int(sheet_meta.get("source_total_row", 0))
+        mismatch = first_mismatch(
+            expected_sheet,
+            actual_sheet,
+            end_row=end_row,
+            last_column=REP_MAX_COLUMN,
+            text_columns=set(rep_stage.REP_TEXT_COLUMNS),
+        )
+        if mismatch is not None:
+            row, column, expected_value, actual_value = mismatch
+            raise RuntimeError(
+                f"La salida final altero {sheet_name} en fila {row} columna {column}. "
+                f"Esperado='{expected_value}' actual='{actual_value}'."
+            )
+        if merge_signature(expected_sheet, last_column=REP_MAX_COLUMN) != merge_signature(actual_sheet, last_column=REP_MAX_COLUMN):
+            raise RuntimeError(f"La salida final altero la estructura fusionada de {sheet_name}.")
+
+    nc_metadata = nc_result.metadata.get("nc_stage", {})
+    if not isinstance(nc_metadata, dict):
+        raise RuntimeError("La etapa NC no devolvio metadata verificable.")
+
+    for config in nc_stage.SHEET_CONFIGS:
+        key = str(config["key"])
+        sheet_name = str(config["target_sheet"])
+        expected_sheet = nc_workbook[sheet_name]
+        actual_sheet = final_workbook[sheet_name]
+        sheet_meta = nc_metadata.get(key, {})
+        if not isinstance(sheet_meta, dict):
+            raise RuntimeError(f"La etapa NC no devolvio metadata para {sheet_name}.")
+        end_row = int(sheet_meta.get("source_total_row", 0))
+        mismatch = first_mismatch(
+            expected_sheet,
+            actual_sheet,
+            end_row=end_row,
+            last_column=NC_MAX_COLUMN,
+        )
+        if mismatch is not None:
+            row, column, expected_value, actual_value = mismatch
+            raise RuntimeError(
+                f"La salida final altero {sheet_name} en fila {row} columna {column}. "
+                f"Esperado='{expected_value}' actual='{actual_value}'."
+            )
+        if merge_signature(expected_sheet, last_column=NC_MAX_COLUMN) != merge_signature(actual_sheet, last_column=NC_MAX_COLUMN):
+            raise RuntimeError(f"La salida final altero la estructura fusionada de {sheet_name}.")
+
+    for config in my_stage.SOURCE_CONFIGS:
+        sheet_name = str(config["my_sheet"])
+        expected_sheet = my_workbook[sheet_name]
+        actual_sheet = final_workbook[sheet_name]
+        mismatch = first_mismatch(
+            expected_sheet,
+            actual_sheet,
+            end_row=max(expected_sheet.max_row, actual_sheet.max_row),
+            last_column=max(expected_sheet.max_column, actual_sheet.max_column),
+        )
+        if mismatch is not None:
+            row, column, expected_value, actual_value = mismatch
+            raise RuntimeError(
+                f"La salida final altero {sheet_name} en fila {row} columna {column}. "
+                f"Esperado='{expected_value}' actual='{actual_value}'."
+            )
+
+    expected_mayor_sheet = mayor_workbook["MAYOR IVA"]
+    actual_mayor_sheet = final_workbook["MAYOR IVA"]
+    mayor_mismatch = first_mismatch(
+        expected_mayor_sheet,
+        actual_mayor_sheet,
+        end_row=max(expected_mayor_sheet.max_row, actual_mayor_sheet.max_row),
+        last_column=max(expected_mayor_sheet.max_column, actual_mayor_sheet.max_column),
+    )
+    if mayor_mismatch is not None:
+        row, column, expected_value, actual_value = mayor_mismatch
+        raise RuntimeError(
+            f"La salida final altero MAYOR IVA en fila {row} columna {column}. "
+            f"Esperado='{expected_value}' actual='{actual_value}'."
+        )
+
+    for config in rep_stage.SHEET_CONFIGS:
+        key = str(config["key"])
+        sheet_name = str(config["target_sheet"])
+        sheet_meta = rep_metadata.get(key, {})
+        if not isinstance(sheet_meta, dict):
+            continue
+        target_sheet = final_workbook[sheet_name]
+        source_total_row = int(sheet_meta.get("source_total_row", 0))
+        for row in range(rep_stage.REP_DETAIL_START_ROW, source_total_row):
+            document = worksheet_text(target_sheet, row, 5)
+            if document == "":
+                continue
+            height = target_sheet.row_dimensions[row].height
+            if height is not None and height < 10:
+                raise RuntimeError(
+                    f"La salida final dejo {sheet_name} con fila visualmente colapsada en {row}. "
+                    f"Altura actual={height}."
+                )
+
+    return {
+        "rep": "ok",
+        "nc": "ok",
+        "my": "ok",
+        "mayor_iva": "ok",
+        "presentation": "ok",
+    }
 
 
 def my_total_rows(template_reference: Any, my_sections: dict[str, Any] | None = None) -> dict[str, dict[str, int]]:

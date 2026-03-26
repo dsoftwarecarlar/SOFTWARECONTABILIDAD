@@ -826,64 +826,130 @@ function Update-PrecontVentasControlFormulas {
     }
 }
 
-function Update-RepAndNoteControlFormulas {
+function Get-MayorControlBucket {
+    param(
+        [object]$Account,
+        [object]$Name
+    )
+
+    $accountText = Normalize-Text $Account
+    $nameText = (Normalize-Text $Name).ToUpperInvariant()
+    if ($accountText -eq '' -and $nameText -eq '') {
+        return ''
+    }
+    if ($accountText -match '^01\.01\.05\.\d{2}\.\d{4}$' -or $nameText.Contains('GARANT')) {
+        return 'guarantee'
+    }
+    if ($accountText -notmatch '^04\.01\.01\.\d{2}\.\d{4}$') {
+        return ''
+    }
+
+    $suffix = ($accountText -split '\.')[-1]
+    if ($suffix -eq '0014' -or $nameText.Contains('DEVOL')) {
+        return 'return'
+    }
+    if ($suffix -in @('0010', '0011', '0012') -or $nameText.Contains('DESC')) {
+        return 'discount'
+    }
+    return 'sales'
+}
+
+function Get-MayorControlMetrics {
+    param([object[]]$Rows)
+
+    $metrics = [ordered]@{
+        InvoiceSales = 0.0
+        InvoiceDiscounts = 0.0
+        NoteSales = 0.0
+        NoteDiscounts = 0.0
+        NetSales = 0.0
+    }
+
+    foreach ($row in @($Rows)) {
+        $bucket = Get-MayorControlBucket -Account $row.account -Name $row.name
+        $debit = To-Number $row.debit
+        $credit = To-Number $row.credit
+        switch ($bucket) {
+            'sales' {
+                $metrics.InvoiceSales += $credit
+                $metrics.NetSales += ($credit - $debit)
+            }
+            'discount' {
+                $metrics.InvoiceDiscounts += $debit
+                $metrics.NoteDiscounts += $credit
+                $metrics.NetSales += ($credit - $debit)
+            }
+            'return' {
+                $metrics.NoteSales += $debit
+                $metrics.NetSales += ($credit - $debit)
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        InvoiceSales = [double](Round-Amount $metrics.InvoiceSales)
+        InvoiceDiscounts = [double](Round-Amount $metrics.InvoiceDiscounts)
+        NoteSales = [double](Round-Amount $metrics.NoteSales)
+        NoteDiscounts = [double](Round-Amount $metrics.NoteDiscounts)
+        NetSales = [double](Round-Amount $metrics.NetSales)
+    }
+}
+
+function Get-RepVtasControlCostTotal {
+    param([hashtable]$CostMetrics)
+
+    return [double](Round-Amount (
+        (To-Number $CostMetrics.CostoRepuestos) +
+        (To-Number $CostMetrics.CostoLubricantes) +
+        (To-Number $CostMetrics.Costo) +
+        (To-Number $CostMetrics.CostoSubconNc) +
+        (To-Number $CostMetrics.CostoAccesorios)
+    ))
+}
+
+function Set-ControlNumericValue {
+    param(
+        [object]$Worksheet,
+        [int]$Row,
+        [int]$Column,
+        [object]$Value
+    )
+
+    if ($null -eq $Worksheet) {
+        return
+    }
+
+    Set-NumericCellSafe -Worksheet $Worksheet -Row $Row -Column $Column -Value (To-Number $Value) -BlankIfZero
+}
+
+function Update-SalesControlBlocks {
     param(
         [object]$RepWorksheet,
         [object]$NoteWorksheet,
-        [object[]]$Rows
+        [object]$RepVtasWorksheet,
+        [object[]]$MayorRows,
+        [hashtable]$CostMetrics
     )
 
-    $rowList = @($Rows)
-    $salesContadoAccount = Get-FirstGeneratedAccount -Rows $rowList -Pattern '^040101\d{2}0001$'
-    $salesCreditoAccount = Get-FirstGeneratedAccount -Rows $rowList -Pattern '^040101\d{2}0003$'
-    $discountContadoAccount = Get-FirstGeneratedAccount -Rows $rowList -Pattern '^040101\d{2}0010$'
-    $discountCreditoAccount = Get-FirstGeneratedAccount -Rows $rowList -Pattern '^040101\d{2}0012$'
-    $returnContadoAccount = Get-FirstGeneratedAccount -Rows $rowList -Pattern '^040101\d{2}0014$'
+    $mayorMetrics = Get-MayorControlMetrics -Rows $MayorRows
 
     if ($null -ne $RepWorksheet) {
-        $repSalesFormula = '=0'
-        $repDiscountFormula = '=0'
-        if ($salesContadoAccount -ne '' -or $salesCreditoAccount -ne '') {
-            $repSalesFormula = '='
-            if ($salesContadoAccount -ne '') {
-                $repSalesFormula += (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'I' -Account $salesContadoAccount -Sign '+')
-            }
-            if ($salesCreditoAccount -ne '') {
-                $repSalesFormula += (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'I' -Account $salesCreditoAccount -Sign '+')
-            }
-        }
-        if ($discountContadoAccount -ne '' -or $discountCreditoAccount -ne '') {
-            $repDiscountFormula = '='
-            if ($discountContadoAccount -ne '') {
-                $repDiscountFormula += (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'H' -Account $discountContadoAccount -Sign '+')
-            }
-            if ($discountCreditoAccount -ne '') {
-                $repDiscountFormula += (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'H' -Account $discountCreditoAccount -Sign '+')
-            }
-        }
-
-        $RepWorksheet.Range('D9').Formula = $repSalesFormula
-        $RepWorksheet.Range('E9').Formula = $repDiscountFormula
+        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 4 -Value $mayorMetrics.InvoiceSales
+        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 5 -Value $mayorMetrics.InvoiceDiscounts
+        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 10 -Value $mayorMetrics.InvoiceSales
+        Set-ControlNumericValue -Worksheet $RepWorksheet -Row 9 -Column 11 -Value $mayorMetrics.InvoiceDiscounts
     }
 
     if ($null -ne $NoteWorksheet) {
-        $noteReturnFormula = '=0'
-        $noteDiscountFormula = '=0'
-        if ($returnContadoAccount -ne '') {
-            $noteReturnFormula = '=' + (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'H' -Account $returnContadoAccount -Sign '+')
-        }
-        if ($discountContadoAccount -ne '' -or $discountCreditoAccount -ne '') {
-            $noteDiscountFormula = '='
-            if ($discountContadoAccount -ne '') {
-                $noteDiscountFormula += (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'I' -Account $discountContadoAccount -Sign '+')
-            }
-            if ($discountCreditoAccount -ne '') {
-                $noteDiscountFormula += (New-SumIfAccountFormula -SheetName 'PrecontabilizacionVentas' -SumColumn 'I' -Account $discountCreditoAccount -Sign '+')
-            }
-        }
+        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 4 -Value $mayorMetrics.NoteSales
+        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 5 -Value $mayorMetrics.NoteDiscounts
+        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 6 -Value $mayorMetrics.NoteSales
+        Set-ControlNumericValue -Worksheet $NoteWorksheet -Row 4 -Column 7 -Value $mayorMetrics.NoteDiscounts
+    }
 
-        $NoteWorksheet.Range('F4').Formula = $noteReturnFormula
-        $NoteWorksheet.Range('G4').Formula = $noteDiscountFormula
+    if ($null -ne $RepVtasWorksheet) {
+        Set-ControlNumericValue -Worksheet $RepVtasWorksheet -Row 6 -Column 4 -Value $mayorMetrics.NetSales
+        Set-ControlNumericValue -Worksheet $RepVtasWorksheet -Row 6 -Column 5 -Value (Get-RepVtasControlCostTotal -CostMetrics $CostMetrics)
     }
 }
 
@@ -5486,7 +5552,6 @@ try {
                     $precontVentasCount = Write-PrecontVentasGeneratedRows -Worksheet $precontVentasSheet -Rows $precontVentasRows
                     Refresh-WorksheetPivotTablesSafe -Worksheet $precontVentasSheet -Label 'PrecontabilizacionVentas'
                     Update-PrecontVentasControlFormulas -Worksheet $precontVentasSheet -Rows $precontVentasRows
-                    Update-RepAndNoteControlFormulas -RepWorksheet $repSheet -NoteWorksheet $noteSheet -Rows $precontVentasRows
                     $precontVentasStopwatch.Stop()
                     Write-Output ("INFO|fill_precont_ventas_ms|{0}|{1}" -f $templateKey, $precontVentasStopwatch.ElapsedMilliseconds)
                     Write-Output ("INFO|precont_ventas|{0}|rows={1}" -f $templateKey, $precontVentasCount)
@@ -5529,6 +5594,7 @@ try {
                 if ($null -ne $pxSheet) {
                     Update-PxPeriodAnchor -Worksheet $pxSheet -PeriodDateValue $periodDateValue
                 }
+                Update-SalesControlBlocks -RepWorksheet $repSheet -NoteWorksheet $noteSheet -RepVtasWorksheet $repVtasSheet -MayorRows $mayorRows -CostMetrics $costMetrics
             } finally {
                 if ($null -ne $estadisticasSheet) {
                     [void][Runtime.Interopservices.Marshal]::ReleaseComObject($estadisticasSheet)

@@ -612,6 +612,8 @@ def build_workbook_from_template(
     template_path: Path,
     row_plan: list[dict[str, Any]],
     movement_rows: list[dict[str, Any]],
+    *,
+    preserve_tail_formulas: bool,
 ) -> tuple[Any, list[dict[str, Any]]]:
     workbook = load_workbook(template_path, keep_links=True)
     if SHEET_NAME not in workbook.sheetnames:
@@ -624,10 +626,11 @@ def build_workbook_from_template(
     max_rows = max(ws.max_row, len(row_plan) + 1)
     ensure_template_capacity(ws, max_rows)
     protected_formula_cells: set[tuple[int, int]] = set()
-    for row_index in range(len(row_plan) + 2, ws.max_row + 1):
-        for col_index in range(1, 12):
-            if ws.cell(row_index, col_index).data_type == "f":
-                protected_formula_cells.add((row_index, col_index))
+    if preserve_tail_formulas:
+        for row_index in range(len(row_plan) + 2, ws.max_row + 1):
+            for col_index in range(1, 12):
+                if ws.cell(row_index, col_index).data_type == "f":
+                    protected_formula_cells.add((row_index, col_index))
 
     for row_index in range(2, max_rows + 1):
         for col_index in range(1, 12):
@@ -764,7 +767,12 @@ def run(request: ProcessRequest) -> ProcessResult:
     effective_template_path = Path(resolved_template["path"]).resolve()
 
     build_started = time.perf_counter()
-    workbook, summary = build_workbook_from_template(effective_template_path, row_plan, movement_rows)
+    workbook, summary = build_workbook_from_template(
+        effective_template_path,
+        row_plan,
+        movement_rows,
+        preserve_tail_formulas=bool(resolved_template["auto_selected"]),
+    )
     workbook.calculation.fullCalcOnLoad = True
     build_ms = int((time.perf_counter() - build_started) * 1000)
 

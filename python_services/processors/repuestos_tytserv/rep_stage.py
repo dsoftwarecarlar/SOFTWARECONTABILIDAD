@@ -12,12 +12,14 @@ from openpyxl.worksheet.worksheet import Worksheet
 from ..contracts import ProcessRequest, ProcessResult
 from ..cxp_actions.accion3_native import write_workbook_with_retries
 from .workbook_tools import (
+    apply_row_merge_definitions,
+    clear_merges_in_row_range,
     clear_rows,
+    copy_row_dimensions,
     copy_row_style,
-    find_style_source_row,
+    get_row_merge_definitions,
     load_workbook_quiet,
     prepare_marker_row,
-    unmerge_ranges_in_band,
     write_literal_string,
 )
 
@@ -133,6 +135,40 @@ def build_payload_signature(worksheet: Worksheet, total_row: int) -> tuple[int, 
     return len(rows), digest
 
 
+def row_has_rep_payload_content(worksheet: Worksheet, row_number: int) -> bool:
+    for column in REP_PAYLOAD_COLUMNS:
+        if worksheet_text(worksheet, row_number, int(column)) != "":
+            return True
+    return False
+
+
+def find_rep_footer_start_row(worksheet: Worksheet, total_row: int) -> int:
+    if total_row <= REP_DETAIL_START_ROW:
+        return total_row
+
+    footer_start_row = total_row
+    for row in range(total_row - 1, REP_DETAIL_START_ROW - 1, -1):
+        if row_has_rep_payload_content(worksheet, row):
+            break
+        footer_start_row = row
+
+    return footer_start_row
+
+
+def find_rep_style_row(worksheet: Worksheet, footer_start_row: int) -> int:
+    for row in range(footer_start_row - 1, REP_DETAIL_START_ROW - 1, -1):
+        if row_has_rep_payload_content(worksheet, row):
+            return row
+    return REP_DETAIL_START_ROW
+
+
+def find_last_populated_source_detail_row(source: SourceWorkbook) -> int:
+    for row in range(source.total_row - 1, REP_DETAIL_START_ROW - 1, -1):
+        if row_has_rep_payload_content(source.worksheet, row):
+            return row
+    return REP_DETAIL_START_ROW - 1
+
+
 def assert_source_headers(worksheet: Worksheet, label: str) -> None:
     for row, column, needle in HEADER_CHECKS:
         actual = worksheet_text(worksheet, row, column).upper()
@@ -172,13 +208,59 @@ def ensure_rep_sheet_capacity(
     target: Worksheet,
     template_total_row: int,
     template_mayor_row: int,
-    required_total_row: int,
-) -> tuple[int, int, int]:
-    added_rows = max(0, required_total_row - template_total_row)
-    if added_rows > 0:
-        target.insert_rows(template_total_row, amount=added_rows)
+    required_last_detail_row: int,
+) -> dict[str, int]:
+    if required_last_detail_row < REP_DETAIL_START_ROW:
+        return {
+            "total_row": template_total_row,
+            "mayor_row": template_mayor_row,
+            "format_mayor_row": template_mayor_row,
+            "template_total_row": template_total_row,
+        }
 
-    return template_total_row + added_rows, template_mayor_row + added_rows, added_rows
+    footer_start_row = find_rep_footer_start_row(target, template_total_row)
+    spacer_count = max(0, template_total_row - footer_start_row)
+    desired_total_row = max(
+        REP_DETAIL_START_ROW + spacer_count + 1,
+        required_last_detail_row + spacer_count + 1,
+    )
+    extra_rows = max(0, desired_total_row - template_total_row)
+    style_row = find_rep_style_row(target, footer_start_row)
+    detail_merges = get_row_merge_definitions(target, style_row, REP_MAX_COLUMN)
+    spacer_merges = get_row_merge_definitions(target, footer_start_row, REP_MAX_COLUMN)
+    total_merges = get_row_merge_definitions(target, template_total_row, REP_MAX_COLUMN)
+
+    if extra_rows > 0:
+        target.insert_rows(footer_start_row, amount=extra_rows)
+
+    template_spacer_row = footer_start_row + extra_rows
+    shifted_template_total_row = template_total_row + extra_rows
+    format_mayor_row = template_mayor_row + extra_rows if template_mayor_row > 0 else template_mayor_row
+    desired_spacer_row = desired_total_row - spacer_count
+
+    clear_merges_in_row_range(
+        target,
+        min(desired_spacer_row, template_spacer_row),
+        max(shifted_template_total_row, format_mayor_row or shifted_template_total_row),
+        REP_MAX_COLUMN,
+    )
+
+    for row in range(footer_start_row, footer_start_row + extra_rows):
+        copy_row_style(target, target, style_row, row, REP_MAX_COLUMN)
+        apply_row_merge_definitions(target, row, detail_merges)
+
+    copy_row_style(target, target, template_spacer_row, desired_spacer_row, REP_MAX_COLUMN)
+    apply_row_merge_definitions(target, desired_spacer_row, spacer_merges)
+
+    copy_row_style(target, target, shifted_template_total_row, desired_total_row, REP_MAX_COLUMN)
+    apply_row_merge_definitions(target, desired_total_row, total_merges)
+
+    return {
+        "total_row": desired_total_row,
+        "mayor_row": desired_total_row + 1,
+        "format_mayor_row": format_mayor_row,
+        "template_total_row": shifted_template_total_row,
+    }
 
 
 def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple[int, int, int]:
@@ -200,33 +282,20 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
     if template_total_row is None or template_mayor_row is None:
         raise RuntimeError(f"La hoja {target.title} no tiene filas base TOTAL GENERAL/MAYOR.")
 
-    old_last_row = max(target.max_row, template_mayor_row, 200)
-    detail_style_row = find_style_source_row(
-        target,
-        REP_DETAIL_START_ROW,
-        max(REP_DETAIL_START_ROW, template_total_row - 1),
-        REP_MAX_COLUMN,
-    )
-    shifted_total_row, shifted_mayor_row, added_rows = ensure_rep_sheet_capacity(
+    required_last_detail_row = find_last_populated_source_detail_row(source)
+    capacity = ensure_rep_sheet_capacity(
         target,
         template_total_row,
         template_mayor_row,
-        source.total_row,
+        required_last_detail_row,
     )
+    shifted_total_row = int(capacity["total_row"])
+    shifted_mayor_row = int(capacity["mayor_row"])
+    format_mayor_row = int(capacity["format_mayor_row"])
     old_last_row = max(target.max_row, shifted_mayor_row, 200)
-    affected_rows = unmerge_ranges_in_band(
-        target,
-        REP_DETAIL_START_ROW,
-        source.total_row,
-        REP_MAX_COLUMN,
-    )
 
     for row in range(1, source.total_row + 1):
-        if row >= REP_DETAIL_START_ROW:
-            if row < source.total_row and (row >= template_total_row or row in affected_rows):
-                copy_row_style(target, target, detail_style_row, row, REP_MAX_COLUMN)
-            elif row == source.total_row and (row != shifted_total_row or row in affected_rows):
-                copy_row_style(target, target, shifted_total_row, row, REP_MAX_COLUMN)
+        copy_row_dimensions(source.worksheet, target, row, row)
 
         for column in range(1, REP_MAX_COLUMN + 1):
             cell = target.cell(row=row, column=column)
@@ -245,7 +314,7 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
 
     actual_mayor_row = prepare_marker_row(
         target,
-        shifted_mayor_row,
+        format_mayor_row,
         source.total_row + 1,
         REP_MAX_COLUMN,
         14,
@@ -253,7 +322,7 @@ def copy_source_to_rep_sheet(source: SourceWorkbook, target: Worksheet) -> tuple
     clear_rows(
         target,
         actual_mayor_row + 1,
-        max(old_last_row, source.last_row + added_rows + 10),
+        max(old_last_row, source.last_row + 10),
         REP_MAX_COLUMN,
     )
 

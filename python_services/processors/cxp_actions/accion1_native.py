@@ -10,6 +10,8 @@ if VENDOR_DIR.is_dir():
 import json
 import hashlib
 import re
+import shutil
+import tempfile
 import time
 from copy import copy
 from datetime import date, datetime
@@ -786,6 +788,17 @@ def load_reference_workbook_copy(template_path: Path) -> Any:
     return workbook
 
 
+def copy_reference_workbook(template_path: Path, output_path: Path) -> Path:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=output_path.suffix) as temp_file:
+        temp_path = Path(temp_file.name)
+    try:
+        shutil.copyfile(template_path, temp_path)
+        shutil.move(str(temp_path), str(output_path))
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return output_path
+
+
 def build_sheet_value_signature(workbook_path: Path) -> tuple[int, str]:
     workbook = load_workbook(workbook_path, data_only=False, keep_links=False)
     if SHEET_NAME not in workbook.sheetnames:
@@ -893,20 +906,22 @@ def run(request: ProcessRequest) -> ProcessResult:
         and len(template_rows) == len(rows)
     )
     build_started = time.perf_counter()
-    workbook = (
-        load_reference_workbook_copy(effective_template_path)
-        if use_reference_clone
-        else build_styled_workbook(effective_template_path, aoa, meta)
-    )
-    if use_reference_clone:
-        apply_computed_totals(workbook[SHEET_NAME], meta)
-    workbook.calculation.fullCalcOnLoad = True
+    workbook = None
+    if not use_reference_clone:
+        workbook = build_styled_workbook(effective_template_path, aoa, meta)
+        workbook.calculation.fullCalcOnLoad = True
     build_ms = int((time.perf_counter() - build_started) * 1000)
 
     write_started = time.perf_counter()
-    final_output_path = write_workbook_with_retries(workbook, output_path)
+    if use_reference_clone:
+        final_output_path = copy_reference_workbook(effective_template_path, output_path)
+    else:
+        final_output_path = write_workbook_with_retries(workbook, output_path)
     remove_external_links_from_package(final_output_path)
-    verify_output_workbook(final_output_path, meta)
+    if use_reference_clone:
+        verify_reference_clone_output(final_output_path, effective_template_path)
+    else:
+        verify_output_workbook(final_output_path, meta)
     write_ms = int((time.perf_counter() - write_started) * 1000)
     total_ms = int((time.perf_counter() - started_at) * 1000)
 

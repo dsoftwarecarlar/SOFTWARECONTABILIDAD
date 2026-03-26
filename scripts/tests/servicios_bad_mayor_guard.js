@@ -116,7 +116,7 @@ function main() {
     const combinedOutput = `${result.stdout || ""}\n${result.stderr || ""}`;
     assertCondition(result.status !== 0, "El runtime no debe aceptar un MAYOR que no corresponde a ventas.");
     assertCondition(
-      combinedOutput.includes("no corresponde al mayor de ventas de la plantilla"),
+      combinedOutput.includes("no genero filas utiles en MAY VTAS"),
       `El runtime no devolvio el mensaje claro esperado.\n${combinedOutput}`,
     );
     assertCondition(

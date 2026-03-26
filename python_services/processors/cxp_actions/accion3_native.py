@@ -1085,7 +1085,8 @@ def build_workbook_from_template(
     if header_row > 1:
         clear_range_values(ws, 1, header_row - 1, 1, 11)
         clear_range_values(ws, header_row + 1, max_rows, 1, 11)
-        clear_range_values(ws, 1, max_rows, 14, 15)
+        clear_range_values(ws, 1, header_row - 1, 14, 15)
+        clear_range_values(ws, header_row + 1, max_rows, 14, 15)
     else:
         clear_range_values(ws, 2, max_rows, 1, 11)
         clear_range_values(ws, 2, max_rows, 14, 15)

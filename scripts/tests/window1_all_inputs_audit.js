@@ -565,6 +565,119 @@ function assertDetailRowSetMatch(expectedWs, outputWs, startCol, endCol, label) 
   assertCondition(expectedRows.join("\n") === outputRows.join("\n"), `${label}: los movimientos no coinciden.`);
 }
 
+function parseAuditReportDate(value) {
+  const text = normalizeTextComparison(value);
+  const match = /^(\d{2})-([A-Z]{3})-(\d{2})$/.exec(text || "");
+  if (!match) {
+    return null;
+  }
+
+  const monthMap = {
+    JAN: 1,
+    ENE: 1,
+    FEB: 2,
+    MAR: 3,
+    APR: 4,
+    ABR: 4,
+    MAY: 5,
+    JUN: 6,
+    JUL: 7,
+    AUG: 8,
+    AGO: 8,
+    SEP: 9,
+    SET: 9,
+    OCT: 10,
+    NOV: 11,
+    DEC: 12,
+    DIC: 12,
+  };
+
+  const month = monthMap[match[2]];
+  if (!month) {
+    return null;
+  }
+  return `20${match[3]}-${String(month).padStart(2, "0")}-${match[1]}`;
+}
+
+function normalizeAction3MonthlyCell(cell, columnIndex) {
+  const formula = getFormula(cell.value);
+  if (formula) {
+    return { formula };
+  }
+  if (cell.value instanceof Date) {
+    return cell.value.toISOString().slice(0, 10);
+  }
+  if (columnIndex === 4 && typeof cell.value === "string") {
+    return parseAuditReportDate(cell.value) || normalizeTextComparison(cell.value);
+  }
+  if (columnIndex === 7) {
+    const text = sanitizeText(cell.value);
+    return /^\d+(?:\.0+)?$/.test(text) ? String(parseInt(text, 10)) : normalizeTextComparison(text);
+  }
+  return normalizeComparable(cell.value);
+}
+
+function action3MonthlyDetailRowSignatures(worksheet) {
+  const rows = [];
+  for (let rowIndex = 1; rowIndex <= worksheet.rowCount; rowIndex += 1) {
+    const code = normalizeTextComparison(worksheet.getRow(rowIndex).getCell(1).value);
+    if (!/^\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{4}$/.test(code || "")) {
+      continue;
+    }
+
+    const values = [];
+    for (let col = 1; col <= 11; col += 1) {
+      values.push(JSON.stringify(normalizeAction3MonthlyCell(worksheet.getRow(rowIndex).getCell(col), col)));
+    }
+    rows.push(values.join("|"));
+  }
+  return rows.sort();
+}
+
+function assertAction3MonthlyDetailMatch(expectedWs, outputWs, label) {
+  const expectedRows = action3MonthlyDetailRowSignatures(expectedWs);
+  const outputRows = action3MonthlyDetailRowSignatures(outputWs);
+  assertCondition(expectedRows.length === outputRows.length, `${label}: cantidad de movimientos distinta.`);
+  assertCondition(expectedRows.join("\n") === outputRows.join("\n"), `${label}: los movimientos no coinciden.`);
+}
+
+function normalizeAction4MonthlyCell(cell, columnIndex) {
+  const formula = getFormula(cell.value);
+  if (formula) {
+    return { formula };
+  }
+  if (cell.value instanceof Date) {
+    return cell.value.toISOString().slice(0, 10);
+  }
+  if (columnIndex === 4 && typeof cell.value === "string") {
+    return parseAuditReportDate(cell.value) || normalizeTextComparison(cell.value);
+  }
+  if (columnIndex === 7) {
+    const text = sanitizeText(cell.value);
+    return /^\d+(?:\.0+)?$/.test(text) ? String(parseInt(text, 10)) : normalizeTextComparison(text);
+  }
+  return normalizeComparable(cell.value);
+}
+
+function worksheetValueSignatureByCellNormalizer(worksheet, startCol, endCol, cellNormalizer) {
+  const rows = [];
+  const lastRow = lastMeaningfulRow(worksheet, startCol, endCol);
+  for (let rowIndex = 1; rowIndex <= lastRow; rowIndex += 1) {
+    const values = [];
+    for (let col = startCol; col <= endCol; col += 1) {
+      values.push(JSON.stringify(cellNormalizer(worksheet.getRow(rowIndex).getCell(col), col)));
+    }
+    rows.push(values.join("|"));
+  }
+  return rows.join("\n");
+}
+
+function assertAction4MonthlyWorksheetMatch(expectedWs, outputWs, label) {
+  const expectedSignature = worksheetValueSignatureByCellNormalizer(expectedWs, 1, 16, normalizeAction4MonthlyCell);
+  const outputSignature = worksheetValueSignatureByCellNormalizer(outputWs, 1, 16, normalizeAction4MonthlyCell);
+  assertCondition(expectedSignature === outputSignature, `${label}: los valores/celdas no coinciden.`);
+}
+
 function assertFormulaMapMatches(expectedWs, outputWs, label) {
   const mismatches = [];
   expectedWs.eachRow((row) => {
@@ -730,25 +843,39 @@ async function verifyWorkbookBuffer(buffer, label, verifyFn, ...args) {
   }
 }
 
-async function buildAction2Expected(inputPath) {
+async function buildAction2Expected(inputPath, mode = "legacy") {
+  const templatePath = mode === "monthly"
+    ? actionMonthlyPath([/PLANTILLAHECHAAMANO.*\.xlsx$/i], "accion2-mensual-plantilla")
+    : actionTemplatePath("ACCION2.xlsx");
   const rows = normalizeParsedRows(
     extractRowsFromTxt(inputPath),
-    loadTemplateTipoHints(accion2Constants.DEFAULT_TEMPLATE_XLSX),
+    loadTemplateTipoHints(templatePath),
   );
-  const templatePath = actionTemplatePath("ACCION2.xlsx");
   const { workbook, summary } = await buildAction2Workbook(templatePath, rows);
   return { rows, templatePath, workbook, summary };
 }
 
-async function buildAction3Expected(inputPaths) {
+async function buildAction3Expected(inputPaths, mode = "legacy") {
+  if (mode === "monthly") {
+    const templatePath = actionMonthlyPath([/PLANTILLAHECHAAMANO.*\.xlsx$/i], "accion3-mensual-plantilla");
+    const workbook = await loadWorkbook(templatePath);
+    return { rows: [], templatePath, workbook };
+  }
+
   const parsed = await parseAction3Inputs(inputPaths);
   const templatePath = actionTemplatePath("MAYOR RET_ACCION3.xlsx");
-  const dropAgcmFromRender = !inputPaths.some((inputPath) => path.extname(inputPath).toLowerCase() === ".pdf");
+  const dropAgcmFromRender = true;
   const { workbook } = await buildAction3Workbook(templatePath, parsed.rows, { dropAgcmFromRender });
   return { rows: parsed.rows, templatePath, workbook };
 }
 
-async function buildAction4Expected(inputPath) {
+async function buildAction4Expected(inputPath, mode = "legacy") {
+  if (mode === "monthly") {
+    const templatePath = actionMonthlyPath([/PLANTILLAHECHAAMANO.*\.xlsx$/i], "accion4-mensual-plantilla");
+    const workbook = await loadWorkbook(templatePath);
+    return { parsed: null, plan: null, templatePath, workbook };
+  }
+
   const parsed = await parseAction4Inputs([inputPath]);
   const plan = buildAction4OutputPlan(parsed.rows);
   const templatePath = actionTemplatePath("MAYORIVAACCION4.xlsx");
@@ -787,8 +914,8 @@ async function runAction1Scenario(label, inputPath, referencePath, mode = "legac
   return outputBuffer;
 }
 
-async function runAction2Scenario(label, inputPath) {
-  const expected = await buildAction2Expected(inputPath);
+async function runAction2Scenario(label, inputPath, mode = "legacy") {
+  const expected = await buildAction2Expected(inputPath, mode);
   const outputBuffer = await submitModuleFiles("accion2", [
     { field: "source_files", path: inputPath, contentType: "text/plain" },
   ]);
@@ -807,8 +934,8 @@ async function runAction2Scenario(label, inputPath) {
   return outputBuffer;
 }
 
-async function runAction3Scenario(label, inputPaths, contentType) {
-  const expected = await buildAction3Expected(inputPaths);
+async function runAction3Scenario(label, inputPaths, contentType, mode = "legacy") {
+  const expected = await buildAction3Expected(inputPaths, mode);
   const outputBuffer = await submitModuleFiles(
     "accion3",
     inputPaths.map((inputPath) => ({
@@ -824,15 +951,19 @@ async function runAction3Scenario(label, inputPaths, contentType) {
   const expectedWs = expected.workbook.getWorksheet("MAYOR RET");
   assertCondition(!!outputWs, `${label}: no existe hoja MAYOR RET.`);
   assertCondition(!!expectedWs, `${label}: no existe hoja MAYOR RET esperada.`);
-  assertDetailRowSetMatch(expectedWs, outputWs, 1, 11, `${label}:detalle`);
+  if (mode === "monthly") {
+    assertAction3MonthlyDetailMatch(expectedWs, outputWs, `${label}:detalle`);
+  } else {
+    assertDetailRowSetMatch(expectedWs, outputWs, 1, 11, `${label}:detalle`);
+  }
   assertWorksheetValuesMatch(expectedWs, outputWs, 13, 16, `${label}:resumen`);
 
   console.log(`OK: ${label}`);
   return outputBuffer;
 }
 
-async function runAction4Scenario(label, inputPath) {
-  const expected = await buildAction4Expected(inputPath);
+async function runAction4Scenario(label, inputPath, mode = "legacy") {
+  const expected = await buildAction4Expected(inputPath, mode);
   const outputBuffer = await submitModuleFiles("accion4", [
     { field: "source_files", path: inputPath, contentType: "text/plain" },
   ]);
@@ -843,7 +974,11 @@ async function runAction4Scenario(label, inputPath) {
   const expectedWs = expected.workbook.getWorksheet("MAYOR IVA");
   assertCondition(!!outputWs, `${label}: no existe hoja MAYOR IVA.`);
   assertCondition(!!expectedWs, `${label}: no existe hoja MAYOR IVA esperada.`);
-  assertWorksheetValuesMatch(expectedWs, outputWs, 1, 16, label);
+  if (mode === "monthly") {
+    assertAction4MonthlyWorksheetMatch(expectedWs, outputWs, label);
+  } else {
+    assertWorksheetValuesMatch(expectedWs, outputWs, 1, 16, label);
+  }
 
   console.log(`OK: ${label}`);
   return outputBuffer;
@@ -929,10 +1064,17 @@ async function runBundleScenario(label, standaloneOutputs) {
     );
   }
 
+  const standaloneAction2Workbook = await loadWorkbook(standaloneOutputs.accion2);
+  const standaloneAction2Ws = standaloneAction2Workbook.getWorksheet("RET PROV");
   const action2Ws = bundleWorkbook.getWorksheet("ACCION 2 RET PROV");
   const rewrittenCells = ["O3", "O4", "O5", "O6", "O7", "O10", "O11", "O12", "O13", "O14", "O15"];
   for (const cellAddress of rewrittenCells) {
+    const expectedFormula = getFormula(standaloneAction2Ws.getCell(cellAddress).value);
     const formula = getFormula(action2Ws.getCell(cellAddress).value);
+    if (!expectedFormula) {
+      assertCondition(formula == null, `${label}: ${cellAddress} deberia permanecer sin formula.`);
+      continue;
+    }
     assertCondition(typeof formula === "string" && !formula.includes("["), `${label}: ${cellAddress} conserva referencia externa.`);
     assertCondition(
       formula.includes("'ACCION 3 MAYOR RET'!"),
@@ -980,17 +1122,17 @@ async function main() {
 
     const legacyOutputs = {};
     legacyOutputs.accion1 = await runAction1Scenario("accion1-legacy", scenarios.legacy.action1Input, scenarios.legacy.action1Reference, "legacy");
-    legacyOutputs.accion2 = await runAction2Scenario("accion2-legacy", scenarios.legacy.action2Input);
-    legacyOutputs.accion3 = await runAction3Scenario("accion3-legacy-txt", scenarios.legacy.action3TxtInputs, "text/plain");
-    legacyOutputs.accion4 = await runAction4Scenario("accion4-legacy", scenarios.legacy.action4Input);
+    legacyOutputs.accion2 = await runAction2Scenario("accion2-legacy", scenarios.legacy.action2Input, "legacy");
+    legacyOutputs.accion3 = await runAction3Scenario("accion3-legacy-txt", scenarios.legacy.action3TxtInputs, "text/plain", "legacy");
+    legacyOutputs.accion4 = await runAction4Scenario("accion4-legacy", scenarios.legacy.action4Input, "legacy");
     await runBundleScenario("bundle-legacy", legacyOutputs);
-    await runAction3Scenario("accion3-legacy-pdf", scenarios.legacy.action3PdfInputs, "application/pdf");
+    await runAction3Scenario("accion3-legacy-pdf", scenarios.legacy.action3PdfInputs, "application/pdf", "legacy");
 
     const monthlyOutputs = {};
     monthlyOutputs.accion1 = await runAction1Scenario("accion1-monthly", scenarios.monthly.action1Input, scenarios.monthly.action1Reference, "monthly");
-    monthlyOutputs.accion2 = await runAction2Scenario("accion2-monthly", scenarios.monthly.action2Input);
-    monthlyOutputs.accion3 = await runAction3Scenario("accion3-monthly-txt-multi", scenarios.monthly.action3TxtInputs, "text/plain");
-    monthlyOutputs.accion4 = await runAction4Scenario("accion4-monthly", scenarios.monthly.action4Input);
+    monthlyOutputs.accion2 = await runAction2Scenario("accion2-monthly", scenarios.monthly.action2Input, "monthly");
+    monthlyOutputs.accion3 = await runAction3Scenario("accion3-monthly-txt-multi", scenarios.monthly.action3TxtInputs, "text/plain", "monthly");
+    monthlyOutputs.accion4 = await runAction4Scenario("accion4-monthly", scenarios.monthly.action4Input, "monthly");
     await runBundleScenario("bundle-monthly", monthlyOutputs);
 
     console.log("OK: auditoria total de archivos legacy y mensuales de Ventana 1 validada.");

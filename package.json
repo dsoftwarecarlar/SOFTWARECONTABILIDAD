@@ -17,6 +17,7 @@
     "test:python:servicios:layout": "node scripts/tests/servicios_layout_guard.js",
     "test:python:servicios:mayor-guard": "node scripts/tests/servicios_bad_mayor_guard.js",
     "test:python:servicios:mayor-mixed": "node scripts/tests/servicios_mixed_mayor_guard.js",
+    "test:python:servicios:control-blocks": "node scripts/tests/servicios_control_blocks_audit.js",
     "test:python:servicios:readers": "node scripts/tests/servicios_readers_python_parity.js",
     "test:e2e:servicios": "node scripts/tests/e2e_servicios_marcas_contract.js",
     "test:smoke:ui": "node scripts/tests/http_resources_smoke.js",

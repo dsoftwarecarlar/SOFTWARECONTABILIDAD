@@ -128,6 +128,18 @@
                             @endforeach
                         </div>
                     @endif
+
+                    @if (!empty($result['integrity_checks']))
+                        <div class="surface-grid two">
+                            @foreach ($result['integrity_checks'] as $stage => $status)
+                                <article class="surface-card">
+                                    <span class="chip">{{ strtoupper(str_replace('_', ' ', $stage)) }}</span>
+                                    <h3>{{ strtoupper((string) $status) }}</h3>
+                                    <p class="meta-text">Verificacion interna del libro final.</p>
+                                </article>
+                            @endforeach
+                        </div>
+                    @endif
                 @endif
             </section>
 

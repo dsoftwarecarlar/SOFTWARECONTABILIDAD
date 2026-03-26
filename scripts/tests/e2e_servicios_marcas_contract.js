@@ -102,6 +102,151 @@ function normalizeText(value) {
     .toUpperCase();
 }
 
+function round2(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function assertClose(actual, expected, label, tolerance = 0.02) {
+  const actualRounded = round2(actual);
+  const expectedRounded = round2(expected);
+  assertCondition(
+    Math.abs(actualRounded - expectedRounded) <= tolerance,
+    `${label}: esperado ${expectedRounded}, actual ${actualRounded}.`,
+  );
+}
+
+function parseDecimalLike(raw) {
+  let normalized = String(raw || "").replace(/[^\d,.\-]/g, "");
+  if (normalized === "") {
+    return 0;
+  }
+
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+  if (hasComma && hasDot) {
+    if (normalized.lastIndexOf(".") > normalized.lastIndexOf(",")) {
+      normalized = normalized.replace(/,/g, "");
+    } else {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    }
+  } else if (hasComma) {
+    const commaCount = (normalized.match(/,/g) || []).length;
+    if (commaCount > 1) {
+      normalized = normalized.replace(/,/g, "");
+    } else {
+      const [intPart, fracPart = ""] = normalized.split(",");
+      normalized = fracPart.length === 3 ? `${intPart}${fracPart}` : `${intPart}.${fracPart}`;
+    }
+  } else if (hasDot) {
+    const dotCount = (normalized.match(/\./g) || []).length;
+    if (dotCount > 1) {
+      const lastDot = normalized.lastIndexOf(".");
+      const intPart = normalized.slice(0, lastDot).replace(/\./g, "");
+      const fracPart = normalized.slice(lastDot + 1);
+      normalized = fracPart.length === 3 ? `${intPart}${fracPart}` : `${intPart}.${fracPart}`;
+    }
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readMayorRows(filePath) {
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => line.split("\t"))
+    .filter((columns) => columns.length >= 30 && /^\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{4}$/.test(String(columns[6] || "").trim()))
+    .map((columns) => ({
+      account: String(columns[6] || "").trim(),
+      name: String(columns[7] || "").trim(),
+      origin: String(columns[23] || "").trim().toUpperCase(),
+      seat: String(columns[24] || "").trim(),
+      detail: String(columns[26] || "").trim().toUpperCase(),
+      debit: parseDecimalLike(columns[27]),
+      credit: parseDecimalLike(columns[28]),
+    }));
+}
+
+function compactAccountCode(account) {
+  const digits = String(account || "").replace(/\D/g, "");
+  if (digits.length > 0 && digits.length < 12) {
+    return digits.padStart(12, "0");
+  }
+  return digits;
+}
+
+function isMayorPxAdjustmentRow(row) {
+  const account = compactAccountCode(row.account);
+  if (!/^040101\d{2}(0003|0012)$/.test(account)) {
+    return false;
+  }
+  if (String(row.detail || "").includes("REGISTRO DE PX AJUSTE DE EGRESO")) {
+    return true;
+  }
+  return String(row.origin || "") === "AGCM" && String(row.seat || "") === "435";
+}
+
+function filterMayorRowsForWorkbook(rows) {
+  return rows.filter((row) => !isMayorPxAdjustmentRow(row));
+}
+
+function classifyMayorControlBucket(row) {
+  const account = String(row.account || "").trim();
+  const name = String(row.name || "").trim().toUpperCase();
+  if (!account && !name) {
+    return "";
+  }
+  if (/^01\.01\.05\.\d{2}\.\d{4}$/.test(account) || name.includes("GARANT")) {
+    return "guarantee";
+  }
+  if (!/^04\.01\.01\.\d{2}\.\d{4}$/.test(account)) {
+    return "";
+  }
+  const suffix = account.split(".").pop() || "";
+  if (suffix === "0014" || name.includes("DEVOL")) {
+    return "return";
+  }
+  if (["0010", "0011", "0012"].includes(suffix) || name.includes("DESC")) {
+    return "discount";
+  }
+  return "sales";
+}
+
+function getMayorControlMetrics(rows) {
+  const metrics = {
+    InvoiceSales: 0,
+    InvoiceDiscounts: 0,
+    NoteSales: 0,
+    NoteDiscounts: 0,
+    NetSales: 0,
+  };
+
+  for (const row of rows) {
+    const bucket = classifyMayorControlBucket(row);
+    const debit = Number(row.debit || 0);
+    const credit = Number(row.credit || 0);
+    if (bucket === "sales") {
+      metrics.InvoiceSales += credit;
+      metrics.NetSales += credit - debit;
+      continue;
+    }
+    if (bucket === "discount") {
+      metrics.InvoiceDiscounts += debit;
+      metrics.NoteDiscounts += credit;
+      metrics.NetSales += credit - debit;
+      continue;
+    }
+    if (bucket === "return") {
+      metrics.NoteSales += debit;
+      metrics.NetSales += credit - debit;
+    }
+  }
+
+  return Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, round2(value)]));
+}
+
 function startPhpServer() {
   const server = spawn(PHP_EXE, ["-d", "max_execution_time=180", "-S", `${HOST}:${PORT}`, ROUTER], {
     cwd: APP_ROOT,
@@ -441,6 +586,10 @@ function cellText(sheet, row, column) {
   return value == null ? "" : String(value).trim();
 }
 
+function cellNumber(sheet, row, column) {
+  return round2(parseDecimalLike(cellText(sheet, row, column)));
+}
+
 function findSheet(workbook, candidates) {
   for (const candidate of candidates) {
     if (workbook.Sheets[candidate]) {
@@ -690,6 +839,16 @@ async function runServiciosContract() {
     assertSeedColumnsMatch(costoSheet, templateCostoSheet, [6, 7, 8, 9], [1, 2, 4, 5, 7], "COSTO");
     assertSeedColumnsMatch(estadisticasSheet, templateEstadisticasSheet, [6, 131, 222, 290, 365], [1, 2, 5, 6, 8], "ESTADISTICAS");
     assertPrecontCostos2Seeds(precontCostos2Sheet, templatePrecontCostos2Sheet);
+
+    const mayorMetrics = getMayorControlMetrics(filterMayorRowsForWorkbook(readMayorRows(serviciosFixturePath("mayor_tyt"))));
+    assertClose(cellNumber(repFactSheet, 9, 4), mayorMetrics.InvoiceSales, "Servicios REP FACTURACION D9");
+    assertClose(cellNumber(repFactSheet, 9, 5), mayorMetrics.InvoiceDiscounts, "Servicios REP FACTURACION E9");
+    assertClose(cellNumber(notaSheet, 4, 4), mayorMetrics.NoteSales, "Servicios NOTA DE CREDITO D4");
+    assertClose(cellNumber(notaSheet, 4, 5), mayorMetrics.NoteDiscounts, "Servicios NOTA DE CREDITO E4");
+    assertClose(cellNumber(notaSheet, 4, 6), mayorMetrics.NoteSales, "Servicios NOTA DE CREDITO F4");
+    assertClose(cellNumber(notaSheet, 4, 7), mayorMetrics.NoteDiscounts, "Servicios NOTA DE CREDITO G4");
+    assertClose(cellNumber(repVtasSheet, 6, 4), mayorMetrics.NetSales, "Servicios REP VTAS D6");
+    assertClose(cellNumber(repVtasSheet, 6, 5), cellNumber(costoSheet, 4, 10), "Servicios REP VTAS E6");
 
     const persistedOutputPath = path.join(ROOT, "storage", "outputs", String(download.name || ""));
     if (fs.existsSync(persistedOutputPath)) {
