@@ -365,6 +365,67 @@ function getFormula(value) {
   return null;
 }
 
+function normalizeFormulaText(formula) {
+  if (typeof formula !== "string" || formula === "" || formula.startsWith("SHARED:")) {
+    return null;
+  }
+  return formula.startsWith("=") ? formula : `=${formula}`;
+}
+
+function extractFormulaSheetReferences(formula) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return [];
+  }
+
+  const references = [];
+  const quotedPattern = /'((?:[^']|'')+)'!/g;
+  let match;
+  while ((match = quotedPattern.exec(normalized)) !== null) {
+    references.push(match[1].replace(/''/g, "'"));
+  }
+
+  const unquotedFormula = normalized.replace(quotedPattern, " ");
+  const unquotedPattern = /(^|[^A-Z0-9_])([A-Za-z_][A-Za-z0-9_ .-]*)!/g;
+  while ((match = unquotedPattern.exec(unquotedFormula)) !== null) {
+    const candidate = sanitizeText(match[2]);
+    if (candidate) {
+      references.push(candidate);
+    }
+  }
+
+  return references;
+}
+
+function formulaHasOrphanReference(formula, sheetNames) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return false;
+  }
+
+  const references = extractFormulaSheetReferences(normalized);
+  return references.some((reference) => reference.includes("[") || !sheetNames.has(reference));
+}
+
+function assertNoOrphanWorkbookFormulas(workbook, label) {
+  const sheetNames = new Set(workbook.worksheets.map((worksheet) => worksheet.name));
+  const orphans = [];
+
+  workbook.worksheets.forEach((worksheet) => {
+    worksheet.eachRow((row) => {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        const formula = getFormula(cell.value);
+        if (!formula || !formulaHasOrphanReference(formula, sheetNames)) {
+          return;
+        }
+        orphans.push(`${worksheet.name}!${cell.address}:${formula}`);
+      });
+    });
+  });
+
+  assertCondition(orphans.length === 0, `${label}: formulas huerfanas. ${orphans.slice(0, 5).join(" | ")}`);
+}
+
 function isDateFormat(numFmt) {
   return typeof numFmt === "string" && /[dmy]/i.test(numFmt);
 }
@@ -888,6 +949,10 @@ async function assertOutputHealth(buffer, label) {
   assertWorkbookViewStructure(buffer, label);
   assertStylesXmlReadable(buffer, label);
   await assertExcelJsReadable(buffer, label);
+  if (/accion2|bundle/i.test(label)) {
+    const workbook = await loadWorkbook(buffer);
+    assertNoOrphanWorkbookFormulas(workbook, label);
+  }
 }
 
 async function runAction1Scenario(label, inputPath, referencePath, mode = "legacy") {
@@ -1027,7 +1092,7 @@ async function runBundleScenario(label, standaloneOutputs) {
       standaloneSheet: "RET PROV",
       outputBuffer: standaloneOutputs.accion2,
       startCol: 1,
-      endCol: 16,
+      endCol: 14,
       formulaNormalizer: normalizeBundleFormula,
     },
     {

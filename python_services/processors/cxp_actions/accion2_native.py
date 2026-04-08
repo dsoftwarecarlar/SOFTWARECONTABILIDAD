@@ -72,6 +72,8 @@ CRITICAL_TEMPLATE_ENTRIES = [
     "xl/pivotCache/pivotCacheDefinition1.xml",
 ]
 INVALID_XML_CONTROL_CHARS = re.compile(r"[\u0000-\u0008\u000B\u000C\u000E-\u001F]")
+QUOTED_SHEET_REFERENCE = re.compile(r"'((?:[^']|'')+)'!")
+UNQUOTED_SHEET_REFERENCE = re.compile(r"(?<![A-Z0-9_])([A-Za-z_][A-Za-z0-9_ .-]*)!")
 
 
 @dataclass(frozen=True)
@@ -736,6 +738,7 @@ def build_summary(rows: list[NormalizedRow]) -> list[dict[str, Any]]:
             {
                 "kind": "type",
                 "label": tipo,
+                "tipo": tipo,
                 "base": bucket["total_base_cents"] / 100,
                 "ret": bucket["total_ret_cents"] / 100,
                 "calc": None,
@@ -748,6 +751,7 @@ def build_summary(rows: list[NormalizedRow]) -> list[dict[str, Any]]:
                 {
                     "kind": "detail",
                     "label": format_percent_label(percent),
+                    "tipo": tipo,
                     "base": item["base_cents"] / 100,
                     "ret": item["ret_cents"] / 100,
                     "calc": item["ret_cents"] / 100,
@@ -761,6 +765,7 @@ def build_summary(rows: list[NormalizedRow]) -> list[dict[str, Any]]:
             {
                 "kind": "type",
                 "label": tipo,
+                "tipo": tipo,
                 "base": bucket["total_base_cents"] / 100,
                 "ret": bucket["total_ret_cents"] / 100,
                 "calc": None,
@@ -773,6 +778,7 @@ def build_summary(rows: list[NormalizedRow]) -> list[dict[str, Any]]:
                 {
                     "kind": "detail",
                     "label": format_percent_label(percent),
+                    "tipo": tipo,
                     "base": item["base_cents"] / 100,
                     "ret": item["ret_cents"] / 100,
                     "calc": item["ret_cents"] / 100,
@@ -784,6 +790,7 @@ def build_summary(rows: list[NormalizedRow]) -> list[dict[str, Any]]:
         {
             "kind": "total",
             "label": "Total general",
+            "tipo": "",
             "base": total_base_cents / 100,
             "ret": total_ret_cents / 100,
             "calc": None,
@@ -797,8 +804,50 @@ def normalize_summary_label(label: Any) -> str:
     return sanitize_text(label).upper()
 
 
+def extract_formula_sheet_references(formula: str) -> list[str]:
+    references: list[str] = []
+    for match in QUOTED_SHEET_REFERENCE.finditer(formula):
+        references.append(match.group(1).replace("''", "'"))
+
+    unquoted_formula = QUOTED_SHEET_REFERENCE.sub(" ", formula)
+    for match in UNQUOTED_SHEET_REFERENCE.finditer(unquoted_formula):
+        candidate = sanitize_text(match.group(1))
+        if candidate:
+            references.append(candidate)
+
+    return references
+
+
+def formula_has_orphan_reference(formula: str, sheet_names: set[str]) -> bool:
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return False
+
+    for reference in extract_formula_sheet_references(formula):
+        if "[" in reference or "]" in reference:
+            return True
+        if reference not in sheet_names:
+            return True
+
+    return False
+
+
+def clear_orphan_formula_cells(workbook: Any) -> int:
+    sheet_names = set(workbook.sheetnames)
+    cleared = 0
+
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and formula_has_orphan_reference(cell.value, sheet_names):
+                    cell.value = None
+                    cleared += 1
+
+    return cleared
+
+
 def read_template_summary_layout(ws: Worksheet) -> list[dict[str, Any]]:
     layout: list[dict[str, Any]] = []
+    current_tipo = ""
     for row_index in range(2, 201):
         label = sanitize_text(ws.cell(row_index, 12).value)
         if not label:
@@ -811,8 +860,25 @@ def read_template_summary_layout(ws: Worksheet) -> list[dict[str, Any]]:
             kind = "total"
         elif not re.fullmatch(r"[0-9.]+", normalized):
             kind = "type"
-        layout.append({"row": row_index, "label": label, "kind": kind})
+            current_tipo = normalized
+        layout.append(
+            {
+                "row": row_index,
+                "label": label,
+                "kind": kind,
+                "tipo": current_tipo if kind == "detail" else normalized if kind == "type" else "",
+            }
+        )
     return layout
+
+
+def build_summary_lookup_key(kind: str, label: Any, tipo: Any = "") -> str:
+    normalized_kind = sanitize_text(kind).lower()
+    normalized_label = normalize_summary_label(label)
+    normalized_tipo = normalize_summary_label(tipo)
+    if normalized_kind == "detail":
+        return f"{normalized_kind}|{normalized_tipo}|{normalized_label}"
+    return f"{normalized_kind}|{normalized_label}"
 
 
 def find_last_fully_styled_row(ws: Worksheet, start_row: int, end_row: int, start_col: int, end_col: int) -> int:
@@ -930,7 +996,7 @@ def write_audit_report(audit_path: Path, payload: dict[str, Any]) -> None:
     audit_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def build_workbook_from_template(template_path: Path, rows: list[NormalizedRow]) -> tuple[Any, list[dict[str, Any]]]:
+def build_workbook_from_template(template_path: Path, rows: list[NormalizedRow]) -> tuple[Any, list[dict[str, Any]], int]:
     if not template_path.is_file():
         raise FileNotFoundError(f"No se encontro plantilla de Accion 2: {template_path}")
 
@@ -963,10 +1029,13 @@ def build_workbook_from_template(template_path: Path, rows: list[NormalizedRow])
 
     summary_layout = read_template_summary_layout(ws)
     computed_summary = build_summary(rows)
-    summary_lookup = {normalize_summary_label(item["label"]): item for item in computed_summary}
+    summary_lookup = {
+        build_summary_lookup_key(item["kind"], item["label"], item.get("tipo", "")): item
+        for item in computed_summary
+    }
     summary: list[dict[str, Any]] = []
     for slot in summary_layout:
-        match = summary_lookup.get(normalize_summary_label(slot["label"]))
+        match = summary_lookup.get(build_summary_lookup_key(slot["kind"], slot["label"], slot.get("tipo", "")))
         base = match["base"] if match else 0
         ret = match["ret"] if match else 0
         ws.cell(slot["row"], 13).value = base
@@ -975,6 +1044,7 @@ def build_workbook_from_template(template_path: Path, rows: list[NormalizedRow])
             {
                 "kind": slot["kind"],
                 "label": slot["label"],
+                "tipo": slot.get("tipo", ""),
                 "base": base,
                 "ret": ret,
                 "calc": match.get("calc") if match else None,
@@ -982,9 +1052,10 @@ def build_workbook_from_template(template_path: Path, rows: list[NormalizedRow])
             }
         )
 
+    formula_cells_sanitized = clear_orphan_formula_cells(workbook)
     ws.auto_filter.ref = f"A1:J{max(2, len(rows) + 1)}"
     verify_headers(ws)
-    return workbook, summary
+    return workbook, summary, formula_cells_sanitized
 
 
 def run(request: ProcessRequest) -> ProcessResult:
@@ -1009,7 +1080,7 @@ def run(request: ProcessRequest) -> ProcessResult:
     parse_ms = int((time.perf_counter() - started_at) * 1000)
 
     build_started = time.perf_counter()
-    workbook, summary = build_workbook_from_template(effective_template_path, rows)
+    workbook, summary, formula_cells_sanitized = build_workbook_from_template(effective_template_path, rows)
     workbook.calculation.fullCalcOnLoad = True
     build_ms = int((time.perf_counter() - build_started) * 1000)
 
@@ -1036,6 +1107,7 @@ def run(request: ProcessRequest) -> ProcessResult:
             "filas_txt": len(rows),
             "columnas_esperadas": EXPECTED_COLUMNS,
             "resumen_generado_filas": len(summary),
+            "formula_cells_sanitized": formula_cells_sanitized,
             "timings_ms": {
                 "parse": parse_ms,
                 "build": build_ms,
@@ -1052,6 +1124,7 @@ def run(request: ProcessRequest) -> ProcessResult:
         f"Plantilla utilizada: {effective_template_path}",
         f"Filas parseadas: {len(rows)}",
         f"Resumen lateral: {len(summary)} filas",
+        f"Formulas huerfanas saneadas: {formula_cells_sanitized}",
         f"Rendimiento (ms): parse={parse_ms}, build={build_ms}, write={write_ms}, total={total_ms}",
         f"Excel generado (una sola hoja): {final_output_path}",
         f"Auditoria JSON: {audit_path}",
@@ -1068,6 +1141,7 @@ def run(request: ProcessRequest) -> ProcessResult:
             "audit_path": str(audit_path),
             "rows": len(rows),
             "summary_rows": len(summary),
+            "formula_cells_sanitized": formula_cells_sanitized,
             "runtime": "python-native",
         },
     )

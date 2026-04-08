@@ -414,11 +414,7 @@ def validate_headers(sheet: SheetReader) -> str:
         (1, 20, "C. COSTO"),
     ]
     if matches_header_checks(sheet, legacy_checks):
-        raise RuntimeError(
-            "El archivo fuente corresponde al layout historico 'FacturacionServContabilidadDetallado'. "
-            "La ruta moderna de Ventana 2 sigue esperando el layout 'RepFacturacionServContabilidad' y "
-            "aun no tiene mapeo contable automatico completo para esa variante legacy."
-        )
+        return "legacy"
 
     row, column, needle = modern_checks[0]
     actual = sheet.text(row, column).upper()
@@ -436,8 +432,14 @@ def validate_headers(sheet: SheetReader) -> str:
 def read_source_rows(input_path: Path) -> tuple[str, list[dict[str, Any]]]:
     sheet = open_sheet_reader(input_path)
     layout = validate_headers(sheet)
-    if layout != "modern":
-        raise RuntimeError(f"Layout de fuente no soportado: {layout}")
+    if layout == "modern":
+        return read_modern_source_rows(sheet)
+    if layout == "legacy":
+        return read_legacy_source_rows(sheet)
+    raise RuntimeError(f"Layout de fuente no soportado: {layout}")
+
+
+def read_modern_source_rows(sheet: SheetReader) -> tuple[str, list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
 
     for row in range(2, sheet.max_row + 1):
@@ -518,6 +520,157 @@ def read_source_rows(input_path: Path) -> tuple[str, list[dict[str, Any]]]:
             }
         )
 
+    return sheet.name, rows
+
+
+def legacy_order_base(value: Any) -> str:
+    text = sanitize_text(value)
+    return re.sub(r"[A-Z]+$", "", text.upper())
+
+
+def infer_legacy_doc_type(sheet: SheetReader, row: int) -> str:
+    note_marker = sheet.number(row, 10)
+    note_date = sheet.date_value(row, 9)
+    fact_date = sheet.date_value(row, 8)
+    total_value = sheet.number(row, 19)
+    if note_date is not None and fact_date in (None, ""):
+        return "DC"
+    if note_marker < 0 or total_value < 0:
+        return "DC"
+    return "FA"
+
+
+def infer_legacy_cost_total(sheet: SheetReader, row: int) -> float:
+    return float(sum(abs(sheet.number(row, column)) for column in range(20, 26)))
+
+
+def attach_legacy_affected_documents(rows: list[dict[str, Any]]) -> None:
+    invoice_rows_by_order_base: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if sanitize_text(row.get("DocType")).upper() not in {"FA", "FC"}:
+            continue
+        order_base = legacy_order_base(row.get("Order"))
+        if order_base == "":
+            continue
+        invoice_rows_by_order_base.setdefault(order_base, []).append(row)
+
+    for row in rows:
+        if sanitize_text(row.get("DocType")).upper() not in {"DC", "DE"}:
+            continue
+        if sanitize_text(row.get("AffectedDocumentTrim")) != "":
+            continue
+
+        order_base = legacy_order_base(row.get("Order"))
+        if order_base == "":
+            continue
+
+        candidates = invoice_rows_by_order_base.get(order_base, [])
+        if not candidates:
+            continue
+
+        note_order = sanitize_text(row.get("Order")).upper()
+        note_customer = sanitize_text(row.get("Customer")).upper()
+        note_cedula = sanitize_text(row.get("Cedula"))
+        note_date = row.get("DateNoteValue") or row.get("DateFactValue")
+        note_row_index = int(row.get("RowIndex", 0) or 0)
+
+        def candidate_score(candidate: dict[str, Any]) -> tuple[int, int, int, int, int]:
+            candidate_order = sanitize_text(candidate.get("Order")).upper()
+            candidate_customer = sanitize_text(candidate.get("Customer")).upper()
+            candidate_cedula = sanitize_text(candidate.get("Cedula"))
+            candidate_date = candidate.get("DateFactValue") or candidate.get("DateNoteValue")
+            candidate_row_index = int(candidate.get("RowIndex", 0) or 0)
+            exact_order_penalty = 0 if candidate_order == note_order else 1
+            cedula_penalty = 0 if note_cedula != "" and candidate_cedula == note_cedula else 1
+            customer_penalty = 0 if note_customer != "" and candidate_customer == note_customer else 1
+            future_penalty = 0 if note_date in (None, "") or candidate_date in (None, "") or float(candidate_date) <= float(note_date) else 1
+            distance_penalty = abs(candidate_row_index - note_row_index)
+            return (exact_order_penalty, cedula_penalty, customer_penalty, future_penalty, distance_penalty)
+
+        selected = sorted(candidates, key=candidate_score)[0]
+        row["AffectedDocumentRaw"] = selected.get("DocumentRaw", "")
+        row["AffectedDocumentTrim"] = selected.get("DocumentTrim", "")
+
+
+def read_legacy_source_rows(sheet: SheetReader) -> tuple[str, list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+
+    for row in range(2, sheet.max_row + 1):
+        agency = sheet.text(row, 1)
+        if agency == "":
+            continue
+
+        order = sheet.text(row, 3)
+        template_key = get_template_key(agency, order)
+        if template_key is None:
+            continue
+
+        doc_type = infer_legacy_doc_type(sheet, row)
+        if doc_type not in {"FA", "FC", "DC", "DE"}:
+            continue
+
+        document_raw = sheet.text(row, 7)
+        if document_raw == "":
+            continue
+
+        date_fact_value = sheet.date_value(row, 8)
+        date_note_value = sheet.date_value(row, 9)
+        total_cost = infer_legacy_cost_total(sheet, row)
+
+        rows.append(
+            {
+                "RowIndex": row,
+                "TemplateKey": template_key,
+                "Agency": agency,
+                "AgencyRaw": sheet.text(row, 1),
+                "Center": sheet.text(row, 2),
+                "CenterRaw": sheet.text(row, 2),
+                "Order": order,
+                "OrderRaw": order,
+                "Advisor": "",
+                "AdvisorRaw": "",
+                "Line": sheet.text(row, 4),
+                "LineRaw": sheet.text(row, 4),
+                "DocType": doc_type,
+                "Cedula": sheet.text(row, 5),
+                "CedulaRaw": sheet.text(row, 5),
+                "Customer": sheet.text(row, 6),
+                "CustomerRaw": sheet.text(row, 6),
+                "DocumentRaw": document_raw,
+                "DocumentTrim": trim_document(document_raw),
+                "Series": "",
+                "SeriesRaw": "",
+                "FormaPago": "",
+                "Authorization": "",
+                "DateFactValue": date_fact_value,
+                "DateNoteValue": date_note_value,
+                "NoteCredit": 0.0,
+                "TotalManoObra": sheet.number(row, 11),
+                "TotalSubcontratos": sheet.number(row, 12),
+                "TotalInsumos": sheet.number(row, 13),
+                "TotalServicio": sheet.number(row, 14),
+                "TotalAccesorios": sheet.number(row, 15),
+                "TotalRepuestos": sheet.number(row, 16),
+                "Interes": sheet.number(row, 17),
+                "Iva": sheet.number(row, 18),
+                "Total": sheet.number(row, 19),
+                "Costo": total_cost,
+                "CostoLubricantes": 0.0,
+                "CostoAccesorios": 0.0,
+                "CostoRepuestos": 0.0,
+                "CostoPintura": 0.0,
+                "CostoSubconNc": 0.0,
+                "GarExt": "",
+                "GarExtRaw": "",
+                "Anulada": "",
+                "AffectedDocumentTrim": "",
+                "AffectedDocumentRaw": "",
+                "MotivoNc": "",
+                "ObservacionNc": "",
+            }
+        )
+
+    attach_legacy_affected_documents(rows)
     return sheet.name, rows
 
 

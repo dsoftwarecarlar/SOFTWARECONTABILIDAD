@@ -1398,19 +1398,17 @@ def resolve_mayor_compatible_layout(
         if selected is not None:
             return selected
 
-    if not allow_cross_prefix_family:
-        return None
-
-    suffix_key = get_mayor_account_suffix_key(account, ignore_prefix=True)
-    if suffix_key != "":
-        cross_prefix_suffix_candidates = [
-            layout
-            for layout in layouts
-            if get_mayor_account_suffix_key(str(layout["Account"]), ignore_prefix=True) == suffix_key
-        ]
-        selected = select_mayor_layout_candidate(cross_prefix_suffix_candidates, rows_by_layout_key)
-        if selected is not None:
-            return selected
+    if allow_cross_prefix_family:
+        suffix_key = get_mayor_account_suffix_key(account, ignore_prefix=True)
+        if suffix_key != "":
+            cross_prefix_suffix_candidates = [
+                layout
+                for layout in layouts
+                if get_mayor_account_suffix_key(str(layout["Account"]), ignore_prefix=True) == suffix_key
+            ]
+            selected = select_mayor_layout_candidate(cross_prefix_suffix_candidates, rows_by_layout_key)
+            if selected is not None:
+                return selected
 
     layout_bucket = get_mayor_account_layout_bucket(account, name)
     if layout_bucket == "":
@@ -1418,7 +1416,7 @@ def resolve_mayor_compatible_layout(
     cross_prefix_bucket_candidates = [
         layout
         for layout in layouts
-        if get_mayor_account_layout_bucket(layout.get("Account"), layout.get("Name")) == layout_bucket
+        if (normalize_text(layout.get("BucketHint")) or get_mayor_account_layout_bucket(layout.get("Account"), layout.get("Name"))) == layout_bucket
     ]
     return select_mayor_layout_candidate(cross_prefix_bucket_candidates, rows_by_layout_key)
 
@@ -1507,9 +1505,30 @@ def get_mayor_sheet_section_layouts(worksheet: Any) -> list[dict[str, Any]]:
                 "EndRow": end_row,
                 "ParentStartRow": int(current["ParentStartRow"]),
                 "ParentEndRow": int(current["ParentEndRow"]),
+                "BucketHint": get_mayor_account_layout_bucket(current["Account"], current["Name"]),
             }
         )
-    return layouts
+
+    occupied_parent_ranges = {
+        (int(item["ParentStartRow"]), int(item["ParentEndRow"]))
+        for item in ordered_starts
+    }
+    for summary_range in summary_ranges:
+        parent_key = (int(summary_range["StartRow"]), int(summary_range["EndRow"]))
+        if parent_key in occupied_parent_ranges:
+            continue
+        layouts.append(
+            {
+                "Account": f"__AUTO_RETURN__{int(summary_range['StartRow'])}_{int(summary_range['EndRow'])}",
+                "Name": "AUTO DEVOLUCIONES",
+                "StartRow": int(summary_range["StartRow"]),
+                "EndRow": int(summary_range["EndRow"]),
+                "ParentStartRow": int(summary_range["StartRow"]),
+                "ParentEndRow": int(summary_range["EndRow"]),
+                "BucketHint": "return",
+            }
+        )
+    return sorted(layouts, key=lambda item: int(item["StartRow"]))
 
 
 def get_brand_period_date_value(rows: list[dict[str, Any]], mayor_rows: list[dict[str, Any]]) -> float:
@@ -2397,6 +2416,61 @@ def write_px_rows_to_worksheet(worksheet: Any, rows: list[list[Any]], brand_key:
     }
 
 
+def aggregate_mayor_rows(rows: list[dict[str, Any]], key_fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    aggregated: dict[tuple[Any, ...], dict[str, Any]] = {}
+    ordered_keys: list[tuple[Any, ...]] = []
+
+    for row in rows:
+        key = tuple(
+            get_date_write_value(row.get(field)) if field == "date_value" else normalize_text(row.get(field))
+            for field in key_fields
+        )
+        current = aggregated.get(key)
+        if current is None:
+            current = dict(row)
+            current["debit"] = 0.0
+            current["credit"] = 0.0
+            aggregated[key] = current
+            ordered_keys.append(key)
+
+        current["debit"] = float(round_amount(to_number(current.get("debit")) + to_number(row.get("debit"))))
+        current["credit"] = float(round_amount(to_number(current.get("credit")) + to_number(row.get("credit"))))
+        current["balance"] = row.get("balance")
+        current["effective_balance"] = row.get("effective_balance", row.get("balance"))
+        if row.get("date_value") not in (None, ""):
+            current["date_value"] = row.get("date_value")
+        if normalize_text(row.get("date_text")) != "":
+            current["date_text"] = row.get("date_text")
+        for field in ("account", "name", "ext", "origin", "seat", "reference", "detail"):
+            if normalize_text(current.get(field)) == "" and normalize_text(row.get(field)) != "":
+                current[field] = row.get(field)
+
+    return [aggregated[key] for key in ordered_keys]
+
+
+def compact_mayor_rows_for_capacity(rows: list[dict[str, Any]], capacity: int) -> list[dict[str, Any]]:
+    compacted = list(rows)
+    if len(compacted) <= capacity:
+        return compacted
+
+    grouping_levels = [
+        ("account", "name", "ext", "date_value", "origin", "seat", "reference", "detail"),
+        ("account", "name", "ext", "date_value", "origin", "seat", "detail"),
+        ("account", "name", "ext", "date_value", "origin", "detail"),
+        ("account", "name", "ext", "date_value", "origin"),
+        ("account", "name", "ext"),
+    ]
+
+    for level in grouping_levels:
+        next_rows = aggregate_mayor_rows(compacted, level)
+        if len(next_rows) < len(compacted):
+            compacted = next_rows
+        if len(compacted) <= capacity:
+            return compacted
+
+    return compacted
+
+
 def write_mayor_rows_to_worksheet(worksheet: Any, rows: list[dict[str, Any]], brand_key: str = "") -> dict[str, Any]:
     layouts = get_mayor_sheet_section_layouts(worksheet)
     if not layouts:
@@ -2439,6 +2513,11 @@ def write_mayor_rows_to_worksheet(worksheet: Any, rows: list[dict[str, Any]], br
         layout_key = f"{layout['Account']}:{int(layout['StartRow'])}-{int(layout['EndRow'])}"
         account_rows = rows_by_layout_key.get(layout_key, [])
         capacity = int(layout["EndRow"]) - int(layout["StartRow"]) + 1
+        if len(account_rows) > capacity:
+            compacted_rows = compact_mayor_rows_for_capacity(account_rows, capacity)
+            if len(compacted_rows) < len(account_rows):
+                print(f"WARN|mayor_account_compacted|{brand_key}|{layout['Account']}|sheet={worksheet.Name}|before={len(account_rows)}|after={len(compacted_rows)}")
+                account_rows = compacted_rows
         if len(account_rows) > capacity:
             raise RuntimeError(f"El mayor para {brand_key} excede la capacidad de la seccion {layout['Account']} en {worksheet.Name}. Capacidad={capacity}, filas={len(account_rows)}")
         if account_rows:

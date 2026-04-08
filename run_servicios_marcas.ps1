@@ -1955,7 +1955,7 @@ function Set-DateCellValue {
 function Validate-Services-SourceWorksheet {
     param([object]$Worksheet)
 
-    $checks = @(
+    $modernChecks = @(
         @{ Row = 1; Column = 1; Needle = 'AGENCIA' },
         @{ Row = 1; Column = 2; Needle = 'CENTRO' },
         @{ Row = 1; Column = 3; Needle = 'No. ORDEN' },
@@ -1968,12 +1968,153 @@ function Validate-Services-SourceWorksheet {
         @{ Row = 1; Column = 36; Needle = 'ANULADA' }
     )
 
-    foreach ($check in $checks) {
+    $legacyChecks = @(
+        @{ Row = 1; Column = 1; Needle = 'AGENCIA' },
+        @{ Row = 1; Column = 2; Needle = 'CENTRO' },
+        @{ Row = 1; Column = 3; Needle = 'No. ORDEN' },
+        @{ Row = 1; Column = 7; Needle = 'FACTURA' },
+        @{ Row = 1; Column = 8; Needle = 'F. FACT' },
+        @{ Row = 1; Column = 9; Needle = 'F. NOTA' },
+        @{ Row = 1; Column = 11; Needle = 'TOTAL MANO OBRA' },
+        @{ Row = 1; Column = 20; Needle = 'C. COSTO' }
+    )
+
+    $allModernChecksMatched = $true
+    foreach ($check in $modernChecks) {
+        $actual = (Normalize-Text $Worksheet.Cells.Item($check.Row, $check.Column).Text).ToUpperInvariant()
+        $expected = (Normalize-Text $check.Needle).ToUpperInvariant()
+        if ($actual -notlike "*$expected*") {
+            $allModernChecksMatched = $false
+            break
+        }
+    }
+
+    if ($allModernChecksMatched) {
+        return 'modern'
+    }
+
+    $allLegacyChecksMatched = $true
+    foreach ($check in $legacyChecks) {
+        $actual = (Normalize-Text $Worksheet.Cells.Item($check.Row, $check.Column).Text).ToUpperInvariant()
+        $expected = (Normalize-Text $check.Needle).ToUpperInvariant()
+        if ($actual -notlike "*$expected*") {
+            $allLegacyChecksMatched = $false
+            break
+        }
+    }
+
+    if ($allLegacyChecksMatched) {
+        return 'legacy'
+    }
+
+    foreach ($check in $modernChecks) {
         $actual = (Normalize-Text $Worksheet.Cells.Item($check.Row, $check.Column).Text).ToUpperInvariant()
         $expected = (Normalize-Text $check.Needle).ToUpperInvariant()
         if ($actual -notlike "*$expected*") {
             throw ("El archivo fuente no coincide con la estructura esperada en fila {0} columna {1}. Esperado contiene '{2}' y llego '{3}'." -f $check.Row, $check.Column, $check.Needle, $actual)
         }
+    }
+}
+
+function Get-Legacy-SourceOrderBase {
+    param([object]$Value)
+
+    $text = (Normalize-Text $Value).ToUpperInvariant()
+    if ($text -eq '') {
+        return ''
+    }
+
+    return ([regex]::Replace($text, '[A-Z]+$', ''))
+}
+
+function Get-Legacy-SourceDocType {
+    param(
+        [object]$Worksheet,
+        [int]$Row
+    )
+
+    $noteDate = Get-Date-Value -Worksheet $Worksheet -Row $Row -Column 9
+    $factDate = Get-Date-Value -Worksheet $Worksheet -Row $Row -Column 8
+    $noteMarker = To-Number $Worksheet.Cells.Item($Row, 10).Value2
+    $totalValue = To-Number $Worksheet.Cells.Item($Row, 19).Value2
+    if (($null -ne $noteDate -and $noteDate -ne '') -and ($null -eq $factDate -or $factDate -eq '')) {
+        return 'DC'
+    }
+    if ($noteMarker -lt 0 -or $totalValue -lt 0) {
+        return 'DC'
+    }
+    return 'FA'
+}
+
+function Get-Legacy-SourceCostTotal {
+    param(
+        [object]$Worksheet,
+        [int]$Row
+    )
+
+    $total = 0.0
+    foreach ($column in 20..25) {
+        $total += [math]::Abs((To-Number $Worksheet.Cells.Item($Row, $column).Value2))
+    }
+    return [double]$total
+}
+
+function Resolve-Legacy-SourceAffectedDocuments {
+    param([object[]]$Rows)
+
+    $invoiceRowsByOrderBase = @{}
+    foreach ($row in @($Rows)) {
+        if ($row.DocType -notin @('FA', 'FC')) {
+            continue
+        }
+
+        $orderBase = Get-Legacy-SourceOrderBase $row.Order
+        if ($orderBase -eq '') {
+            continue
+        }
+
+        if (-not $invoiceRowsByOrderBase.ContainsKey($orderBase)) {
+            $invoiceRowsByOrderBase[$orderBase] = New-Object System.Collections.Generic.List[object]
+        }
+        $invoiceRowsByOrderBase[$orderBase].Add($row)
+    }
+
+    foreach ($row in @($Rows)) {
+        if ($row.DocType -notin @('DC', 'DE')) {
+            continue
+        }
+        if ((Normalize-Text $row.AffectedDocumentTrim) -ne '') {
+            continue
+        }
+
+        $orderBase = Get-Legacy-SourceOrderBase $row.Order
+        if ($orderBase -eq '' -or -not $invoiceRowsByOrderBase.ContainsKey($orderBase)) {
+            continue
+        }
+
+        $noteOrder = (Normalize-Text $row.Order).ToUpperInvariant()
+        $noteCustomer = (Normalize-Text $row.Customer).ToUpperInvariant()
+        $noteCedula = (Normalize-Text $row.Cedula)
+        $noteDate = if ($null -ne $row.DateNoteValue -and $row.DateNoteValue -ne '') { [double]$row.DateNoteValue } elseif ($null -ne $row.DateFactValue -and $row.DateFactValue -ne '') { [double]$row.DateFactValue } else { $null }
+        $noteRowIndex = [int]($row.RowIndex | ForEach-Object { $_ })
+
+        $selected = @($invoiceRowsByOrderBase[$orderBase]) | Sort-Object `
+            @{ Expression = { if (((Normalize-Text $_.Order).ToUpperInvariant()) -eq $noteOrder) { 0 } else { 1 } } }, `
+            @{ Expression = { if ($noteCedula -ne '' -and (Normalize-Text $_.Cedula) -eq $noteCedula) { 0 } else { 1 } } }, `
+            @{ Expression = { if ($noteCustomer -ne '' -and ((Normalize-Text $_.Customer).ToUpperInvariant()) -eq $noteCustomer) { 0 } else { 1 } } }, `
+            @{ Expression = {
+                $candidateDate = if ($null -ne $_.DateFactValue -and $_.DateFactValue -ne '') { [double]$_.DateFactValue } elseif ($null -ne $_.DateNoteValue -and $_.DateNoteValue -ne '') { [double]$_.DateNoteValue } else { $null }
+                if ($null -eq $noteDate -or $null -eq $candidateDate -or $candidateDate -le $noteDate) { 0 } else { 1 }
+            } }, `
+            @{ Expression = { [math]::Abs([int]$_.RowIndex - $noteRowIndex) } } |
+            Select-Object -First 1
+
+        if ($null -eq $selected) {
+            continue
+        }
+
+        $row.AffectedDocumentRaw = $selected.DocumentRaw
+        $row.AffectedDocumentTrim = $selected.DocumentTrim
     }
 }
 
@@ -2843,6 +2984,7 @@ function Read-SourceRows {
 
     Assert-NotCancelled 'lectura_fuente'
     $rows = New-Object System.Collections.Generic.List[object]
+    $layout = Validate-Services-SourceWorksheet -Worksheet $Worksheet
     $lastRow = $Worksheet.UsedRange.Row + $Worksheet.UsedRange.Rows.Count - 1
 
     for ($row = 2; $row -le $lastRow; $row++) {
@@ -2853,9 +2995,12 @@ function Read-SourceRows {
         }
 
         $order = Normalize-Text $Worksheet.Cells.Item($row, 3).Text
-        $series = Normalize-Text $Worksheet.Cells.Item($row, 14).Text
-        if ($series -eq '') {
-            $series = Normalize-Text $Worksheet.Cells.Item($row, 13).Text
+        $series = ''
+        if ($layout -eq 'modern') {
+            $series = Normalize-Text $Worksheet.Cells.Item($row, 14).Text
+            if ($series -eq '') {
+                $series = Normalize-Text $Worksheet.Cells.Item($row, 13).Text
+            }
         }
 
         $templateKey = Get-Template-Key -Agency $agency -Series $series -Order $order
@@ -2863,22 +3008,34 @@ function Read-SourceRows {
             continue
         }
 
-        $docType = (Normalize-Text $Worksheet.Cells.Item($row, 8).Text).ToUpperInvariant()
+        $docType = if ($layout -eq 'modern') { (Normalize-Text $Worksheet.Cells.Item($row, 8).Text).ToUpperInvariant() } else { Get-Legacy-SourceDocType -Worksheet $Worksheet -Row $row }
         if ($docType -notin @('FA', 'FC', 'DC', 'DE')) {
             continue
         }
 
-        $anulada = (Normalize-Text $Worksheet.Cells.Item($row, 36).Text).ToUpperInvariant()
+        $anulada = ''
+        if ($layout -eq 'modern') {
+            $anulada = (Normalize-Text $Worksheet.Cells.Item($row, 36).Text).ToUpperInvariant()
+        }
         if ($anulada -in @('SI', 'S', 'YES', 'Y', 'ANULADA')) {
             continue
         }
 
-        $documentRaw = Normalize-Text $Worksheet.Cells.Item($row, 12).Text
+        $documentRaw = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 12).Text } else { Normalize-Text $Worksheet.Cells.Item($row, 7).Text }
         if ($documentRaw -eq '') {
             continue
         }
 
-        $affectedRaw = Normalize-Text $Worksheet.Cells.Item($row, 37).Text
+        $affectedRaw = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 37).Text } else { '' }
+        $lineValue = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 7).Text } else { Normalize-Text $Worksheet.Cells.Item($row, 4).Text }
+        $lineRaw = if ($layout -eq 'modern') { [string]$Worksheet.Cells.Item($row, 7).Text } else { [string]$Worksheet.Cells.Item($row, 4).Text }
+        $cedulaValue = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 9).Text } else { Normalize-Text $Worksheet.Cells.Item($row, 5).Text }
+        $cedulaRaw = if ($layout -eq 'modern') { [string]$Worksheet.Cells.Item($row, 9).Text } else { [string]$Worksheet.Cells.Item($row, 5).Text }
+        $customerValue = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 10).Text } else { Normalize-Text $Worksheet.Cells.Item($row, 6).Text }
+        $customerRaw = if ($layout -eq 'modern') { [string]$Worksheet.Cells.Item($row, 10).Text } else { [string]$Worksheet.Cells.Item($row, 6).Text }
+        $dateFactValue = if ($layout -eq 'modern') { Get-Date-Value -Worksheet $Worksheet -Row $row -Column 15 } else { Get-Date-Value -Worksheet $Worksheet -Row $row -Column 8 }
+        $dateNoteValue = if ($layout -eq 'modern') { Get-Date-Value -Worksheet $Worksheet -Row $row -Column 18 } else { Get-Date-Value -Worksheet $Worksheet -Row $row -Column 9 }
+        $legacyCostTotal = if ($layout -eq 'legacy') { Get-Legacy-SourceCostTotal -Worksheet $Worksheet -Row $row } else { 0.0 }
 
         $rows.Add([pscustomobject]@{
             RowIndex = $row
@@ -2889,47 +3046,51 @@ function Read-SourceRows {
             CenterRaw = [string]$Worksheet.Cells.Item($row, 2).Text
             Order = $order
             OrderRaw = [string]$Worksheet.Cells.Item($row, 3).Text
-            Advisor = Normalize-Text $Worksheet.Cells.Item($row, 5).Text
-            AdvisorRaw = [string]$Worksheet.Cells.Item($row, 5).Text
-            Line = Normalize-Text $Worksheet.Cells.Item($row, 7).Text
-            LineRaw = [string]$Worksheet.Cells.Item($row, 7).Text
+            Advisor = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 5).Text } else { '' }
+            AdvisorRaw = if ($layout -eq 'modern') { [string]$Worksheet.Cells.Item($row, 5).Text } else { '' }
+            Line = $lineValue
+            LineRaw = $lineRaw
             DocType = $docType
-            Cedula = Normalize-Text $Worksheet.Cells.Item($row, 9).Text
-            CedulaRaw = [string]$Worksheet.Cells.Item($row, 9).Text
-            Customer = Normalize-Text $Worksheet.Cells.Item($row, 10).Text
-            CustomerRaw = [string]$Worksheet.Cells.Item($row, 10).Text
+            Cedula = $cedulaValue
+            CedulaRaw = $cedulaRaw
+            Customer = $customerValue
+            CustomerRaw = $customerRaw
             DocumentRaw = $documentRaw
             DocumentTrim = Trim-Document $documentRaw
             Series = $series
             SeriesRaw = [string]$series
-            FormaPago = Normalize-Text $Worksheet.Cells.Item($row, 16).Text
-            Authorization = Normalize-Text $Worksheet.Cells.Item($row, 17).Text
-            DateFactValue = Get-Date-Value -Worksheet $Worksheet -Row $row -Column 15
-            DateNoteValue = Get-Date-Value -Worksheet $Worksheet -Row $row -Column 18
-            NoteCredit = To-Number $Worksheet.Cells.Item($row, 19).Value2
-            TotalManoObra = To-Number $Worksheet.Cells.Item($row, 20).Value2
-            TotalSubcontratos = To-Number $Worksheet.Cells.Item($row, 21).Value2
-            TotalInsumos = To-Number $Worksheet.Cells.Item($row, 22).Value2
-            TotalServicio = To-Number $Worksheet.Cells.Item($row, 23).Value2
-            TotalAccesorios = To-Number $Worksheet.Cells.Item($row, 24).Value2
-            TotalRepuestos = To-Number $Worksheet.Cells.Item($row, 25).Value2
-            Interes = To-Number $Worksheet.Cells.Item($row, 26).Value2
-            Iva = To-Number $Worksheet.Cells.Item($row, 27).Value2
-            Total = To-Number $Worksheet.Cells.Item($row, 28).Value2
-            Costo = To-Number $Worksheet.Cells.Item($row, 29).Value2
-            CostoLubricantes = To-Number $Worksheet.Cells.Item($row, 30).Value2
-            CostoAccesorios = To-Number $Worksheet.Cells.Item($row, 31).Value2
-            CostoRepuestos = To-Number $Worksheet.Cells.Item($row, 32).Value2
-            CostoPintura = To-Number $Worksheet.Cells.Item($row, 33).Value2
-            CostoSubconNc = To-Number $Worksheet.Cells.Item($row, 34).Value2
-            GarExt = Normalize-Text $Worksheet.Cells.Item($row, 35).Text
-            GarExtRaw = [string]$Worksheet.Cells.Item($row, 35).Text
+            FormaPago = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 16).Text } else { '' }
+            Authorization = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 17).Text } else { '' }
+            DateFactValue = $dateFactValue
+            DateNoteValue = $dateNoteValue
+            NoteCredit = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 19).Value2 } else { 0.0 }
+            TotalManoObra = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 20).Value2 } else { To-Number $Worksheet.Cells.Item($row, 11).Value2 }
+            TotalSubcontratos = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 21).Value2 } else { To-Number $Worksheet.Cells.Item($row, 12).Value2 }
+            TotalInsumos = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 22).Value2 } else { To-Number $Worksheet.Cells.Item($row, 13).Value2 }
+            TotalServicio = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 23).Value2 } else { To-Number $Worksheet.Cells.Item($row, 14).Value2 }
+            TotalAccesorios = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 24).Value2 } else { To-Number $Worksheet.Cells.Item($row, 15).Value2 }
+            TotalRepuestos = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 25).Value2 } else { To-Number $Worksheet.Cells.Item($row, 16).Value2 }
+            Interes = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 26).Value2 } else { To-Number $Worksheet.Cells.Item($row, 17).Value2 }
+            Iva = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 27).Value2 } else { To-Number $Worksheet.Cells.Item($row, 18).Value2 }
+            Total = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 28).Value2 } else { To-Number $Worksheet.Cells.Item($row, 19).Value2 }
+            Costo = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 29).Value2 } else { $legacyCostTotal }
+            CostoLubricantes = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 30).Value2 } else { 0.0 }
+            CostoAccesorios = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 31).Value2 } else { 0.0 }
+            CostoRepuestos = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 32).Value2 } else { 0.0 }
+            CostoPintura = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 33).Value2 } else { 0.0 }
+            CostoSubconNc = if ($layout -eq 'modern') { To-Number $Worksheet.Cells.Item($row, 34).Value2 } else { 0.0 }
+            GarExt = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 35).Text } else { '' }
+            GarExtRaw = if ($layout -eq 'modern') { [string]$Worksheet.Cells.Item($row, 35).Text } else { '' }
             Anulada = $anulada
             AffectedDocumentTrim = Trim-Document $affectedRaw
-            AffectedDocumentRaw = [string]$Worksheet.Cells.Item($row, 37).Text
-            MotivoNc = Normalize-Text $Worksheet.Cells.Item($row, 38).Text
-            ObservacionNc = Normalize-Text $Worksheet.Cells.Item($row, 39).Text
+            AffectedDocumentRaw = if ($layout -eq 'modern') { [string]$Worksheet.Cells.Item($row, 37).Text } else { '' }
+            MotivoNc = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 38).Text } else { '' }
+            ObservacionNc = if ($layout -eq 'modern') { Normalize-Text $Worksheet.Cells.Item($row, 39).Text } else { '' }
         })
+    }
+
+    if ($layout -eq 'legacy') {
+        Resolve-Legacy-SourceAffectedDocuments -Rows @($rows)
     }
 
     return $rows
@@ -3403,10 +3564,33 @@ function Get-MayorSheetSectionLayouts {
             EndRow = [int]$endRow
             ParentStartRow = [int]$current.ParentStartRow
             ParentEndRow = [int]$current.ParentEndRow
+            BucketHint = Get-MayorAccountLayoutBucket -Account $current.Account -Name $current.Name
         }) | Out-Null
     }
 
-    return $layouts.ToArray()
+    $occupiedParentRanges = @{}
+    foreach ($item in $orderedStarts) {
+        $occupiedParentRanges["{0}:{1}" -f [int]$item.ParentStartRow, [int]$item.ParentEndRow] = $true
+    }
+
+    foreach ($summaryRange in $summaryRanges) {
+        $parentKey = "{0}:{1}" -f [int]$summaryRange.StartRow, [int]$summaryRange.EndRow
+        if ($occupiedParentRanges.ContainsKey($parentKey)) {
+            continue
+        }
+
+        $layouts.Add([pscustomobject]@{
+            Account = "__AUTO_RETURN__{0}_{1}" -f [int]$summaryRange.StartRow, [int]$summaryRange.EndRow
+            Name = 'AUTO DEVOLUCIONES'
+            StartRow = [int]$summaryRange.StartRow
+            EndRow = [int]$summaryRange.EndRow
+            ParentStartRow = [int]$summaryRange.StartRow
+            ParentEndRow = [int]$summaryRange.EndRow
+            BucketHint = 'return'
+        }) | Out-Null
+    }
+
+    return @($layouts | Sort-Object @{ Expression = { [int]$_.StartRow } })
 }
 
 function Test-MayorBrandAllowsFlexibleAccountMapping {
@@ -3503,18 +3687,16 @@ function Resolve-MayorCompatibleLayout {
         }
     }
 
-    if (-not $AllowCrossPrefixFamily) {
-        return $null
-    }
-
-    $suffixKey = Get-MayorAccountSuffixKey -Account $Account -IgnorePrefix
-    if ($suffixKey -ne '') {
-        $selected = Select-MayorLayoutCandidate -Candidates @(
-            @($Layouts) |
-                Where-Object { (Get-MayorAccountSuffixKey -Account $_.Account -IgnorePrefix) -eq $suffixKey }
-        ) -RowsByLayoutKey $RowsByLayoutKey
-        if ($null -ne $selected) {
-            return $selected
+    if ($AllowCrossPrefixFamily) {
+        $suffixKey = Get-MayorAccountSuffixKey -Account $Account -IgnorePrefix
+        if ($suffixKey -ne '') {
+            $selected = Select-MayorLayoutCandidate -Candidates @(
+                @($Layouts) |
+                    Where-Object { (Get-MayorAccountSuffixKey -Account $_.Account -IgnorePrefix) -eq $suffixKey }
+            ) -RowsByLayoutKey $RowsByLayoutKey
+            if ($null -ne $selected) {
+                return $selected
+            }
         }
     }
 
@@ -3525,7 +3707,13 @@ function Resolve-MayorCompatibleLayout {
 
     return Select-MayorLayoutCandidate -Candidates @(
         @($Layouts) |
-            Where-Object { (Get-MayorAccountLayoutBucket -Account $_.Account -Name $_.Name) -eq $layoutBucket }
+            Where-Object {
+                $candidateBucket = Normalize-Text $_.BucketHint
+                if ($candidateBucket -eq '') {
+                    $candidateBucket = Get-MayorAccountLayoutBucket -Account $_.Account -Name $_.Name
+                }
+                $candidateBucket -eq $layoutBucket
+            }
     ) -RowsByLayoutKey $RowsByLayoutKey
 }
 
@@ -3548,6 +3736,89 @@ function Write-MayorDataRow {
     Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 10 -Value (To-Number $MayorRow.credit)
     $balanceValue = if ($null -ne $MayorRow.PSObject.Properties['effective_balance']) { $MayorRow.effective_balance } else { $MayorRow.balance }
     Set-NumericCellSafe -Worksheet $Worksheet -Row $TargetRow -Column 11 -Value (To-Number $balanceValue)
+}
+
+function Merge-MayorRows {
+    param(
+        [object[]]$Rows,
+        [string[]]$KeyFields
+    )
+
+    $orderedKeys = New-Object System.Collections.Generic.List[string]
+    $aggregated = @{}
+
+    foreach ($row in @($Rows)) {
+        $keyParts = foreach ($field in $KeyFields) {
+            if ($field -eq 'date_value') {
+                Get-DateWriteValue $row.$field
+            } else {
+                Normalize-Text $row.$field
+            }
+        }
+
+        $key = ($keyParts -join '|')
+        if (-not $aggregated.ContainsKey($key)) {
+            $clone = [ordered]@{}
+            foreach ($property in $row.PSObject.Properties) {
+                $clone[$property.Name] = $property.Value
+            }
+            $clone['debit'] = 0.0
+            $clone['credit'] = 0.0
+            $aggregated[$key] = [pscustomobject]$clone
+            $orderedKeys.Add($key) | Out-Null
+        }
+
+        $current = $aggregated[$key]
+        $current.debit = [double](Round-Amount ((To-Number $current.debit) + (To-Number $row.debit)))
+        $current.credit = [double](Round-Amount ((To-Number $current.credit) + (To-Number $row.credit)))
+        $current.balance = $row.balance
+        $current.effective_balance = if ($null -ne $row.PSObject.Properties['effective_balance']) { $row.effective_balance } else { $row.balance }
+        if ($null -ne $row.date_value -and $row.date_value -ne '') {
+            $current.date_value = $row.date_value
+        }
+        if ((Normalize-Text $row.date_text) -ne '') {
+            $current.date_text = $row.date_text
+        }
+        foreach ($field in @('account', 'name', 'ext', 'origin', 'seat', 'reference', 'detail')) {
+            if ((Normalize-Text $current.$field) -eq '' -and (Normalize-Text $row.$field) -ne '') {
+                $current.$field = $row.$field
+            }
+        }
+    }
+
+    return @($orderedKeys | ForEach-Object { $aggregated[$_] })
+}
+
+function Compact-MayorRowsForCapacity {
+    param(
+        [object[]]$Rows,
+        [int]$Capacity
+    )
+
+    $compacted = @($Rows)
+    if ($compacted.Count -le $Capacity) {
+        return $compacted
+    }
+
+    $groupingLevels = @(
+        @('account', 'name', 'ext', 'date_value', 'origin', 'seat', 'reference', 'detail'),
+        @('account', 'name', 'ext', 'date_value', 'origin', 'seat', 'detail'),
+        @('account', 'name', 'ext', 'date_value', 'origin', 'detail'),
+        @('account', 'name', 'ext', 'date_value', 'origin'),
+        @('account', 'name', 'ext')
+    )
+
+    foreach ($level in $groupingLevels) {
+        $nextRows = @(Merge-MayorRows -Rows $compacted -KeyFields $level)
+        if ($nextRows.Count -lt $compacted.Count) {
+            $compacted = $nextRows
+        }
+        if ($compacted.Count -le $Capacity) {
+            return $compacted
+        }
+    }
+
+    return $compacted
 }
 
 function Write-MayorRows-ToWorksheet {
@@ -3619,6 +3890,13 @@ function Write-MayorRows-ToWorksheet {
             $accountRows = $rowsByLayoutKey[$layoutKey].ToArray()
         }
         $capacity = [int]($layout.EndRow - $layout.StartRow + 1)
+        if ($accountRows.Count -gt $capacity) {
+            $compactedRows = @(Compact-MayorRowsForCapacity -Rows $accountRows -Capacity $capacity)
+            if ($compactedRows.Count -lt $accountRows.Count) {
+                Write-Output ("WARN|mayor_account_compacted|{0}|{1}|sheet={2}|before={3}|after={4}" -f $BrandKey, $layout.Account, $Worksheet.Name, $accountRows.Count, $compactedRows.Count)
+                $accountRows = $compactedRows
+            }
+        }
         if ($accountRows.Count -gt $capacity) {
             throw ("El mayor para {0} excede la capacidad de la seccion {1} en {2}. Capacidad={3}, filas={4}" -f $BrandKey, $layout.Account, $Worksheet.Name, $capacity, $accountRows.Count)
         }

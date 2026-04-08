@@ -283,6 +283,71 @@ function normalizeSummaryLabel(label) {
   return sanitizeText(label).replace(/\s+/g, " ").trim().toUpperCase();
 }
 
+function normalizeFormulaText(formula) {
+  if (typeof formula !== "string" || formula === "" || formula.startsWith("SHARED:")) {
+    return null;
+  }
+  return formula.startsWith("=") ? formula : `=${formula}`;
+}
+
+function extractFormulaSheetReferences(formula) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return [];
+  }
+
+  const references = [];
+  const quotedPattern = /'((?:[^']|'')+)'!/g;
+  let match;
+  while ((match = quotedPattern.exec(normalized)) !== null) {
+    references.push(match[1].replace(/''/g, "'"));
+  }
+
+  const unquotedFormula = normalized.replace(quotedPattern, " ");
+  const unquotedPattern = /(^|[^A-Z0-9_])([A-Za-z_][A-Za-z0-9_ .-]*)!/g;
+  while ((match = unquotedPattern.exec(unquotedFormula)) !== null) {
+    const candidate = sanitizeText(match[2]);
+    if (candidate) {
+      references.push(candidate);
+    }
+  }
+
+  return references;
+}
+
+function formulaHasOrphanReference(formula, sheetNames) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return false;
+  }
+
+  const references = extractFormulaSheetReferences(normalized);
+  return references.some((reference) => reference.includes("[") || !sheetNames.has(reference));
+}
+
+function clearOrphanFormulaCells(workbook) {
+  const sheetNames = new Set(workbook.worksheets.map((sheet) => sheet.name));
+  let cleared = 0;
+
+  for (const worksheet of workbook.worksheets) {
+    worksheet.eachRow({ includeEmpty: true }, (row) => {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        const value = cell.value;
+        const formula = value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "formula")
+          ? value.formula
+          : (typeof value === "string" ? value : null);
+        if (!formulaHasOrphanReference(formula, sheetNames)) {
+          return;
+        }
+        cell.value = null;
+        cleared += 1;
+      });
+    });
+  }
+
+  return cleared;
+}
+
 function readTemplateSummaryLayout(ws) {
   const layout = [];
   for (let row = 2; row <= 200; row += 1) {
@@ -684,6 +749,7 @@ async function buildWorkbookFromTemplate(templatePath, rows) {
     });
   }
 
+  clearOrphanFormulaCells(wb);
   return { workbook: wb, summary };
 }
 

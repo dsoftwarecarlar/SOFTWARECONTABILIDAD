@@ -45,12 +45,12 @@ function createLegacyLayoutFixture(targetPath) {
     "AGENCIA",
     "CENTRO",
     "No. ORDEN",
-    "",
-    "ASESOR",
-    "",
-    "FACTURA",
-    "F. FACT",
-    "F. NOTA",
+    "LINEA NEGOCIO",
+    "CEDULA",
+    "FACTURADO A",
+    "No. FACTURA / NOTA CREDITO",
+    "F. FACT.",
+    "F. NOTA CRE.",
     "NOTA CREDITO",
     "TOTAL MANO OBRA",
     "TOTAL SUBCONTRATOS",
@@ -62,33 +62,71 @@ function createLegacyLayoutFixture(targetPath) {
     "VALOR IVA",
     "TOTAL",
     "C. COSTO ENDEREZADA",
+    "C. COSTO MANTENIMIENTO",
+    "C. COSTO PINTURA",
+    "C. COSTO REPARACIONES",
+    "C. COSTO ALINEACION",
+    "C. COSTO LAVADA",
   ];
 
-  const row = [
-    "MATRIZ",
+  const invoiceRow = [
+    "CHANGAN",
     "03",
     "T0001",
-    "",
-    "ASESOR",
-    "",
+    "24",
+    "0999999999",
+    "CLIENTE PRUEBA",
     "000001",
     "25/03/2026",
     "",
-    "0",
+    "1",
     "100",
     "0",
     "0",
     "100",
     "0",
-    "0",
+    "20",
     "0",
     "15",
-    "115",
+    "135",
     "10",
+    "5",
+    "2",
+    "3",
+    "4",
+    "1",
+  ];
+
+  const noteRow = [
+    "CHANGAN",
+    "03",
+    "T0001A",
+    "24",
+    "0999999999",
+    "CLIENTE PRUEBA",
+    "000099",
+    "",
+    "30/03/2026",
+    "-1",
+    "-40",
+    "0",
+    "0",
+    "-40",
+    "0",
+    "-10",
+    "0",
+    "-6",
+    "-56",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
   ];
 
   const workbook = XLSX.utils.book_new();
-  const sheet = XLSX.utils.aoa_to_sheet([headers, row]);
+  const sheet = XLSX.utils.aoa_to_sheet([headers, invoiceRow, noteRow]);
   XLSX.utils.book_append_sheet(workbook, sheet, "Legacy");
   XLSX.writeFile(workbook, targetPath);
 }
@@ -115,12 +153,19 @@ function main() {
 
     createLegacyLayoutFixture(legacyFixture);
     const legacy = runReader(legacyFixture, legacyOut);
-    assertCondition(legacy.status !== 0, "El layout legacy no debe aceptarse como fuente moderna.");
-    const stderr = `${legacy.stderr || ""}\n${legacy.stdout || ""}`;
+    assertCondition(legacy.status === 0, `El layout legacy debe procesarse.\n${legacy.stderr || legacy.stdout}`);
+    assertCondition(fs.existsSync(legacyOut), "El layout legacy no genero salida JSON.");
+    const payload = JSON.parse(fs.readFileSync(legacyOut, "utf8"));
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    assertCondition(rows.length === 2, `El layout legacy debe generar 2 filas y devolvio ${rows.length}.`);
+    assertCondition(rows[0].DocType === "FA", `La fila legacy de factura debe quedar FA y llego ${rows[0].DocType}.`);
+    assertCondition(rows[1].DocType === "DC", `La fila legacy de nota debe quedar DC y llego ${rows[1].DocType}.`);
     assertCondition(
-      stderr.includes("FacturacionServContabilidadDetallado"),
-      "El lector no devolvio el mensaje explicito para layout legacy.",
+      rows[1].AffectedDocumentTrim === rows[0].DocumentTrim,
+      `La nota legacy debe enlazarse con la factura base. Esperado ${rows[0].DocumentTrim} y llego ${rows[1].AffectedDocumentTrim}.`,
     );
+    assertCondition(rows[0].Costo === 25, `La factura legacy debe preservar el costo total 25 y llego ${rows[0].Costo}.`);
+    assertCondition(rows[1].Costo === 21, `La nota legacy debe preservar el costo total 21 y llego ${rows[1].Costo}.`);
 
     console.log("OK: guardrail de layouts de Ventana 2 validado.");
   } finally {

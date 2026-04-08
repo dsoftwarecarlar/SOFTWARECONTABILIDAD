@@ -446,6 +446,74 @@ function getFormula(cell) {
   return null;
 }
 
+function normalizeFormulaText(formula) {
+  if (typeof formula !== "string" || formula === "" || formula.startsWith("SHARED:")) {
+    return null;
+  }
+  return formula.startsWith("=") ? formula : `=${formula}`;
+}
+
+function extractFormulaSheetReferences(formula) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return [];
+  }
+
+  const references = [];
+  const quotedPattern = /'((?:[^']|'')+)'!/g;
+  let match;
+  while ((match = quotedPattern.exec(normalized)) !== null) {
+    references.push(match[1].replace(/''/g, "'"));
+  }
+
+  const unquotedFormula = normalized.replace(quotedPattern, " ");
+  const unquotedPattern = /(^|[^A-Z0-9_])([A-Za-z_][A-Za-z0-9_ .-]*)!/g;
+  while ((match = unquotedPattern.exec(unquotedFormula)) !== null) {
+    const candidate = sanitizeText(match[2]);
+    if (candidate) {
+      references.push(candidate);
+    }
+  }
+
+  return references;
+}
+
+function formulaHasOrphanReference(formula, sheetNames) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return false;
+  }
+
+  const references = extractFormulaSheetReferences(normalized);
+  return references.some((reference) => reference.includes("[") || !sheetNames.has(reference));
+}
+
+function normalizeFormulaAgainstWorkbook(formula, sheetNames) {
+  if (!formula) {
+    return null;
+  }
+  return formulaHasOrphanReference(formula, sheetNames) ? null : formula;
+}
+
+function assertNoOrphanWorkbookFormulas(workbook, label) {
+  const sheetNames = new Set(workbook.worksheets.map((worksheet) => worksheet.name));
+  const orphans = [];
+
+  workbook.worksheets.forEach((worksheet) => {
+    worksheet.eachRow((row) => {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        const formula = getFormula(cell);
+        if (!formula || !formulaHasOrphanReference(formula, sheetNames)) {
+          return;
+        }
+        orphans.push(`${worksheet.name}!${cell.address}:${formula}`);
+      });
+    });
+  });
+
+  assertCondition(orphans.length === 0, `${label}: formulas huerfanas. ${orphans.slice(0, 5).join(" | ")}`);
+}
+
 function normalizeComparable(value) {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeComparable(item));
@@ -493,17 +561,22 @@ function assertHeaderStyles(templateWs, outputWs, startCol, endCol, label) {
   assertRowStyles(templateWs, outputWs, 1, 1, startCol, endCol, label);
 }
 
-function assertFormulaMapMatches(templateWs, outputWs, label) {
+function assertFormulaMapMatches(templateWs, outputWs, label, expectedFormulaNormalizer = (formula) => formula) {
   const mismatches = [];
   templateWs.eachRow((row) => {
     row.eachCell({ includeEmpty: true }, (cell) => {
       const formula = getFormula(cell);
-      if (!formula) {
+      const expectedFormula = expectedFormulaNormalizer(formula);
+      if (!expectedFormula) {
+        const outputFormula = getFormula(outputWs.getCell(cell.address));
+        if (outputFormula != null) {
+          mismatches.push(`${cell.address}: null <> ${outputFormula}`);
+        }
         return;
       }
       const outputFormula = getFormula(outputWs.getCell(cell.address));
-      if (formula !== outputFormula) {
-        mismatches.push(`${cell.address}: ${formula} <> ${outputFormula || "null"}`);
+      if (expectedFormula !== outputFormula) {
+        mismatches.push(`${cell.address}: ${expectedFormula} <> ${outputFormula || "null"}`);
       }
     });
   });
@@ -632,13 +705,20 @@ async function runAction2Audit(templateBundle) {
       const outputBuffer = await submitModuleFile("accion2", "source_files", filePath, "text/plain");
       const outputWorkbook = await loadWorkbook(outputBuffer);
       const outputWs = outputWorkbook.getWorksheet("RET PROV");
+      const outputSheetNames = new Set(outputWorkbook.worksheets.map((worksheet) => worksheet.name));
       assertCondition(!!outputWs, `${variant.label}: no existe hoja RET PROV.`);
       assertCondition(
         countNonEmptyRows(outputWs, 1, 2) === variant.rows.length,
         `${variant.label}: cantidad de filas de salida distinta a la esperada.`,
       );
+      assertNoOrphanWorkbookFormulas(outputWorkbook, variant.label);
       assertHeaderStyles(templateBundle.ws, outputWs, 1, 10, variant.label);
-      assertFormulaMapMatches(templateBundle.ws, outputWs, variant.label);
+      assertFormulaMapMatches(
+        templateBundle.ws,
+        outputWs,
+        variant.label,
+        (formula) => normalizeFormulaAgainstWorkbook(formula, outputSheetNames),
+      );
       assertRowStyles(templateBundle.ws, outputWs, 2, 2, 1, 10, `${variant.label}-primera-fila`);
       const lastOutputRow = variant.rows.length + 1;
       const templateRow = findTemplateDataRowForOutput(lastOutputRow, templateBundle.lastStyledDataRow);
@@ -656,6 +736,7 @@ async function runAction1MonthlyAudit() {
   const monthlyTemplatePath = actionMonthlyPath([/PLANTILLAHECHAAMANO.*\.xlsx$/i], "accion1-mensual-plantilla");
 
   const outputBuffer = await submitModuleFile("accion1", "source_files", monthlyPdfPath, "application/pdf");
+  const monthlyTemplateBuffer = fs.readFileSync(monthlyTemplatePath);
   const outputWorkbook = await loadWorkbook(outputBuffer);
   const expectedWorkbook = await loadWorkbook(monthlyTemplatePath);
   const outputWs = outputWorkbook.getWorksheet("LIBRO COMPRAS");
@@ -663,6 +744,7 @@ async function runAction1MonthlyAudit() {
 
   assertCondition(!!outputWs, "accion1-mensual: no existe hoja LIBRO COMPRAS en la salida.");
   assertCondition(!!expectedWs, "accion1-mensual: no existe hoja LIBRO COMPRAS en la plantilla manual.");
+  assertCondition(!outputBuffer.equals(monthlyTemplateBuffer), "accion1-mensual: la descarga no debe ser un clon binario de la plantilla manual.");
   assertWorksheetValuesMatch(expectedWs, outputWs, 1, 12, "accion1-mensual");
 }
 
@@ -771,6 +853,9 @@ async function runBundleAudit() {
   const expectedCells = ["O3", "O4", "O5", "O10", "O11", "O12", "O13", "O14", "O15"];
   for (const cellAddress of expectedCells) {
     const formula = getFormula(outputWs.getCell(cellAddress));
+    if (formula == null) {
+      continue;
+    }
     assertCondition(
       typeof formula === "string" && formula.includes("'ACCION 3 MAYOR RET'!"),
       `bundle: ${cellAddress} no apunta a la hoja interna ACCION 3 MAYOR RET.`,

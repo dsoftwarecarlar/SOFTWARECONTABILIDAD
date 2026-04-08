@@ -1140,8 +1140,7 @@ def update_xml_entry(
     default_namespace: str | None = None,
     prefix_namespaces: dict[str, str] | None = None,
 ) -> bytes:
-    if default_namespace is None and not prefix_namespaces:
-        preserve_xml_namespaces(raw_bytes)
+    preserve_xml_namespaces(raw_bytes)
     if default_namespace:
         ET.register_namespace("", default_namespace)
     for prefix, uri in (prefix_namespaces or {}).items():
@@ -1163,14 +1162,43 @@ def remove_external_links_from_package(output_path: Path) -> None:
         output_entries = {name: output_zip.read(name) for name in output_zip.namelist()}
 
     names_to_remove = [name for name in output_entries if name.startswith("xl/externalLinks/")]
+    workbook_bytes = output_entries.get("xl/workbook.xml", b"")
+    workbook_rels_bytes = output_entries.get("xl/_rels/workbook.xml.rels", b"")
+    content_types_bytes = output_entries.get("[Content_Types].xml", b"")
+    workbook_needs_patch = b"externalReferences" in workbook_bytes
+    workbook_rels_need_patch = b"/externalLink" in workbook_rels_bytes or b"externalLinks/" in workbook_rels_bytes
+    content_types_need_patch = (
+        EXTERNAL_LINK_CONTENT_TYPE.encode("utf-8") in content_types_bytes or b"/xl/externalLinks/" in content_types_bytes
+    )
+    if not names_to_remove and not workbook_needs_patch and not workbook_rels_need_patch and not content_types_need_patch:
+        return
+
     for name in names_to_remove:
         output_entries.pop(name, None)
 
-    if "xl/workbook.xml" in output_entries:
+    if workbook_needs_patch and "xl/workbook.xml" in output_entries:
         def patch_workbook(root: ET.Element) -> None:
             for child in list(root):
                 if child.tag.rsplit("}", 1)[-1] == "externalReferences":
                     root.remove(child)
+
+            namespace_match = re.match(r"\{(.+)\}", root.tag)
+            namespace = namespace_match.group(1) if namespace_match else SPREADSHEETML_NS
+            book_views = find_first_local(root, "bookViews")
+            if book_views is None:
+                book_views = ET.Element(f"{{{namespace}}}bookViews")
+                sheets_index = next(
+                    (index for index, child in enumerate(list(root)) if child.tag.rsplit("}", 1)[-1] == "sheets"),
+                    len(list(root)),
+                )
+                root.insert(sheets_index, book_views)
+            workbook_view = find_first_local(book_views, "workbookView")
+            if workbook_view is None:
+                workbook_view = ET.SubElement(book_views, f"{{{namespace}}}workbookView")
+            workbook_view.set("xWindow", workbook_view.get("xWindow", "0"))
+            workbook_view.set("yWindow", workbook_view.get("yWindow", "0"))
+            workbook_view.set("windowWidth", workbook_view.get("windowWidth", "28800"))
+            workbook_view.set("windowHeight", workbook_view.get("windowHeight", "14400"))
 
         output_entries["xl/workbook.xml"] = update_xml_entry(
             output_entries["xl/workbook.xml"],
@@ -1179,7 +1207,7 @@ def remove_external_links_from_package(output_path: Path) -> None:
             prefix_namespaces={"r": OFFICEDOC_RELS_NS},
         )
 
-    if "xl/_rels/workbook.xml.rels" in output_entries:
+    if workbook_rels_need_patch and "xl/_rels/workbook.xml.rels" in output_entries:
         def patch_workbook_rels(root: ET.Element) -> None:
             for child in list(root):
                 rel_type = child.get("Type", "")
@@ -1193,7 +1221,7 @@ def remove_external_links_from_package(output_path: Path) -> None:
             default_namespace=PACKAGE_RELS_NS,
         )
 
-    if "[Content_Types].xml" in output_entries:
+    if content_types_need_patch and "[Content_Types].xml" in output_entries:
         def patch_content_types(root: ET.Element) -> None:
             for child in list(root):
                 local_name = child.tag.rsplit("}", 1)[-1]

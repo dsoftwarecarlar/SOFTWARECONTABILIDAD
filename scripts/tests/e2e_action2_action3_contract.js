@@ -272,6 +272,82 @@ async function assertExcelJsReadable(buffer, label) {
   assertCondition(workbook.worksheets.length > 0, `${label}: ExcelJS no detecto hojas dentro del XLSX.`);
 }
 
+function getFormula(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "formula")) {
+    return value.formula || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "sharedFormula")) {
+    return `SHARED:${value.sharedFormula}`;
+  }
+  return null;
+}
+
+function normalizeFormulaText(formula) {
+  if (typeof formula !== "string" || formula === "" || formula.startsWith("SHARED:")) {
+    return null;
+  }
+  return formula.startsWith("=") ? formula : `=${formula}`;
+}
+
+function extractFormulaSheetReferences(formula) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return [];
+  }
+
+  const references = [];
+  const quotedPattern = /'((?:[^']|'')+)'!/g;
+  let match;
+  while ((match = quotedPattern.exec(normalized)) !== null) {
+    references.push(match[1].replace(/''/g, "'"));
+  }
+
+  const unquotedFormula = normalized.replace(quotedPattern, " ");
+  const unquotedPattern = /(^|[^A-Z0-9_])([A-Za-z_][A-Za-z0-9_ .-]*)!/g;
+  while ((match = unquotedPattern.exec(unquotedFormula)) !== null) {
+    const candidate = normalizeText(match[2]);
+    if (candidate) {
+      references.push(candidate);
+    }
+  }
+
+  return references;
+}
+
+function formulaHasOrphanReference(formula, sheetNames) {
+  const normalized = normalizeFormulaText(formula);
+  if (!normalized) {
+    return false;
+  }
+
+  const references = extractFormulaSheetReferences(normalized);
+  return references.some((reference) => reference.includes("[") || !sheetNames.has(reference));
+}
+
+async function assertNoOrphanWorkbookFormulas(buffer, label) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const sheetNames = new Set(workbook.worksheets.map((worksheet) => worksheet.name));
+  const orphans = [];
+
+  workbook.worksheets.forEach((worksheet) => {
+    worksheet.eachRow((row) => {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        const formula = getFormula(cell.value);
+        if (!formula || !formulaHasOrphanReference(formula, sheetNames)) {
+          return;
+        }
+        orphans.push(`${worksheet.name}!${cell.address}:${formula}`);
+      });
+    });
+  });
+
+  assertCondition(orphans.length === 0, `${label}: formulas huerfanas. ${orphans.slice(0, 5).join(" | ")}`);
+}
+
 function buildAction3WorkbookSignature(source) {
   const workbook = Buffer.isBuffer(source)
     ? XLSX.read(source, { type: "buffer", cellDates: true, cellFormula: false })
@@ -425,6 +501,7 @@ async function runAction2Contract() {
     assertCondition(download.status === 200, `No se pudo descargar salida de Accion 2 (${download.status}).`);
     assertNoExternalLinks(download.buffer, "Accion 2");
     await assertExcelJsReadable(download.buffer, "Accion 2");
+    await assertNoOrphanWorkbookFormulas(download.buffer, "Accion 2");
 
     const workbook = XLSX.read(download.buffer, { type: "buffer" });
     const sheet = workbook.Sheets.RET_PROV || workbook.Sheets["RET PROV"];
