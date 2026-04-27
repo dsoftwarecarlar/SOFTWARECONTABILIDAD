@@ -6,6 +6,7 @@
 
 @php
     $appUrl = \App\Support\AppUrl::class;
+    $workspaceSlug = (string) ($workspace['slug'] ?? '');
     $brandGroups = [];
     foreach (($moduleConfig['upload_definitions'] ?? []) as $field => $meta) {
         $scope = (string) ($meta['scope'] ?? 'common');
@@ -36,9 +37,9 @@
             <div class="hero-copy">
                 <div class="breadcrumb">
                     <a href="{{ $appUrl::route('home') }}">Inicio</a>
-                    <a href="{{ $appUrl::route('cxp.index') }}">{{ $workspace['title'] ?? 'Area CXP' }}</a>
+                    <a href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $workspaceSlug]) }}">{{ $workspace['title'] ?? 'Area CXP' }}</a>
                     @if ($window)
-                        <a href="{{ $appUrl::route('cxp.windows.show', ['windowSlug' => $window['slug']]) }}">{{ $window['title'] }}</a>
+                        <a href="{{ $appUrl::route('workspaces.windows.show', ['workspaceSlug' => $workspaceSlug, 'windowSlug' => $window['slug']]) }}">{{ $window['title'] }}</a>
                     @endif
                     <span>{{ $module['title'] }}</span>
                 </div>
@@ -87,8 +88,8 @@
                 <section
                     class="page-section"
                     data-job-box
-                    data-status-url="{{ $appUrl::route('cxp.modules.jobs.status', ['moduleSlug' => $module['slug'], 'jobId' => $pendingJob['job_id']]) }}"
-                    data-return-url="{{ $appUrl::route('cxp.modules.show', ['moduleSlug' => $module['slug'], 'job' => $pendingJob['job_id']]) }}"
+                    data-status-url="{{ $appUrl::route('workspaces.modules.jobs.status', ['workspaceSlug' => $workspaceSlug, 'moduleSlug' => $module['slug'], 'jobId' => $pendingJob['job_id']]) }}"
+                    data-return-url="{{ $appUrl::route('workspaces.modules.show', ['workspaceSlug' => $workspaceSlug, 'moduleSlug' => $module['slug'], 'job' => $pendingJob['job_id']]) }}"
                     data-poll-interval="{{ $moduleConfig['poll']['interval_ms'] ?? 4000 }}"
                     data-poll-delay="{{ $moduleConfig['poll']['initial_delay_ms'] ?? 2000 }}"
                     data-reconnecting-message="{{ $moduleConfig['poll']['reconnecting_message'] ?? 'Actualizando estado del proceso...' }}"

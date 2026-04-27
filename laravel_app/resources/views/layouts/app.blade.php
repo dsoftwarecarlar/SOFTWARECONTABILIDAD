@@ -4,6 +4,7 @@
     $workspaceLinks = array_values(config('cxp.workspaces', []));
     $symbolLogo = !empty($branding['symbol_logo_asset']) ? $appUrl::asset($branding['symbol_logo_asset']) : null;
     $activeRoute = request()->route() ? request()->route()->getName() : '';
+    $activeWorkspaceSlug = (string) request()->route('workspaceSlug', '');
 @endphp
 <!doctype html>
 <html lang="es">
@@ -34,8 +35,8 @@
                 <a class="nav-link {{ $activeRoute === 'home' ? 'is-active' : '' }}" href="{{ $appUrl::route('home') }}">Inicio</a>
                 @foreach ($workspaceLinks as $workspaceLink)
                     <a
-                        class="nav-link {{ str_starts_with($activeRoute, $workspaceLink['slug'] ?? '___') ? 'is-active' : '' }}"
-                        href="{{ $appUrl::route(($workspaceLink['slug'] ?? 'cxp') . '.index') }}"
+                        class="nav-link {{ $activeWorkspaceSlug === ($workspaceLink['slug'] ?? '') ? 'is-active' : '' }}"
+                        href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $workspaceLink['slug'] ?? '']) }}"
                     >
                         {{ $workspaceLink['title'] ?? strtoupper($workspaceLink['slug'] ?? 'Area') }}
                     </a>

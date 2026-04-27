@@ -6,6 +6,8 @@
 
 @php
     $appUrl = \App\Support\AppUrl::class;
+    $workspaceSlug = (string) ($workspace['slug'] ?? '');
+    $primaryModule = $modules[0] ?? null;
 @endphp
 
 @section('hero')
@@ -14,15 +16,17 @@
             <div class="hero-copy">
                 <div class="breadcrumb">
                     <a href="{{ $appUrl::route('home') }}">Inicio</a>
-                    <a href="{{ $appUrl::route('cxp.index') }}">{{ $workspace['title'] }}</a>
+                    <a href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $workspaceSlug]) }}">{{ $workspace['title'] }}</a>
                     <span>{{ $window['title'] }}</span>
                 </div>
                 <span class="eyebrow">Ventana operativa</span>
                 <h1>{{ $window['title'] }}</h1>
                 <p class="hero-note">{{ $window['description'] }}</p>
                 <div class="hero-actions">
-                    <a class="primary-button" href="{{ $appUrl::route('cxp.modules.show', ['moduleSlug' => $modules[0]['slug']]) }}">Abrir primer proceso</a>
-                    <a class="ghost-button" href="{{ $appUrl::route('cxp.index') }}">Volver al area</a>
+                    @if ($primaryModule)
+                        <a class="primary-button" href="{{ $appUrl::route('workspaces.modules.show', ['workspaceSlug' => $workspaceSlug, 'moduleSlug' => $primaryModule['slug']]) }}">Abrir primer proceso</a>
+                    @endif
+                    <a class="ghost-button" href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $workspaceSlug]) }}">Volver al area</a>
                 </div>
             </div>
             <div class="hero-side">
@@ -43,27 +47,39 @@
         <div class="section-head">
             <div>
                 <span class="eyebrow">Procesos</span>
-                <h2>Abre el proceso exacto que necesitas.</h2>
+                <h2>{{ $modules === [] ? 'Esta ventana ya existe y esta lista para recibir procesos.' : 'Abre el proceso exacto que necesitas.' }}</h2>
             </div>
             <p>
-                Cada tarjeta deja claro donde entrar y para que sirve la pantalla, sin recargar al usuario con informacion innecesaria.
+                {{ $modules === [] ? 'La ventana quedo registrada en la navegacion, pero todavia no tiene procesos definidos.' : 'Cada tarjeta deja claro donde entrar y para que sirve la pantalla, sin recargar al usuario con informacion innecesaria.' }}
             </p>
         </div>
         <div class="surface-grid three">
-            @foreach ($modules as $module)
+            @if ($modules === [])
                 <article class="module-card">
-                    <span class="chip">Proceso</span>
-                    <h3>{{ $module['title'] }}</h3>
-                    <p>{{ $module['mode'] === 'bundle' ? 'Consolidado final de esta ventana.' : 'Proceso disponible dentro del flujo actual.' }}</p>
+                    <span class="chip">Sin procesos</span>
+                    <h3>Ventana preparada</h3>
+                    <p>Cuando se definan las acciones de esta ventana, se agregaran aqui sin rehacer la estructura general.</p>
                     <div class="runtime-badges">
-                        <span class="runtime-pill">Disponible</span>
-                        <span class="runtime-pill">{{ $module['mode'] === 'bundle' ? 'Consolidado' : 'Proceso' }}</span>
-                    </div>
-                    <div class="surface-actions">
-                        <a class="primary-button" href="{{ $appUrl::route('cxp.modules.show', ['moduleSlug' => $module['slug']]) }}">Abrir proceso</a>
+                        <span class="runtime-pill">0 proceso(s)</span>
+                        <span class="runtime-pill">Base lista</span>
                     </div>
                 </article>
-            @endforeach
+            @else
+                @foreach ($modules as $module)
+                    <article class="module-card">
+                        <span class="chip">Proceso</span>
+                        <h3>{{ $module['title'] }}</h3>
+                        <p>{{ $module['mode'] === 'bundle' ? 'Consolidado final de esta ventana.' : 'Proceso disponible dentro del flujo actual.' }}</p>
+                        <div class="runtime-badges">
+                            <span class="runtime-pill">Disponible</span>
+                            <span class="runtime-pill">{{ $module['mode'] === 'bundle' ? 'Consolidado' : 'Proceso' }}</span>
+                        </div>
+                        <div class="surface-actions">
+                            <a class="primary-button" href="{{ $appUrl::route('workspaces.modules.show', ['workspaceSlug' => $workspaceSlug, 'moduleSlug' => $module['slug']]) }}">Abrir proceso</a>
+                        </div>
+                    </article>
+                @endforeach
+            @endif
         </div>
     </section>
 

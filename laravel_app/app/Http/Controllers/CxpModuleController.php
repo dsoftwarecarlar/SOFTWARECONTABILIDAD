@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Services\CxpActionRunner;
 use App\Services\RepuestosRunner;
 use App\Services\ServiciosMarcasRunner;
+use App\Support\WorkspaceRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -18,17 +19,20 @@ final class CxpModuleController extends Controller
     public function __construct(
         private CxpActionRunner $actions,
         private ServiciosMarcasRunner $servicios,
-        private RepuestosRunner $repuestos
-        ) {
+        private RepuestosRunner $repuestos,
+        private WorkspaceRegistry $workspaces
+    ) {
     }
 
-    public function handle(Request $request, string $moduleSlug): View|RedirectResponse
+    public function handle(Request $request, string $workspaceSlug, string $moduleSlug): View|RedirectResponse
     {
-        $module = config('cxp.modules.' . $moduleSlug);
-        if (!is_array($module)) {
+        $navigation = $this->workspaces->navigationForModule($workspaceSlug, $moduleSlug);
+        if ($navigation === null) {
             throw new NotFoundHttpException('El modulo solicitado no existe.');
         }
-        $navigation = $this->moduleNavigation($moduleSlug);
+        $module = $navigation['module'];
+        $workspace = $navigation['workspace'];
+        $window = $navigation['window'];
 
         if ($this->actions->isManagedModule($moduleSlug)) {
             $result = null;
@@ -44,13 +48,13 @@ final class CxpModuleController extends Controller
             }
 
             if ($this->actions->isBundleModule($moduleSlug)) {
-            return view('cxp.bundle-module', [
-                'module' => $module,
-                'workspace' => $navigation['workspace'],
-                'window' => $navigation['window'],
-                'result' => $result,
-                'error' => $error,
-                'history' => $this->actions->historyFor($moduleSlug),
+                return view('cxp.bundle-module', [
+                    'module' => $module,
+                    'workspace' => $workspace,
+                    'window' => $window,
+                    'result' => $result,
+                    'error' => $error,
+                    'history' => $this->actions->historyFor($moduleSlug),
                     'latestActions' => $this->actions->latestActionExports(),
                     'commandPreview' => $this->commandPreview($moduleSlug),
                 ]);
@@ -58,8 +62,8 @@ final class CxpModuleController extends Controller
 
             return view('cxp.action-module', [
                 'module' => $module,
-                'workspace' => $navigation['workspace'],
-                'window' => $navigation['window'],
+                'workspace' => $workspace,
+                'window' => $window,
                 'actionConfig' => $actionConfig,
                 'result' => $result,
                 'error' => $error,
@@ -117,18 +121,23 @@ final class CxpModuleController extends Controller
                     $action = trim((string) $request->input('action', 'process'));
                     if ($action === 'stop_all') {
                         $stopResult = $this->servicios->requestCancelAll();
-                        $params = ['moduleSlug' => $moduleSlug, 'stopped' => (string) $stopResult['count']];
+                        $params = [
+                            'workspaceSlug' => $workspaceSlug,
+                            'moduleSlug' => $moduleSlug,
+                            'stopped' => (string) $stopResult['count'],
+                        ];
                         $returnJobId = trim((string) $request->input('return_job', ''));
                         if ($returnJobId !== '') {
                             $params['job'] = $returnJobId;
                         }
 
-                        return redirect()->route('cxp.modules.show', $params);
+                        return redirect()->route('workspaces.modules.show', $params);
                     }
 
                     $newJobId = $this->servicios->dispatch($request->allFiles(), trim((string) $request->input('brand_key', '')));
 
-                    return redirect()->route('cxp.modules.show', [
+                    return redirect()->route('workspaces.modules.show', [
+                        'workspaceSlug' => $workspaceSlug,
                         'moduleSlug' => $moduleSlug,
                         'job' => $newJobId,
                     ]);
@@ -139,8 +148,8 @@ final class CxpModuleController extends Controller
 
             return view('cxp.servicios-module', [
                 'module' => $module,
-                'workspace' => $navigation['workspace'],
-                'window' => $navigation['window'],
+                'workspace' => $workspace,
+                'window' => $window,
                 'moduleConfig' => $config,
                 'result' => $result,
                 'error' => $error,
@@ -171,8 +180,8 @@ final class CxpModuleController extends Controller
 
             return view('cxp.repuestos-module', [
                 'module' => $module,
-                'workspace' => $navigation['workspace'],
-                'window' => $navigation['window'],
+                'workspace' => $workspace,
+                'window' => $window,
                 'moduleConfig' => $moduleConfig,
                 'result' => $result,
                 'error' => $error,
@@ -184,16 +193,19 @@ final class CxpModuleController extends Controller
 
         return view('cxp.module', [
             'module' => $module,
-            'workspace' => $navigation['workspace'],
-            'window' => $navigation['window'],
+            'workspace' => $workspace,
+            'window' => $window,
             'resourcePaths' => $this->resourcePaths($moduleSlug),
             'commandPreview' => $this->commandPreview($moduleSlug),
         ]);
     }
 
-    public function status(string $moduleSlug, string $jobId): JsonResponse
+    public function status(string $workspaceSlug, string $moduleSlug, string $jobId): JsonResponse
     {
-        if (!$this->servicios->isManagedModule($moduleSlug)) {
+        if (
+            !$this->servicios->isManagedModule($moduleSlug)
+            || $this->workspaces->navigationForModule($workspaceSlug, $moduleSlug) === null
+        ) {
             return response()->json(['status' => 'missing', 'message' => 'No se encontro el trabajo solicitado.'], 404);
         }
 
@@ -238,31 +250,5 @@ final class CxpModuleController extends Controller
             'repuestos-tytserv' => $this->repuestos->commandPreview(),
             default => null,
         };
-    }
-
-    /**
-     * @return array{workspace: array<string, mixed>, window: array<string, mixed>|null}
-     */
-    private function moduleNavigation(string $moduleSlug): array
-    {
-        $workspace = config('cxp.workspaces.cxp', []);
-        foreach (($workspace['windows'] ?? []) as $windowSlug) {
-            $window = config('cxp.windows.' . $windowSlug, []);
-            if (!is_array($window)) {
-                continue;
-            }
-
-            if (in_array($moduleSlug, $window['modules'] ?? [], true)) {
-                return [
-                    'workspace' => $workspace,
-                    'window' => $window,
-                ];
-            }
-        }
-
-        return [
-            'workspace' => $workspace,
-            'window' => null,
-        ];
     }
 }

@@ -4,21 +4,25 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Support\WorkspaceRegistry;
 use Illuminate\Contracts\View\View;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 final class CxpAreaController extends Controller
 {
-    public function index(): View
+    public function __construct(
+        private WorkspaceRegistry $workspaces
+    ) {
+    }
+
+    public function index(string $workspaceSlug): View
     {
-        $workspace = config('cxp.workspaces.cxp');
-        $windows = array_map(
-            static fn(string $windowSlug): array => config('cxp.windows.' . $windowSlug, []),
-            $workspace['windows'] ?? []
-        );
-        $moduleCount = 0;
-        foreach ($windows as $window) {
-            $moduleCount += count($window['modules'] ?? []);
+        $workspace = $this->workspaces->workspace($workspaceSlug);
+        if ($workspace === null) {
+            throw new NotFoundHttpException('El area solicitada no existe.');
         }
+        $windows = $this->workspaces->windowsForWorkspace($workspaceSlug);
+        $moduleCount = $this->workspaces->moduleCountForWorkspace($workspaceSlug);
 
         return view('cxp.index', [
             'workspace' => $workspace,

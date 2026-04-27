@@ -23,6 +23,9 @@ return [
         'symbol_logo_asset' => 'brand/logo-symbol.jpg',
         'full_logo_asset' => 'brand/logo-full.webp',
     ],
+    'home' => [
+        'primary_workspace' => 'cxp',
+    ],
     'legacy' => [
         'root' => $legacyRoot,
         'public_base_url' => $legacyBaseUrl,
@@ -50,6 +53,15 @@ return [
                 'conciliacion-servicios-marcas',
                 'facturacion-repuestos-tytserv',
             ],
+        ],
+        'contabilidad-general' => [
+            'slug' => 'contabilidad-general',
+            'title' => 'Contabilidad General',
+            'summary' => 'Area base creada para futuros procesos y controles de Contabilidad General.',
+            'legacy_url' => $legacyBaseUrl . '/contabilidad-general',
+            'windows' => [],
+            'empty_title' => 'Area creada y lista para crecer.',
+            'empty_description' => 'Todavia no hay ventanas ni procesos cargados. Las acciones de esta area se iran registrando despues.',
         ],
     ],
     'windows' => [

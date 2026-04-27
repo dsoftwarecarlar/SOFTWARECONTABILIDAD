@@ -6,6 +6,7 @@
 
 @php
     $appUrl = \App\Support\AppUrl::class;
+    $workspaceSlug = (string) ($workspace['slug'] ?? '');
 @endphp
 
 @section('hero')
@@ -14,9 +15,9 @@
             <div class="hero-copy">
                 <div class="breadcrumb">
                     <a href="{{ $appUrl::route('home') }}">Inicio</a>
-                    <a href="{{ $appUrl::route('cxp.index') }}">{{ $workspace['title'] ?? 'Area CXP' }}</a>
+                    <a href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $workspaceSlug]) }}">{{ $workspace['title'] ?? 'Area CXP' }}</a>
                     @if ($window)
-                        <a href="{{ $appUrl::route('cxp.windows.show', ['windowSlug' => $window['slug']]) }}">{{ $window['title'] }}</a>
+                        <a href="{{ $appUrl::route('workspaces.windows.show', ['workspaceSlug' => $workspaceSlug, 'windowSlug' => $window['slug']]) }}">{{ $window['title'] }}</a>
                     @endif
                     <span>{{ $module['title'] }}</span>
                 </div>

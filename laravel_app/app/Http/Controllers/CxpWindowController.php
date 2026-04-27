@@ -4,27 +4,31 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Support\WorkspaceRegistry;
 use Illuminate\Contracts\View\View;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 final class CxpWindowController extends Controller
 {
-    public function show(string $windowSlug): View
+    public function __construct(
+        private WorkspaceRegistry $workspaces
+    ) {
+    }
+
+    public function show(string $workspaceSlug, string $windowSlug): View
     {
-        $window = config('cxp.windows.' . $windowSlug);
-        if (!is_array($window)) {
+        $workspace = $this->workspaces->workspace($workspaceSlug);
+        $window = $this->workspaces->window($workspaceSlug, $windowSlug);
+        if ($workspace === null || $window === null) {
             throw new NotFoundHttpException('La ventana solicitada no existe.');
         }
 
-        $modules = array_map(
-            static fn(string $moduleSlug): array => config('cxp.modules.' . $moduleSlug, []),
-            $window['modules'] ?? []
-        );
+        $modules = $this->workspaces->modulesForWindow($workspaceSlug, $windowSlug);
 
         return view('cxp.window', [
             'window' => $window,
             'modules' => $modules,
-            'workspace' => config('cxp.workspaces.cxp'),
+            'workspace' => $workspace,
         ]);
     }
 }

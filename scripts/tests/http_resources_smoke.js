@@ -35,6 +35,7 @@ const BANNED_VISIBLE_TERMS = [
 const PAGES = [
   "/",
   "/cxp",
+  "/contabilidad-general",
   "/cxp/windows/libro-compras-aclt",
   "/cxp/windows/conciliacion-servicios-marcas",
   "/cxp/windows/facturacion-repuestos-tytserv",
@@ -202,8 +203,8 @@ function collectInternalUrls(page, html) {
 
     const resolved = new URL(rawValue, `${ORIGIN}${page}`);
     const isLegacyPhp = /\.php(?:[?#].*)?$/i.test(resolved.pathname + resolved.search);
-    const isLegacyAreaPath = /\/areas\//i.test(resolved.pathname);
-    const isLegacyModulePath = /\/modules\//i.test(resolved.pathname) && !resolved.pathname.startsWith("/cxp/modules/");
+    const isLegacyAreaPath = /^\/areas\//i.test(resolved.pathname);
+    const isLegacyModulePath = /^\/modules\//i.test(resolved.pathname);
 
     assertCondition(
       !isLegacyPhp && !isLegacyAreaPath && !isLegacyModulePath,

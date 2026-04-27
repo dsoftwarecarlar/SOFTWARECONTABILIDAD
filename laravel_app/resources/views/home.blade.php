@@ -8,6 +8,8 @@
     $appUrl = \App\Support\AppUrl::class;
     $branding = config('cxp.branding', []);
     $primaryLogo = !empty($branding['symbol_logo_asset']) ? $appUrl::asset($branding['symbol_logo_asset']) : null;
+    $featuredWorkspace = is_array($primaryWorkspace ?? null) ? $primaryWorkspace : null;
+    $featuredWindow = is_array($primaryWindow ?? null) ? $primaryWindow : null;
 @endphp
 
 @section('hero')
@@ -17,17 +19,21 @@
                 <span class="eyebrow">Portal interno</span>
                 <h1>Accede al area operativa y continua con el proceso del dia.</h1>
                 <p class="hero-note">
-                    Esta portada te lleva al punto de entrada correcto. Desde el area eliges la ventana y luego el proceso.
+                    Esta portada te lleva al punto de entrada correcto. Primero eliges el area, luego la ventana y despues el proceso.
                 </p>
                 <div class="hero-actions">
-                    <a class="primary-button" href="{{ $appUrl::route('cxp.index') }}">Entrar a {{ $workspace['title'] }}</a>
-                    <a class="ghost-button" href="{{ $appUrl::route('cxp.windows.show', ['windowSlug' => 'libro-compras-aclt']) }}">Abrir libro de compras</a>
+                    @if ($featuredWorkspace)
+                        <a class="primary-button" href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $featuredWorkspace['slug']]) }}">Entrar a {{ $featuredWorkspace['title'] }}</a>
+                    @endif
+                    @if ($featuredWorkspace && $featuredWindow)
+                        <a class="ghost-button" href="{{ $appUrl::route('workspaces.windows.show', ['workspaceSlug' => $featuredWorkspace['slug'], 'windowSlug' => $featuredWindow['slug']]) }}">Abrir primera ventana</a>
+                    @endif
                 </div>
                 <div class="metric-grid">
                     <article class="metric-card">
-                        <span class="eyebrow">Area</span>
-                        <strong>{{ $workspace['title'] }}</strong>
-                        <p>Todo el trabajo actual de esta portada entra por una sola area operativa.</p>
+                        <span class="eyebrow">Areas</span>
+                        <strong>{{ $workspaceCount }}</strong>
+                        <p>La portada ya puede llevar a mas de un frente operativo sin mezclar accesos.</p>
                     </article>
                     <article class="metric-card">
                         <span class="eyebrow">Ventanas</span>
@@ -50,10 +56,10 @@
                     </div>
                 </div>
                 <article class="hero-card">
-                    <span>Area activa</span>
-                    <strong>{{ $branding['division'] ?? 'Contabilidad Talleres' }}</strong>
+                    <span>Area destacada</span>
+                    <strong>{{ $featuredWorkspace['title'] ?? ($branding['division'] ?? 'Contabilidad Talleres') }}</strong>
                     <p class="hero-note">
-                        Ingresa al area y abre la ventana que corresponde al trabajo que vas a realizar.
+                        Desde aqui entras al area correcta y sigues por la ruta operativa que corresponda.
                     </p>
                 </article>
             </div>
@@ -76,12 +82,12 @@
             <article class="surface-card">
                 <span class="chip">Paso 1</span>
                 <h3>Entra al area</h3>
-                <p>Desde aqui accedes al espacio de trabajo principal de contabilidad talleres.</p>
+                <p>Desde aqui accedes al area que corresponde al trabajo que vas a realizar.</p>
             </article>
             <article class="surface-card">
                 <span class="chip">Paso 2</span>
                 <h3>Abre la ventana correcta</h3>
-                <p>Dentro del area eliges si vas a trabajar libro de compras, servicios por marca o repuestos.</p>
+                <p>Dentro del area eliges la ventana correcta si ese frente ya tiene procesos cargados.</p>
             </article>
             <article class="surface-card">
                 <span class="chip">Paso 3</span>
@@ -94,11 +100,11 @@
     <section class="page-section reveal-up">
         <div class="section-head">
             <div>
-                <span class="eyebrow">Entrada principal</span>
-                <h2>Contabilidad Talleres entra por una sola puerta.</h2>
+                <span class="eyebrow">Areas operativas</span>
+                <h2>Elige el area con la que vas a trabajar.</h2>
             </div>
             <p>
-                Si necesitas volver al punto de partida, entra al area y desde ahi continua con la ventana y el proceso correspondiente.
+                Cada area puede crecer con sus propias ventanas y procesos sin mezclar rutas ni responsabilidades.
             </p>
         </div>
         <div class="surface-grid one">
@@ -110,7 +116,7 @@
                         <p>{{ $workspaceItem['summary'] }}</p>
                     </div>
                     <div class="surface-actions">
-                        <a class="primary-button" href="{{ $appUrl::route(($workspaceItem['slug'] ?? 'cxp') . '.index') }}">Entrar al area</a>
+                        <a class="primary-button" href="{{ $appUrl::route('workspaces.index', ['workspaceSlug' => $workspaceItem['slug']]) }}">Entrar al area</a>
                     </div>
                 </article>
             @endforeach
